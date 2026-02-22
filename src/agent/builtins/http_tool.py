@@ -11,6 +11,17 @@ from src.agent.skills import skill
 
 _MAX_BODY = 50_000
 
+# Shared client for connection pooling across tool invocations.
+# Avoids repeated TCP handshakes and TLS negotiation.
+_client: httpx.AsyncClient | None = None
+
+
+async def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(follow_redirects=True)
+    return _client
+
 
 @skill(
     name="http_request",
@@ -51,22 +62,22 @@ async def http_request(
 ) -> dict:
     """Make an HTTP request and return status, headers, and body."""
     try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.request(
-                method=method.upper(),
-                url=url,
-                headers=headers or {},
-                content=body if body else None,
-                timeout=timeout,
-            )
-            resp_body = response.text[:_MAX_BODY]
-            truncated = len(response.text) > _MAX_BODY
-            return {
-                "status_code": response.status_code,
-                "headers": dict(response.headers),
-                "body": resp_body,
-                "truncated": truncated,
-            }
+        client = await _get_client()
+        response = await client.request(
+            method=method.upper(),
+            url=url,
+            headers=headers or {},
+            content=body if body else None,
+            timeout=timeout,
+        )
+        resp_body = response.text[:_MAX_BODY]
+        truncated = len(response.text) > _MAX_BODY
+        return {
+            "status_code": response.status_code,
+            "headers": dict(response.headers),
+            "body": resp_body,
+            "truncated": truncated,
+        }
     except httpx.TimeoutException:
         return {"error": f"Request timed out after {timeout}s", "status_code": 0}
     except Exception as e:

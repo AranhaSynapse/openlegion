@@ -101,20 +101,32 @@ class RuntimeContext:
         if self.blackboard:
             self.blackboard.close()
 
-        # Close shared httpx clients on the dispatch loop
+        # Close shared httpx clients on the dispatch loop — close all
+        # concurrently so one slow close doesn't block the others.
         if self._dispatch_loop:
             async def _close_clients():
-                for closeable in [self.transport, self.router, self.orchestrator, self.credential_vault]:
-                    if hasattr(closeable, 'close') and callable(closeable.close):
-                        try:
-                            result = closeable.close()
-                            if hasattr(result, '__await__'):
-                                await result
-                        except Exception as e:
-                            logger.debug("Error closing %s: %s", type(closeable).__name__, e)
+                async def _close_one(name, closeable):
+                    if closeable is None or not hasattr(closeable, 'close'):
+                        return
+                    try:
+                        result = closeable.close()
+                        if hasattr(result, '__await__'):
+                            await asyncio.wait_for(result, timeout=3)
+                    except Exception as e:
+                        logger.debug("Error closing %s: %s", name, e)
+                closeables = {
+                    "transport": self.transport,
+                    "router": self.router,
+                    "orchestrator": self.orchestrator,
+                    "credential_vault": self.credential_vault,
+                }
+                await asyncio.gather(
+                    *(_close_one(n, c) for n, c in closeables.items()),
+                    return_exceptions=True,
+                )
             try:
                 future = asyncio.run_coroutine_threadsafe(_close_clients(), self._dispatch_loop)
-                future.result(timeout=5)
+                future.result(timeout=10)
             except Exception as e:
                 logger.debug("Shutdown cleanup error: %s", e)
             self._dispatch_loop.call_soon_threadsafe(self._dispatch_loop.stop)

@@ -10,6 +10,7 @@ Write-then-compact: always persist before discarding.
 from __future__ import annotations
 
 import json
+import time
 from typing import TYPE_CHECKING
 
 from src.shared.utils import setup_logging
@@ -164,7 +165,10 @@ class ContextManager:
             return messages
 
         usage_pct = int(usage * 100)
-        logger.info(f"Context at {usage_pct}% — compacting")
+        tokens_before = self.token_count(messages)
+        msg_count_before = len(messages)
+        t0 = time.monotonic()
+        logger.info(f"Context at {usage_pct}% ({tokens_before:,} tokens, {msg_count_before} msgs) — compacting")
 
         # Reset so proactive flush can fire again after compaction
         self._flush_triggered = False
@@ -175,10 +179,21 @@ class ContextManager:
 
         # Step 2: Summarize and compress
         if self.llm:
-            return await self._summarize_compact(system_prompt, messages)
+            result = await self._summarize_compact(system_prompt, messages)
+        else:
+            result = self._hard_prune(messages)
 
-        # Fallback: hard prune if no LLM available
-        return self._hard_prune(messages)
+        tokens_after = self.token_count(result)
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        ratio = round(tokens_after / tokens_before, 2) if tokens_before else 0
+        method = "summarize" if self.llm else "hard_prune"
+        logger.info(
+            "Compaction complete: %s, %d->%d msgs, %s->%s tokens (%.0f%% reduction), %dms",
+            method, msg_count_before, len(result),
+            f"{tokens_before:,}", f"{tokens_after:,}",
+            (1 - ratio) * 100, elapsed_ms,
+        )
+        return result
 
     async def _extract_and_store_facts(
         self, messages: list[dict], *, label: str,
@@ -188,6 +203,7 @@ class ContextManager:
         Returns the number of facts extracted (0 on failure or empty).
         Shared by proactive flush (60%) and compaction flush (70%).
         """
+        t0 = time.monotonic()
         conversation_text = self._messages_to_text(messages)
         if len(conversation_text) < 100:
             return 0
@@ -232,7 +248,8 @@ class ContextManager:
                 stored = await self.memory.store_facts_batch(facts)
                 logger.info(f"{label}: {stored} facts stored to memory DB")
 
-            logger.info(f"{label}: {len(facts)} facts extracted")
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            logger.info(f"{label}: {len(facts)} facts extracted in {elapsed_ms}ms")
             return len(facts)
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning(f"{label}: failed to parse LLM response as JSON: {e}")

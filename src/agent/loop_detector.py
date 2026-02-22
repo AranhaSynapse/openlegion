@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections import deque
+from collections import Counter, deque
 from typing import Any
 
 from src.shared.utils import setup_logging
@@ -112,12 +112,10 @@ class ToolLoopDetector:
         Finds the most common result_hash for this (tool, params) pair and
         returns how many entries share that exact triple.
         """
-        result_hashes = [
+        counts = Counter(
             r for t, p, r in self._window
             if t == tool_name and p == params_hash
-        ]
-        if not result_hashes:
+        )
+        if not counts:
             return 0
-        # Most frequent result hash
-        most_common = max(set(result_hashes), key=result_hashes.count)
-        return result_hashes.count(most_common)
+        return counts.most_common(1)[0][1]

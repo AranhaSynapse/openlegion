@@ -331,66 +331,7 @@ class AgentLoop:
 
                     # Execute each tool and append results with CORRECT role
                     for i, tool_call in enumerate(llm_response.tool_calls):
-                        loop_verdict = self._loop_detector.check_before(
-                            tool_call.name, tool_call.arguments,
-                        )
-
-                        if loop_verdict in ("block", "terminate"):
-                            result_str = json.dumps({
-                                "error": f"Tool loop detected: {tool_call.name} has been called "
-                                "repeatedly with the same arguments and is producing the same "
-                                "result. Try a different approach or different arguments."
-                            })
-                            self._loop_detector.record(tool_call.name, tool_call.arguments, result_str)
-                        else:
-                            try:
-                                result = await asyncio.wait_for(
-                                    self.skills.execute(
-                                        tool_call.name,
-                                        tool_call.arguments,
-                                        mesh_client=self.mesh_client,
-                                        workspace_manager=self.workspace,
-                                        memory_store=self.memory,
-                                    ),
-                                    timeout=_TOOL_TIMEOUT,
-                                )
-                                result_str = json.dumps(result, default=str) if isinstance(result, dict) else str(result)
-                                result_str = sanitize_for_prompt(result_str)
-                                self._loop_detector.record(tool_call.name, tool_call.arguments, result_str)
-                                if loop_verdict == "warn":
-                                    result_str = (
-                                        "[WARNING: You have called this tool multiple times with "
-                                        "identical arguments and received the same result. Consider "
-                                        "a different approach.]\n" + result_str
-                                    )
-                                try:
-                                    await self._learn(tool_call.name, tool_call.arguments, result)
-                                    self._maybe_reload_skills(result)
-                                except Exception as learn_err:
-                                    logger.warning("Post-tool learning failed for %s: %s", tool_call.name, learn_err)
-                            except asyncio.TimeoutError:
-                                result_str = json.dumps({"error": f"Tool {tool_call.name} timed out after {_TOOL_TIMEOUT}s"})
-                                result_str = sanitize_for_prompt(result_str)
-                                self._loop_detector.record(tool_call.name, tool_call.arguments, result_str)
-                                result = {"error": f"Timed out after {_TOOL_TIMEOUT}s"}
-                                logger.error(f"Tool {tool_call.name} timed out after {_TOOL_TIMEOUT}s")
-                                self._record_failure(
-                                    tool_call.name, f"Timed out after {_TOOL_TIMEOUT}s",
-                                    truncate(str(tool_call.arguments), 200),
-                                    arguments=tool_call.arguments,
-                                )
-                            except Exception as e:
-                                result_str = json.dumps({"error": str(e)})
-                                result_str = sanitize_for_prompt(result_str)
-                                self._loop_detector.record(tool_call.name, tool_call.arguments, result_str)
-                                result = {"error": str(e)}
-                                logger.error(f"Tool {tool_call.name} failed: {e}")
-                                self._record_failure(
-                                    tool_call.name, str(e),
-                                    truncate(str(tool_call.arguments), 200),
-                                    arguments=tool_call.arguments,
-                                )
-
+                        result_str, _result = await self._run_tool(tool_call)
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call_entries[i]["id"],
@@ -780,10 +721,12 @@ class AgentLoop:
         })
         return entries
 
-    async def _execute_chat_tool_call(
-        self, tool_call, tool_call_id: str, tool_outputs: list[dict],
-    ) -> dict:
-        """Execute a single tool call, append result to messages, return output."""
+    async def _run_tool(self, tool_call) -> tuple[str, dict]:
+        """Execute a single tool call with loop detection, learning, and error handling.
+
+        Returns (result_str, result_dict) for the caller to append to messages.
+        Shared by both task mode and chat mode to avoid duplicated logic.
+        """
         loop_verdict = self._loop_detector.check_before(tool_call.name, tool_call.arguments)
 
         if loop_verdict in ("block", "terminate"):
@@ -795,54 +738,64 @@ class AgentLoop:
             result_str = json.dumps({"error": block_error})
             result = {"error": block_error}
             self._loop_detector.record(tool_call.name, tool_call.arguments, result_str)
-        else:
-            try:
-                result = await asyncio.wait_for(
-                    self.skills.execute(
-                        tool_call.name,
-                        tool_call.arguments,
-                        mesh_client=self.mesh_client,
-                        workspace_manager=self.workspace,
-                        memory_store=self.memory,
-                    ),
-                    timeout=_TOOL_TIMEOUT,
-                )
-                result_str = json.dumps(result, default=str) if isinstance(result, dict) else str(result)
-                result_str = sanitize_for_prompt(result_str)
-                self._loop_detector.record(tool_call.name, tool_call.arguments, result_str)
-                if loop_verdict == "warn":
-                    result_str = (
-                        "[WARNING: You have called this tool multiple times with "
-                        "identical arguments and received the same result. Consider "
-                        "a different approach.]\n" + result_str
-                    )
-                try:
-                    await self._learn(tool_call.name, tool_call.arguments, result)
-                except Exception as learn_err:
-                    logger.warning("Post-tool learning failed for %s: %s", tool_call.name, learn_err)
-            except asyncio.TimeoutError:
-                result_str = json.dumps({"error": f"Tool {tool_call.name} timed out after {_TOOL_TIMEOUT}s"})
-                result_str = sanitize_for_prompt(result_str)
-                self._loop_detector.record(tool_call.name, tool_call.arguments, result_str)
-                result = {"error": f"Timed out after {_TOOL_TIMEOUT}s"}
-                logger.error(f"Chat tool {tool_call.name} timed out after {_TOOL_TIMEOUT}s")
-                self._record_failure(
-                    tool_call.name, f"Timed out after {_TOOL_TIMEOUT}s",
-                    truncate(str(tool_call.arguments), 200),
-                    arguments=tool_call.arguments,
-                )
-            except Exception as e:
-                result_str = json.dumps({"error": str(e)})
-                result_str = sanitize_for_prompt(result_str)
-                self._loop_detector.record(tool_call.name, tool_call.arguments, result_str)
-                result = {"error": str(e)}
-                logger.error(f"Chat tool {tool_call.name} failed: {e}")
-                self._record_failure(
-                    tool_call.name, str(e),
-                    truncate(str(tool_call.arguments), 200),
-                    arguments=tool_call.arguments,
-                )
+            return result_str, result
 
+        try:
+            result = await asyncio.wait_for(
+                self.skills.execute(
+                    tool_call.name,
+                    tool_call.arguments,
+                    mesh_client=self.mesh_client,
+                    workspace_manager=self.workspace,
+                    memory_store=self.memory,
+                ),
+                timeout=_TOOL_TIMEOUT,
+            )
+            result_str = json.dumps(result, default=str) if isinstance(result, dict) else str(result)
+            result_str = sanitize_for_prompt(result_str)
+            self._loop_detector.record(tool_call.name, tool_call.arguments, result_str)
+            if loop_verdict == "warn":
+                result_str = (
+                    "[WARNING: You have called this tool multiple times with "
+                    "identical arguments and received the same result. Consider "
+                    "a different approach.]\n" + result_str
+                )
+            try:
+                await self._learn(tool_call.name, tool_call.arguments, result)
+                self._maybe_reload_skills(result)
+            except Exception as learn_err:
+                logger.warning("Post-tool learning failed for %s: %s", tool_call.name, learn_err)
+            return result_str, result
+        except asyncio.TimeoutError:
+            result_str = json.dumps({"error": f"Tool {tool_call.name} timed out after {_TOOL_TIMEOUT}s"})
+            result_str = sanitize_for_prompt(result_str)
+            self._loop_detector.record(tool_call.name, tool_call.arguments, result_str)
+            result = {"error": f"Timed out after {_TOOL_TIMEOUT}s"}
+            logger.error(f"Tool {tool_call.name} timed out after {_TOOL_TIMEOUT}s")
+            self._record_failure(
+                tool_call.name, f"Timed out after {_TOOL_TIMEOUT}s",
+                truncate(str(tool_call.arguments), 200),
+                arguments=tool_call.arguments,
+            )
+            return result_str, result
+        except Exception as e:
+            result_str = json.dumps({"error": str(e)})
+            result_str = sanitize_for_prompt(result_str)
+            self._loop_detector.record(tool_call.name, tool_call.arguments, result_str)
+            result = {"error": str(e)}
+            logger.error(f"Tool {tool_call.name} failed: {e}")
+            self._record_failure(
+                tool_call.name, str(e),
+                truncate(str(tool_call.arguments), 200),
+                arguments=tool_call.arguments,
+            )
+            return result_str, result
+
+    async def _execute_chat_tool_call(
+        self, tool_call, tool_call_id: str, tool_outputs: list[dict],
+    ) -> dict:
+        """Execute a single tool call, append result to chat messages, return output."""
+        result_str, result = await self._run_tool(tool_call)
         self._chat_messages.append({
             "role": "tool",
             "tool_call_id": tool_call_id,
@@ -850,7 +803,6 @@ class AgentLoop:
         })
         output = {"tool": tool_call.name, "input": tool_call.arguments, "output": result}
         tool_outputs.append(output)
-        self._maybe_reload_skills(result)
         return output
 
     async def _compact_chat_context(self, system: str) -> None:
