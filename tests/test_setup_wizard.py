@@ -65,10 +65,11 @@ class TestSetupFull:
         """Full setup with piped input creates all config files."""
         project = _make_project(tmp_path)
 
-        # Input: provider=1 (anthropic), model=1, API key, project desc, agent name, description, browser
+        # Input: provider=1 (anthropic), model=1, base URL (skip), API key, project desc, agent name, description, browser
         piped_input = (
             "1\n"           # provider: Anthropic
             "1\n"           # model: first option
+            "\n"            # base URL: skip
             "sk-test-key\n" # API key
             "My project\n"  # project description
             "none\n"        # template: none (custom)
@@ -136,10 +137,11 @@ class TestSetupFull:
         """Selecting a template creates agents from the template."""
         project = _make_project(tmp_path)
 
-        # Input: provider=1, model=1, key, skip project, template=starter
+        # Input: provider=1, model=1, base URL (skip), key, skip project, template=starter
         piped_input = (
             "1\n"           # provider
             "1\n"           # model
+            "\n"            # base URL: skip
             "sk-test-key\n" # API key
             "\n"            # skip project
             "starter\n"    # template name
@@ -160,10 +162,11 @@ class TestSetupFull:
         """Invalid key on first attempt triggers retry, valid on second."""
         project = _make_project(tmp_path)
 
-        # Input: provider=1, model=1, bad key, good key, skip project, agent, browser
+        # Input: provider=1, model=1, base URL (skip), bad key, good key, skip project, agent, browser
         piped_input = (
             "1\n"                # provider
             "1\n"                # model
+            "\n"                 # base URL: skip
             "bad-key\n"          # first attempt (will fail validation)
             "good-key\n"         # second attempt (will pass)
             "\n"                 # skip project
@@ -175,7 +178,7 @@ class TestSetupFull:
 
         call_count = {"n": 0}
 
-        def _mock_validate(self_arg, provider, api_key):
+        def _mock_validate(self_arg, provider, api_key, *, base_url=""):
             call_count["n"] += 1
             return call_count["n"] >= 2  # Fail first, pass second
 
@@ -189,6 +192,36 @@ class TestSetupFull:
         assert result.exit_code == 0, result.output
         assert "invalid" in result.output.lower()
         assert "Setup Complete" in result.output
+
+    def test_full_setup_with_base_url(self, tmp_path):
+        """Custom base URL is stored via _set_env_key."""
+        project = _make_project(tmp_path)
+
+        piped_input = (
+            "1\n"                                    # provider: Anthropic
+            "1\n"                                    # model: first option
+            "https://gateway.ai.vercel.app/v1\n"     # custom base URL
+            "sk-test-key\n"                          # API key
+            "\n"                                     # skip project
+            "starter\n"                              # template
+        )
+
+        set_env_calls = {}
+
+        def _track_set_env(name, value):
+            set_env_calls[name] = value
+
+        with _patch_all(project):
+            with patch("src.cli.config._check_docker_running", return_value=True):
+                with patch.object(SetupWizard, "_validate_api_key", return_value=True):
+                    with patch("src.cli.config._set_env_key", side_effect=_track_set_env):
+                        runner = CliRunner()
+                        result = runner.invoke(cli, ["setup"], input=piped_input)
+
+        assert result.exit_code == 0, result.output
+        assert "anthropic_api_key" in set_env_calls
+        assert "anthropic_api_base" in set_env_calls
+        assert set_env_calls["anthropic_api_base"] == "https://gateway.ai.vercel.app/v1"
 
 
 class TestValidateApiKey:
@@ -238,6 +271,18 @@ class TestValidateApiKey:
         wizard = SetupWizard(Path("/tmp/test"))
         result = wizard._validate_api_key("unknown_provider", "some-key")
         assert result is True
+
+    def test_validate_key_passes_base_url(self):
+        """Custom base_url is forwarded to litellm as api_base."""
+        wizard = SetupWizard(Path("/tmp/test"))
+
+        mock_response = MagicMock()
+        with patch("litellm.acompletion", new_callable=AsyncMock, return_value=mock_response) as mock_call:
+            wizard._validate_api_key("openai", "sk-key", base_url="https://custom.api/v1")
+
+        mock_call.assert_called_once()
+        call_kwargs = mock_call.call_args
+        assert call_kwargs.kwargs.get("api_base") == "https://custom.api/v1"
 
 
 class TestSummaryCard:
