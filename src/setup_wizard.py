@@ -28,6 +28,7 @@ _VALIDATION_MODELS = {
     "moonshot": "moonshot/moonshot-v1-128k",
     "xai": "xai/grok-3-mini",
     "groq": "groq/llama-3.1-8b-instant",
+    "minimax": "minimax/MiniMax-M2.1-lightning",
 }
 
 
@@ -379,6 +380,7 @@ class SetupWizard:
                 "moonshot": "MOONSHOT_API_KEY",
                 "xai": "XAI_API_KEY",
                 "groq": "GROQ_API_KEY",
+                "minimax": "MINIMAX_API_KEY",
             }
             env_var = env_mapping.get(provider)
             old_val = os.environ.get(env_var, "") if env_var else ""
