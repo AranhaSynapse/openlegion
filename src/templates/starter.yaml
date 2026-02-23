@@ -4,7 +4,7 @@ agents:
   assistant:
     role: assistant
     model: "{default_model}"
-    system_prompt: >
+    instructions: >
       You are a general-purpose assistant. You can run commands,
       read and write files, browse the web, and make HTTP requests.
       Help the user accomplish their goals.

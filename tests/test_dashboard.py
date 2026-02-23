@@ -223,7 +223,7 @@ class TestDashboardAgentCRUD:
             "llm": {"default_model": "openai/gpt-4o-mini"},
             "agents": {
                 "new_agent": {
-                    "role": "tester", "system_prompt": "test",
+                    "role": "tester",
                     "skills_dir": "", "model": "openai/gpt-4o-mini", "browser_backend": "",
                 },
             },
@@ -508,7 +508,6 @@ class TestDashboardAgentConfig:
                 "alpha": {
                     "model": "openai/gpt-4.1",
                     "role": "researcher",
-                    "system_prompt": "You research.",
                     "budget": {"daily_usd": 5.0},
                     "browser_backend": "stealth",
                 },
@@ -521,6 +520,7 @@ class TestDashboardAgentConfig:
         assert data["model"] == "openai/gpt-4.1"
         assert data["role"] == "researcher"
         assert data["browser_backend"] == "stealth"
+        assert "system_prompt" not in data
 
     def test_get_config_not_found(self):
         resp = self.client.get("/dashboard/api/agents/nonexistent/config")
@@ -554,26 +554,6 @@ class TestDashboardAgentConfig:
                 json={"model": "invalid/model"},
             )
             assert resp.status_code == 400
-
-    @patch("src.cli.config._update_agent_field")
-    @patch("src.cli.config._load_config")
-    def test_put_config_sanitizes_prompt(self, mock_load, mock_update):
-        mock_load.return_value = {
-            "llm": {"default_model": "openai/gpt-4.1-mini"},
-            "agents": {"alpha": {}},
-        }
-        # U+200B zero-width space should be stripped
-        resp = self.client.put(
-            "/dashboard/api/agents/alpha/config",
-            json={"system_prompt": "Hello\u200B world"},
-        )
-        assert resp.status_code == 200
-        assert "system_prompt" in resp.json()["updated"]
-        # The sanitized prompt was passed to _update_agent_field
-        call_args = mock_update.call_args_list
-        prompt_call = [c for c in call_args if c[0][1] == "system_prompt"]
-        assert len(prompt_call) == 1
-        assert "\u200b" not in prompt_call[0][0][2]
 
     @patch("src.cli.config._update_agent_field")
     @patch("src.cli.config._load_config")

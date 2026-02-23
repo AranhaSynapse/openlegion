@@ -98,7 +98,7 @@ class TestSandboxBackend:
             agent_id="alpha",
             role="test",
             skills_dir=str(skills_src),
-            system_prompt="You are test",
+            system_prompt="",
             model="openai/gpt-4o-mini",
         )
 
@@ -133,7 +133,7 @@ class TestSandboxBackend:
             agent_id="beta",
             role="scraper",
             skills_dir="",
-            system_prompt="You scrape",
+            system_prompt="",
             model="openai/gpt-4o-mini",
             browser_backend="stealth",
         )
@@ -159,7 +159,7 @@ class TestSandboxBackend:
             agent_id="gamma",
             role="helper",
             skills_dir="",
-            system_prompt="You help",
+            system_prompt="",
             model="openai/gpt-4o-mini",
         )
 
@@ -184,7 +184,7 @@ class TestSandboxBackend:
             agent_id="delta",
             role="helper",
             skills_dir="",
-            system_prompt="You help",
+            system_prompt="",
             model="openai/gpt-4o-mini",
         )
 

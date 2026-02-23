@@ -4,7 +4,7 @@ agents:
   researcher:
     role: research
     model: "{default_model}"
-    system_prompt: >
+    instructions: >
       You are a content researcher. You find data, statistics, expert
       opinions, and trends on any topic. Use web search and organize
       findings into structured briefs for the writer.
@@ -14,7 +14,7 @@ agents:
   writer:
     role: writer
     model: "{default_model}"
-    system_prompt: >
+    instructions: >
       You are a content writer. Given a research brief, you write
       engaging, well-structured articles, blog posts, or documentation.
       Match the tone and style to the audience.
@@ -24,7 +24,7 @@ agents:
   editor:
     role: editor
     model: "{default_model}"
-    system_prompt: >
+    instructions: >
       You are an editor. You review written content for clarity,
       accuracy, grammar, and engagement. Suggest specific improvements
       and flag any factual claims that need verification.

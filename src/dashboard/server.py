@@ -151,7 +151,7 @@ def create_dashboard_router(
                 agent_id=name,
                 role=role,
                 skills_dir=skills_dir,
-                system_prompt=acfg.get("system_prompt", ""),
+                system_prompt="",
                 model=acfg.get("model", model),
                 browser_backend=acfg.get("browser_backend", ""),
                 thinking=acfg.get("thinking", ""),
@@ -274,7 +274,6 @@ def create_dashboard_router(
             "id": agent_id,
             "model": agent_cfg.get("model", default_model),
             "role": agent_cfg.get("role", ""),
-            "system_prompt": agent_cfg.get("system_prompt", ""),
             "budget": agent_cfg.get("budget", {}),
             "browser_backend": agent_cfg.get("browser_backend", "basic") or "basic",
         }
@@ -315,11 +314,6 @@ def create_dashboard_router(
         if "role" in body:
             _update_agent_field(agent_id, "role", body["role"])
             updated.append("role")
-
-        if "system_prompt" in body:
-            sanitized = sanitize_for_prompt(body["system_prompt"])
-            _update_agent_field(agent_id, "system_prompt", sanitized)
-            updated.append("system_prompt")
 
         if "budget" in body:
             budget_val = body["budget"]

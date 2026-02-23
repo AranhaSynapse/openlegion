@@ -1025,3 +1025,26 @@ class TestPermissionsDefault:
         assert "llm" in perms.allowed_apis
         assert pm.can_use_api("some_unknown_agent", "llm")
         os.unlink(f.name)
+
+
+class TestEnsureAllAgentPermissions:
+    def test_backfills_missing_agents(self, tmp_path):
+        """_ensure_all_agent_permissions adds permissions for agents not yet in permissions.json."""
+        from unittest.mock import patch
+
+        from src.cli.config import _ensure_all_agent_permissions
+
+        agents_yaml = tmp_path / "agents.yaml"
+        agents_yaml.write_text("agents:\n  alice:\n    role: helper\n  bob:\n    role: coder\n")
+        perms_file = tmp_path / "permissions.json"
+        perms_file.write_text(json.dumps({"permissions": {"alice": {"can_message": ["orchestrator"]}}}))
+
+        with patch("src.cli.config.AGENTS_FILE", agents_yaml), \
+             patch("src.cli.config.CONFIG_FILE", tmp_path / "mesh.yaml"), \
+             patch("src.cli.config.PERMISSIONS_FILE", perms_file):
+            _ensure_all_agent_permissions()
+
+        perms = json.loads(perms_file.read_text())
+        assert "alice" in perms["permissions"]
+        assert "bob" in perms["permissions"]
+        assert perms["permissions"]["bob"]["can_manage_vault"] is True

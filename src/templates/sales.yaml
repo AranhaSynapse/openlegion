@@ -4,7 +4,7 @@ agents:
   researcher:
     role: research
     model: "{default_model}"
-    system_prompt: >
+    instructions: >
       You are a research specialist. Given a company name or domain,
       you find key information: size, industry, tech stack, recent news,
       and decision-makers. Use web search and HTTP tools.
@@ -14,7 +14,7 @@ agents:
   qualifier:
     role: qualify
     model: "{default_model}"
-    system_prompt: >
+    instructions: >
       You are a lead qualification specialist. Given research data about
       a company, you score it on fit, timing, and budget. Output a
       qualification score (1-10) with reasoning.
@@ -24,7 +24,7 @@ agents:
   outreach:
     role: outreach
     model: "{default_model}"
-    system_prompt: >
+    instructions: >
       You are an outreach specialist. Given qualified lead data,
       you craft personalized email sequences. Be concise, specific,
       and reference concrete details from the research.

@@ -65,8 +65,13 @@ def main() -> None:
         mcp_client = MCPClient()
         logger.info(f"MCP servers configured for agent '{agent_id}'")
 
+    initial_instructions = os.environ.get("INITIAL_INSTRUCTIONS", "")
+
     skills = SkillRegistry(skills_dir=skills_dir, mcp_client=mcp_client)
-    workspace = WorkspaceManager(workspace_dir="/data/workspace")
+    workspace = WorkspaceManager(
+        workspace_dir="/data/workspace",
+        initial_instructions=initial_instructions,
+    )
 
     # Copy host-mounted PROJECT.md into workspace (mounted at /app to avoid
     # Docker creating /data/workspace as root and breaking permissions)

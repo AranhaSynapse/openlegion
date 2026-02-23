@@ -208,6 +208,10 @@ class RuntimeContext:
         from src.host.permissions import PermissionMatrix
         from src.host.traces import TraceStore
 
+        # Backfill permissions for agents missing from permissions.json
+        from src.cli.config import _ensure_all_agent_permissions
+        _ensure_all_agent_permissions()
+
         # Ensure collaborative permissions are up to date before loading
         if self.cfg.get("collaboration", False):
             from src.cli.config import _set_collaborative_permissions
@@ -270,12 +274,18 @@ class RuntimeContext:
             agent_mcp_servers = agent_cfg.get("mcp_servers") or None
             agent_browser_backend = agent_cfg.get("browser_backend", "")
             agent_thinking = agent_cfg.get("thinking", "")
+
+            # Seed AGENTS.md from initial_instructions on first boot
+            initial_instructions = agent_cfg.get("initial_instructions", "")
+            if initial_instructions:
+                self.runtime.extra_env["INITIAL_INSTRUCTIONS"] = initial_instructions
+
             try:
                 url = self.runtime.start_agent(
                     agent_id=agent_id,
                     role=agent_cfg["role"],
                     skills_dir=skills_dir,
-                    system_prompt=agent_cfg.get("system_prompt", ""),
+                    system_prompt="",
                     model=agent_model,
                     mcp_servers=agent_mcp_servers,
                     browser_backend=agent_browser_backend,
@@ -303,7 +313,7 @@ class RuntimeContext:
                         agent_id=agent_id,
                         role=agent_cfg["role"],
                         skills_dir=skills_dir,
-                        system_prompt=agent_cfg.get("system_prompt", ""),
+                        system_prompt="",
                         model=agent_model,
                         mcp_servers=agent_mcp_servers,
                         browser_backend=agent_browser_backend,
@@ -311,6 +321,9 @@ class RuntimeContext:
                     )
                 else:
                     raise
+
+            # Clean up per-agent env var so it doesn't leak to the next agent
+            self.runtime.extra_env.pop("INITIAL_INSTRUCTIONS", None)
             self.router.register_agent(agent_id, url, role=agent_cfg.get("role", ""))
             if isinstance(self.transport, HttpTransport):
                 self.transport.register(agent_id, url)

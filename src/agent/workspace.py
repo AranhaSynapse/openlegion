@@ -92,8 +92,9 @@ class WorkspaceManager:
     ERRORS_FILE = "learnings/errors.md"
     CORRECTIONS_FILE = "learnings/corrections.md"
 
-    def __init__(self, workspace_dir: str = "/data/workspace"):
+    def __init__(self, workspace_dir: str = "/data/workspace", initial_instructions: str = ""):
         self.root = Path(workspace_dir)
+        self._initial_instructions = initial_instructions
         self._ensure_scaffold()
 
     def _ensure_scaffold(self) -> None:
@@ -104,7 +105,16 @@ class WorkspaceManager:
         for filename, default_content in _SCAFFOLD_FILES.items():
             path = self.root / filename
             if not path.exists():
-                path.write_text(default_content)
+                # Seed AGENTS.md from template instructions on first creation
+                if filename == "AGENTS.md" and self._initial_instructions:
+                    content = (
+                        "# Agent Instructions\n\n"
+                        + self._initial_instructions.strip()
+                        + "\n"
+                    )
+                    path.write_text(content)
+                else:
+                    path.write_text(default_content)
                 logger.info(f"Created {filename}")
 
     # ── Reading ──────────────────────────────────────────────

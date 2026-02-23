@@ -134,14 +134,12 @@ def agent_add(name: str | None, model_override: str | None, browser_override: st
               type=click.Choice(["basic", "stealth", "advanced"]),
               help="Set browser backend")
 @click.option("--description", "desc_override", default=None, help="Set role/description")
-@click.option("--system-prompt", "sysprompt_override", default=None, help="Set system prompt")
 @click.option("--budget", "budget_override", default=None, type=float, help="Set daily budget (USD)")
 def agent_edit(
     name: str | None,
     model_override: str | None,
     browser_override: str | None,
     desc_override: str | None,
-    sysprompt_override: str | None,
     budget_override: float | None,
 ):
     """Change an agent's settings.
@@ -165,7 +163,7 @@ def agent_edit(
     # Direct flag mode: apply each provided flag
     has_flags = any(v is not None for v in [
         model_override, browser_override, desc_override,
-        sysprompt_override, budget_override,
+        budget_override,
     ])
     if has_flags:
         agent_cfg = cfg["agents"][name]
@@ -195,11 +193,6 @@ def agent_edit(
         if desc_override is not None:
             _update_agent_field(name, "role", desc_override)
             click.echo(f"Agent '{name}' description updated.")
-            changed = True
-
-        if sysprompt_override is not None:
-            _update_agent_field(name, "system_prompt", sysprompt_override)
-            click.echo(f"Agent '{name}' system prompt updated.")
             changed = True
 
         if budget_override is not None:
