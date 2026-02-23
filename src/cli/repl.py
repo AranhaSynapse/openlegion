@@ -148,6 +148,10 @@ class REPLSession:
         self._inline_setup()
         while True:
             try:
+                # Detect agent removed externally (e.g. via dashboard)
+                if self.current and self.current not in self.ctx.agents:
+                    click.echo(f"Agent '{self.current}' is no longer available.")
+                    self.current = None
                 if self.current is None and self.ctx.agents:
                     self.current = next(iter(self.ctx.agents))
                     click.echo(f"Now chatting with '{self.current}'.")
@@ -263,7 +267,7 @@ class REPLSession:
             browser_backend=add_browser_backend,
             thinking=add_thinking,
         )
-        self.ctx.router.register_agent(new_name, url)
+        self.ctx.router.register_agent(new_name, url, role=new_desc)
         if isinstance(self.ctx.transport, HttpTransport):
             self.ctx.transport.register(new_name, url)
         click.echo(f"Starting '{new_name}'...")

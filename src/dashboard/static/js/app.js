@@ -157,6 +157,13 @@ function dashboard() {
     _cronInterval: null,
     _seenEventIds: new Set(),
 
+    // ── Helpers ────────────────────────────────────────────
+
+    _needsBrightDataWarning(browserBackend) {
+      return browserBackend === 'advanced' && this.settingsData &&
+        !(this.settingsData?.credentials?.names || []).includes('brightdata_cdp_url');
+    },
+
     // ── Computed ───────────────────────────────────────────
 
     get showOnboarding() {
@@ -721,8 +728,7 @@ function dashboard() {
         this.cancelConfigEdit();
         return;
       }
-      if (body.browser_backend === 'advanced' && this.settingsData &&
-          !(this.settingsData.credentials.names || []).includes('brightdata_cdp_url')) {
+      if (this._needsBrightDataWarning(body.browser_backend)) {
         if (!confirm('The Advanced (Bright Data) browser requires a "brightdata_cdp_url" credential, which is not configured yet. The agent will fall back to basic browsing until you add it via /addkey or the System tab.\n\nContinue anyway?')) return;
       }
       try {
@@ -771,8 +777,7 @@ function dashboard() {
     async addAgent() {
       const f = this.addAgentForm;
       if (!f.name.trim()) { this.showToast('Name is required'); return; }
-      if (f.browser_backend === 'advanced' && this.settingsData &&
-          !(this.settingsData.credentials.names || []).includes('brightdata_cdp_url')) {
+      if (this._needsBrightDataWarning(f.browser_backend)) {
         if (!confirm('The Advanced (Bright Data) browser requires a "brightdata_cdp_url" credential, which is not configured yet. The agent will fall back to basic browsing until you add it via /addkey or the System tab.\n\nContinue anyway?')) return;
       }
       this.addAgentLoading = true;
