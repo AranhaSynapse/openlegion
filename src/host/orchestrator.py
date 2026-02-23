@@ -184,7 +184,7 @@ class Orchestrator:
         """Load all workflow YAML files."""
         wf_path = Path(workflows_dir)
         if not wf_path.exists():
-            logger.debug(f"No workflows directory at %s — skipping", workflows_dir)
+            logger.debug("No workflows directory at %s — skipping", workflows_dir)
             return
         for yaml_file in wf_path.glob("*.yaml"):
             try:

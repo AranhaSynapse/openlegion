@@ -9,8 +9,8 @@ from src.agent.builtins.subagent_tool import (
     MAX_CONCURRENT,
     MAX_DEPTH,
     _active_subagents,
-    _clone_skill_registry,
     _cleanup_depth,
+    _clone_skill_registry,
     _depth_map,
     _get_depth,
     _parent_llm_refs,
@@ -43,7 +43,7 @@ class TestSpawnSubagentBasic:
 
         # Mock execute_task to return immediately
         from src.shared.types import TaskResult
-        mock_result = TaskResult(
+        TaskResult(
             task_id="test",
             status="complete",
             result={"answer": "42"},

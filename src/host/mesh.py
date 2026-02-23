@@ -41,6 +41,7 @@ class Blackboard:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA busy_timeout=5000")
         self._event_bus = event_bus
+        self._last_ttl_gc: float = 0.0
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -137,11 +138,13 @@ class Blackboard:
 
     def list_by_prefix(self, prefix: str) -> list[BlackboardEntry]:
         """List all entries matching a key prefix."""
+        # Escape LIKE wildcards so literal '%' and '_' in keys match exactly
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         rows = self.db.execute(
             "SELECT key, value, written_by, workflow_id, "
             "created_at, updated_at, ttl, version FROM entries "
-            "WHERE key LIKE ? ORDER BY key",
-            (prefix + "%",),
+            "WHERE key LIKE ? ESCAPE '\\' ORDER BY key",
+            (escaped + "%",),
         ).fetchall()
         return [
             BlackboardEntry(
@@ -180,7 +183,6 @@ class Blackboard:
     _EVENT_LOG_GC_THRESHOLD = 10_000
     _EVENT_LOG_GC_KEEP = 5_000
     _TTL_GC_INTERVAL = 60  # seconds between TTL garbage collection runs
-    _last_ttl_gc: float = 0.0
 
     def _log_event(self, event_type: str, key: str, agent_id: str, data: str | None = None) -> None:
         self.db.execute(
@@ -210,9 +212,9 @@ class Blackboard:
         doesn't accidentally commit unrelated pending writes.
         """
         now = time.monotonic()
-        if now - Blackboard._last_ttl_gc < self._TTL_GC_INTERVAL:
+        if now - self._last_ttl_gc < self._TTL_GC_INTERVAL:
             return
-        Blackboard._last_ttl_gc = now
+        self._last_ttl_gc = now
         self.gc_expired()
 
     def close(self) -> None:
@@ -235,7 +237,7 @@ class PubSub:
 
     def __init__(self, db_path: str | None = None) -> None:
         self.subscriptions: dict[str, list[str]] = {}
-        self.event_log: list[dict] = []
+        self.event_log: deque[dict] = deque(maxlen=self._EVENT_GC_KEEP)
         self._db: sqlite3.Connection | None = None
 
         if db_path is not None:
@@ -320,9 +322,6 @@ class PubSub:
     def publish(self, topic: str, event: Any) -> list[str]:
         """Record an event and return the list of subscribers for it."""
         self.event_log.append({"topic": topic, "event": event})
-        # Cap in-memory event log
-        if len(self.event_log) > self._EVENT_GC_THRESHOLD:
-            self.event_log = self.event_log[-self._EVENT_GC_KEEP:]
         if self._db is not None:
             self._db.execute(
                 "INSERT INTO events (topic, data) VALUES (?, ?)",
@@ -402,17 +401,31 @@ class MessageRouter:
                     event_type="message_route",
                     detail=f"{message.from_agent}->{message.to} ({message.type})",
                 )
-        try:
-            client = await self._get_client()
-            response = await client.post(
-                f"{target_url}/message",
-                json=message.model_dump(mode="json"),
-                timeout=message.ttl,
-            )
-            return response.json()
-        except httpx.HTTPError as e:
-            logger.error(f"Failed to route message to {message.to}: {e}")
-            return {"error": f"Delivery failed: {e}"}
+        import asyncio as _asyncio
+
+        payload = message.model_dump(mode="json")
+        last_err: Exception | None = None
+        for attempt in range(2):  # 1 attempt + 1 retry
+            try:
+                client = await self._get_client()
+                response = await client.post(
+                    f"{target_url}/message",
+                    json=payload,
+                    timeout=message.ttl,
+                )
+                return response.json()
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                last_err = e
+                if attempt == 0:
+                    logger.warning(
+                        f"Transient error routing to {message.to}, retrying in 1s: {e}"
+                    )
+                    await _asyncio.sleep(1)
+            except httpx.HTTPError as e:
+                logger.error(f"Failed to route message to {message.to}: {e}")
+                return {"error": f"Delivery failed: {e}"}
+        logger.error(f"Failed to route message to {message.to} after retry: {last_err}")
+        return {"error": f"Delivery failed after retry: {last_err}"}
 
     def _resolve_target(self, target: str) -> Optional[str]:
         """Resolve agent ID or capability to a container URL."""

@@ -10,9 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.agent.context import (
-    MODEL_CONTEXT_WINDOWS,
-    ContextManager,
     _DEFAULT_CONTEXT_WINDOW,
+    ContextManager,
     estimate_tokens,
 )
 from src.agent.workspace import WorkspaceManager
@@ -107,7 +106,10 @@ class TestCompaction:
             llm = MagicMock()
             llm.chat = AsyncMock(
                 side_effect=[
-                    LLMResponse(content='[{"key": "topic", "value": "discussed Python and ML", "category": "fact"}]', tokens_used=30),
+                    LLMResponse(
+                        content='[{"key": "topic", "value": "discussed Python and ML", "category": "fact"}]',
+                        tokens_used=30,
+                    ),
                     LLMResponse(content="Summary: discussed Python and ML.", tokens_used=30),
                 ]
             )

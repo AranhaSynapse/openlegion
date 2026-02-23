@@ -1,12 +1,8 @@
 """Unit tests for model failover chain."""
 
 import time
-from unittest.mock import patch
-
-import pytest
 
 from src.host.failover import FailoverChain, ModelHealthTracker
-
 
 # ── ModelHealthTracker ────────────────────────────────────────
 

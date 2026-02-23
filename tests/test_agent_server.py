@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient

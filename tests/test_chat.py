@@ -103,7 +103,9 @@ class TestChatMode:
     @pytest.mark.asyncio
     async def test_chat_reset_flushes_memory(self):
         """reset_chat flushes to memory before clearing when context_manager exists."""
-        import tempfile, shutil
+        import shutil
+        import tempfile
+
         from src.agent.context import ContextManager
         from src.agent.workspace import WorkspaceManager
 

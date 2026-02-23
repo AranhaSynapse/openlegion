@@ -22,12 +22,11 @@ import os
 import re
 import shutil
 import tempfile
+from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
-
-from collections import defaultdict
 
 from src.shared.utils import generate_id, setup_logging
 

@@ -13,7 +13,6 @@ import pytest
 from src.host.traces import TraceStore
 from src.shared.trace import TRACE_HEADER, current_trace_id, new_trace_id, trace_headers
 
-
 # ── TraceStore ───────────────────────────────────────────────
 
 class TestTraceStore:
@@ -124,7 +123,6 @@ class TestTraceStore:
 
     def test_list_trace_summaries_trigger_fields(self):
         """Summaries include trigger_detail, first_event_type, and trigger_preview."""
-        import json
         self.store.record(
             "tr_rich", "dispatch", "alpha", "chat", detail="hello world",
             meta={"prompt_preview": "What is the capital of France?"},

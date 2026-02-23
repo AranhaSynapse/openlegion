@@ -39,7 +39,17 @@ Three trust zones: **User** (full trust), **Mesh** (trusted coordinator), **Agen
 | `src/host/health.py` | Health monitor with auto-restart |
 | `src/host/costs.py` | Per-agent cost tracking + budget enforcement |
 | `src/host/cron.py` | Cron scheduler with heartbeat support |
+| `src/host/failover.py` | Model health tracking + failover chains |
+| `src/host/traces.py` | Request tracing + grouped summaries |
+| `src/host/transcript.py` | Conversation transcript formatting |
+| `src/host/webhooks.py` | Named webhook endpoints |
+| `src/host/watchers.py` | File watcher with polling |
+| `src/host/containers.py` | Docker image build + management |
 | `src/channels/base.py` | Abstract channel with unified REPL-like UX |
+| `src/setup_wizard.py` | Interactive setup wizard with validation |
+| `src/marketplace.py` | Git-based skill marketplace (install/remove) |
+| `src/dashboard/server.py` | Dashboard FastAPI router + API |
+| `src/dashboard/events.py` | EventBus for real-time streaming |
 | `src/cli/` | CLI package (see below) |
 | `src/cli/main.py` | Click commands and entry point |
 | `src/cli/config.py` | Config loading, Docker helpers, agent management |
@@ -153,11 +163,16 @@ pytest tests/test_loop.py -x -v
 
 | Source | Test file |
 |---|---|
-| `src/agent/loop.py` | `tests/test_loop.py` |
-| `src/agent/memory.py` | `tests/test_memory.py` |
-| `src/agent/workspace.py` | `tests/test_workspace.py` |
+| `src/agent/loop.py` | `tests/test_loop.py`, `tests/test_chat.py` |
+| `src/agent/memory.py` | `tests/test_memory.py`, `tests/test_memory_integration.py` |
+| `src/agent/workspace.py` | `tests/test_workspace.py`, `tests/test_chat_workspace.py` |
 | `src/agent/context.py` | `tests/test_context.py` |
-| `src/agent/skills.py` + builtins | `tests/test_skills.py`, `tests/test_builtins.py` |
+| `src/agent/skills.py` + builtins | `tests/test_skills.py`, `tests/test_builtins.py`, `tests/test_memory_tools.py` |
+| `src/agent/builtins/vault_tool.py` | `tests/test_vault.py` |
+| `src/agent/builtins/subagent_tool.py` | `tests/test_subagent.py` |
+| `src/agent/mcp_client.py` | `tests/test_mcp_client.py`, `tests/test_mcp_e2e.py` |
+| `src/agent/loop_detector.py` | `tests/test_loop_detector.py` |
+| `src/agent/server.py` | `tests/test_agent_server.py` |
 | `src/host/mesh.py` | `tests/test_mesh.py` |
 | `src/host/orchestrator.py` | `tests/test_orchestrator.py` |
 | `src/host/credentials.py` | `tests/test_credentials.py` |
@@ -165,12 +180,22 @@ pytest tests/test_loop.py -x -v
 | `src/host/transport.py` | `tests/test_transport.py` |
 | `src/host/costs.py` | `tests/test_costs.py` |
 | `src/host/cron.py` | `tests/test_cron.py` |
-| `src/agent/server.py` | `tests/test_agent_server.py` |
-| `src/dashboard/server.py` (workspace) | `tests/test_dashboard_workspace.py` |
+| `src/host/health.py` | `tests/test_health.py` |
+| `src/host/lanes.py` | `tests/test_lanes.py` |
+| `src/host/traces.py` | `tests/test_traces.py` |
+| `src/host/transcript.py` | `tests/test_transcript.py` |
+| `src/host/failover.py` | `tests/test_failover.py` |
+| `src/host/webhooks.py` | `tests/test_webhooks.py` |
+| `src/host/watchers.py` | `tests/test_watchers.py` |
+| `src/dashboard/server.py` | `tests/test_dashboard.py`, `tests/test_dashboard_workspace.py` |
+| `src/marketplace.py` | `tests/test_marketplace.py` |
 | `src/channels/base.py` | `tests/test_channels.py` |
-| `src/cli/` | `tests/test_cli_commands.py` |
+| `src/channels/slack.py` | `tests/test_slack.py` |
+| `src/channels/whatsapp.py` | `tests/test_whatsapp.py` |
+| `src/shared/types.py` | `tests/test_types.py` |
 | `src/shared/utils.py` (sanitization) | `tests/test_sanitize.py` |
-| Chat mode | `tests/test_chat.py`, `tests/test_chat_workspace.py` |
+| `src/cli/` | `tests/test_cli_commands.py`, `tests/test_setup_wizard.py` |
+| Cross-component | `tests/test_integration.py`, `tests/test_events.py` |
 
 ## Common Mistakes to Avoid
 

@@ -7,6 +7,7 @@ the MCP protocol. Tools are exposed to the LLM alongside built-in skills.
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import AsyncExitStack
 from typing import Any
 
@@ -130,7 +131,10 @@ class MCPClient:
         original_name = self._tool_schemas[name].get("_mcp_original_name", name)
 
         try:
-            result = await session.call_tool(original_name, arguments)
+            result = await asyncio.wait_for(
+                session.call_tool(original_name, arguments),
+                timeout=60,
+            )
             if result.isError:
                 text = "\n".join(
                     block.text for block in result.content
@@ -142,6 +146,9 @@ class MCPClient:
                 if hasattr(block, "text"):
                     text_parts.append(block.text)
             return {"result": "\n".join(text_parts)}
+        except asyncio.TimeoutError:
+            logger.error(f"MCP tool '{name}' timed out after 60s")
+            return {"error": f"MCP tool '{name}' timed out after 60s"}
         except Exception as e:
             logger.error(f"MCP tool '{name}' call failed: {e}")
             return {"error": str(e)}

@@ -65,11 +65,11 @@ model: anthropic/claude-haiku-4-5-20251001
 model: anthropic/claude-sonnet-4-6
 
 # OpenAI
-model: openai/gpt-4o-mini
-model: openai/gpt-4o
+model: openai/gpt-4.1-mini
+model: openai/gpt-4.1
 
 # Google
-model: gemini/gemini-2.0-flash
+model: gemini/gemini-2.5-flash
 
 # Other supported providers
 model: deepseek/deepseek-chat
@@ -93,7 +93,7 @@ llm:
   temperature: 0.7
   failover:
     primary: anthropic/claude-sonnet-4-6
-    fallback: openai/gpt-4o-mini
+    fallback: openai/gpt-4.1-mini
 
 channels:
   telegram:

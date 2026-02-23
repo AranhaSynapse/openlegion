@@ -15,7 +15,6 @@ import pytest
 
 from src.host.lanes import SILENT_REPLY_TOKEN, LaneManager
 
-
 # ── Followup mode ────────────────────────────────────────────
 
 

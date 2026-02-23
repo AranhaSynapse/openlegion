@@ -22,7 +22,7 @@ Add `mcp_servers` to any agent in `config/agents.yaml`:
 agents:
   analyst:
     role: "Data analyst"
-    model: "openai/gpt-4o-mini"
+    model: "openai/gpt-4.1-mini"
     mcp_servers:
       - name: filesystem
         command: mcp-server-filesystem

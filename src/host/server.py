@@ -17,7 +17,7 @@ from collections import defaultdict
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import StreamingResponse
 
 from src.shared.types import AgentMessage, APIProxyRequest, APIProxyResponse, MeshEvent, NotifyRequest
@@ -86,7 +86,7 @@ def create_mesh_app(
 
     def _validate_agent_id(agent_id: str) -> str:
         if not agent_id or not _AGENT_ID_RE.match(agent_id):
-            raise HTTPException(400, f"Invalid agent_id: must be 1-64 alphanumeric/hyphen/underscore chars")
+            raise HTTPException(400, "Invalid agent_id: must be 1-64 alphanumeric/hyphen/underscore chars")
         return agent_id
 
     def _validate_port(port: int) -> int:

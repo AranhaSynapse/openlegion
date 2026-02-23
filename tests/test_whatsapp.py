@@ -15,7 +15,6 @@ from fastapi.testclient import TestClient
 
 from src.channels.whatsapp import WhatsAppChannel
 
-
 # ── helpers ──────────────────────────────────────────────────────
 
 def _make_channel(

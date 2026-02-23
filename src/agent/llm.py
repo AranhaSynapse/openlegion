@@ -6,6 +6,7 @@ The mesh tracks token usage and enforces budgets.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from typing import AsyncIterator
@@ -44,15 +45,20 @@ class LLMClient:
         self.embedding_model = embedding_model
         self.thinking = thinking
         self._client: httpx.AsyncClient | None = None
+        self._client_lock = asyncio.Lock()
         self._auth_token: str = os.environ.get("MESH_AUTH_TOKEN", "")
 
     async def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
-            headers: dict[str, str] = {}
-            if self._auth_token:
-                headers["Authorization"] = f"Bearer {self._auth_token}"
-            self._client = httpx.AsyncClient(timeout=120, headers=headers)
-        return self._client
+        if self._client is not None and not self._client.is_closed:
+            return self._client
+        async with self._client_lock:
+            # Double-check after acquiring lock
+            if self._client is None or self._client.is_closed:
+                headers: dict[str, str] = {}
+                if self._auth_token:
+                    headers["Authorization"] = f"Bearer {self._auth_token}"
+                self._client = httpx.AsyncClient(timeout=120, headers=headers)
+            return self._client
 
     async def close(self) -> None:
         if self._client and not self._client.is_closed:

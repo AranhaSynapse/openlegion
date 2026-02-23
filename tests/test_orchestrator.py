@@ -294,7 +294,6 @@ async def test_execute_step_uses_future():
 @pytest.mark.asyncio
 async def test_execute_step_timeout():
     """_execute_step times out if no result is pushed and no polling fallback."""
-    import asyncio
     from unittest.mock import AsyncMock, MagicMock
 
     orch = Orchestrator(mesh_url="http://localhost:8420", workflows_dir="/nonexistent")

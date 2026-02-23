@@ -462,7 +462,9 @@ async def update_workspace(
             agent_id = getattr(mesh_client, "agent_id", "agent")
             if old_content.strip() == content.strip():
                 summary = f"[{agent_id}] Re-saved {filename} (no changes)."
-            elif not old_content.strip() or old_content.strip().startswith(("# Heartbeat Rules\n\nYou are woken", "# User Context\n\nRecord user")):
+            elif not old_content.strip() or old_content.strip().startswith(
+                ("# Heartbeat Rules\n\nYou are woken", "# User Context\n\nRecord user")
+            ):
                 summary = f"[{agent_id}] Initialized {filename} with custom content."
             else:
                 summary = f"[{agent_id}] Updated {filename} based on what I've learned."

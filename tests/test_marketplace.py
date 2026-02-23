@@ -1,11 +1,8 @@
 """Tests for skill marketplace: install, list, remove."""
 
 import json
-import shutil
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from src.marketplace import (
     _parse_skill_manifest,

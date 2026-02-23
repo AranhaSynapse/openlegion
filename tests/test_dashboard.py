@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
-from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI
@@ -219,7 +218,12 @@ class TestDashboardAgentCRUD:
     def test_post_agent_success(self, mock_load, mock_create):
         mock_load.return_value = {
             "llm": {"default_model": "openai/gpt-4o-mini"},
-            "agents": {"new_agent": {"role": "tester", "system_prompt": "test", "skills_dir": "", "model": "openai/gpt-4o-mini", "browser_backend": ""}},
+            "agents": {
+                "new_agent": {
+                    "role": "tester", "system_prompt": "test",
+                    "skills_dir": "", "model": "openai/gpt-4o-mini", "browser_backend": "",
+                },
+            },
         }
         self.components["runtime"].start_agent.return_value = "http://localhost:8403"
         self.components["runtime"].wait_for_agent = AsyncMock(return_value=True)

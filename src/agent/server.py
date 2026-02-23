@@ -18,14 +18,21 @@ Exposes endpoints for the mesh/orchestrator to interact with:
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
-
 import json as json_module
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from src.shared.types import AgentMessage, AgentStatus, ChatMessage, ChatResponse, SteerMessage, TaskAssignment, TaskResult
+from src.shared.types import (
+    AgentMessage,
+    AgentStatus,
+    ChatMessage,
+    ChatResponse,
+    SteerMessage,
+    TaskAssignment,
+    TaskResult,
+)
 from src.shared.utils import sanitize_for_prompt, setup_logging
 
 if TYPE_CHECKING:

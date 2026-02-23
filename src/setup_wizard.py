@@ -252,7 +252,10 @@ class SetupWizard:
 
         return {}
 
-    def _step_agents(self, total_steps, selected_model, _load_config, _load_templates, _apply_template, _setup_agent_wizard) -> dict | None:
+    def _step_agents(
+        self, total_steps, selected_model, _load_config, _load_templates,
+        _apply_template, _setup_agent_wizard,
+    ) -> dict | None:
         """Step 3: Agent setup. Returns None for 'back'."""
         self._print_step_header(3, total_steps, "Your Agents")
 

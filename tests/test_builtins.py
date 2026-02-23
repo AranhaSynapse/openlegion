@@ -1006,7 +1006,10 @@ class TestParseFact:
     def test_no_separator_long(self):
         from src.agent.builtins.memory_tool import _parse_fact
 
-        long_text = "The user mentioned they prefer to work late at night and want all notifications disabled after 10pm"
+        long_text = (
+            "The user mentioned they prefer to work late at night"
+            " and want all notifications disabled after 10pm"
+        )
         key, value = _parse_fact(long_text)
         assert len(key) <= 60
         assert value == long_text

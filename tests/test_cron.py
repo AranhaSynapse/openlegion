@@ -424,7 +424,7 @@ class TestEnrichedHeartbeat:
         job = sched.add_job(
             agent="test", schedule="every 15m", message="heartbeat", heartbeat=True,
         )
-        result = await sched._execute_job(job)
+        await sched._execute_job(job)
         dispatch.assert_called_once()
         call_msg = dispatch.call_args[0][1]
         assert "Check email every hour" in call_msg
@@ -452,7 +452,7 @@ class TestEnrichedHeartbeat:
         job = sched.add_job(
             agent="test", schedule="every 15m", message="heartbeat", heartbeat=True,
         )
-        result = await sched._execute_job(job)
+        await sched._execute_job(job)
         dispatch.assert_called_once()
         call_msg = dispatch.call_args[0][1]
         assert "Probe Alerts" in call_msg
@@ -476,7 +476,7 @@ class TestEnrichedHeartbeat:
         job = sched.add_job(
             agent="test", schedule="every 15m", message="heartbeat", heartbeat=True,
         )
-        result = await sched._execute_job(job)
+        await sched._execute_job(job)
         dispatch.assert_called_once()
         call_msg = dispatch.call_args[0][1]
         assert "Your Recent Activity" in call_msg
@@ -494,7 +494,7 @@ class TestEnrichedHeartbeat:
         })
         mock_bb = MagicMock()
         mock_bb.list_by_prefix.side_effect = lambda prefix: (
-            [MagicMock(key=f"signals/test/s1", value={"msg": "hi"})]
+            [MagicMock(key="signals/test/s1", value={"msg": "hi"})]
             if "signals" in prefix else []
         )
         sched = CronScheduler(
@@ -570,7 +570,7 @@ class TestEnrichedHeartbeat:
         mock_bb.list_by_prefix.side_effect = (
             lambda prefix: [MagicMock()] if "signals" in prefix else []
         )
-        result = await sched._execute_job(job)
+        await sched._execute_job(job)
         dispatch.assert_called_once()
         # Should still dispatch despite context_fn failure
 

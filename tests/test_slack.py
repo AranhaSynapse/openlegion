@@ -14,7 +14,6 @@ import pytest
 
 from src.channels.slack import SlackChannel, _get_user_key
 
-
 # ── helpers ──────────────────────────────────────────────────────
 
 def _make_channel(

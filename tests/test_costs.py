@@ -7,8 +7,6 @@ import shutil
 import tempfile
 from unittest.mock import patch
 
-import pytest
-
 from src.host.costs import CostTracker
 
 

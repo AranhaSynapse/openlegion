@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from src.agent.builtins.memory_tool import memory_recall, memory_save, memory_search
+from src.agent.builtins.memory_tool import memory_save, memory_search
 from src.agent.workspace import WorkspaceManager
 
 

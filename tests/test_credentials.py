@@ -1,6 +1,6 @@
 """Unit tests for credential vault."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -216,7 +216,6 @@ async def test_stream_failover(monkeypatch):
         # Return an async generator for streaming
         return mock_chunk_generator()
 
-    import json
     with patch("litellm.acompletion", side_effect=mock_acompletion):
         req = APIProxyRequest(
             service="llm", action="chat",
@@ -282,11 +281,8 @@ def test_add_credential_persists_to_env(tmp_path, monkeypatch):
     env_file = tmp_path / ".env"
     env_file.write_text("EXISTING_VAR=keep\n")
 
-    import src.host.credentials as cred_mod
-    original = cred_mod._persist_to_env
     from src.host.credentials import _persist_to_env
 
-    v = CredentialVault()
     _persist_to_env("OPENLEGION_CRED_TEST_KEY", "val123", env_file=str(env_file))
 
     content = env_file.read_text()
@@ -436,7 +432,6 @@ async def test_stream_passes_api_base(monkeypatch):
         captured_kwargs.update(kwargs)
         return mock_chunk_generator()
 
-    import json
     with patch("litellm.acompletion", side_effect=mock_acompletion):
         req = APIProxyRequest(
             service="llm", action="chat",

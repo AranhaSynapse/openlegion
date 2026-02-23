@@ -9,7 +9,6 @@ import pytest
 from src.dashboard.events import BUFFER_SIZE, EventBus, _Subscription
 from src.shared.types import DashboardEvent
 
-
 # === DashboardEvent model tests ===
 
 

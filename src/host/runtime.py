@@ -475,7 +475,10 @@ class SandboxBackend(RuntimeBackend):
         thinking: str = "",
     ) -> str:
         sandbox_name = f"openlegion_{_docker_safe_name(agent_id)}"
-        ws = self._prepare_workspace(agent_id, role, skills_dir, system_prompt, model, mcp_servers=mcp_servers, browser_backend=browser_backend, thinking=thinking)
+        ws = self._prepare_workspace(
+            agent_id, role, skills_dir, system_prompt, model,
+            mcp_servers=mcp_servers, browser_backend=browser_backend, thinking=thinking,
+        )
 
         # Create sandbox with the shell agent type and workspace
         # First creation can be slow (microVM init), allow up to 120s

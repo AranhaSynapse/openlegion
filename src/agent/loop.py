@@ -42,7 +42,7 @@ async def _llm_call_with_retry(llm_chat_fn, *, system, messages, tools, **kwargs
     Retries on: connection errors, timeouts, 429/502/503 status codes.
     Does NOT retry on: budget exceeded (RuntimeError), permanent errors.
     """
-    last_exc = None
+    last_exc: Exception = RuntimeError("LLM call failed after all retries")
     for attempt in range(_MAX_RETRIES + 1):
         try:
             return await llm_chat_fn(system=system, messages=messages, tools=tools, **kwargs)
@@ -943,7 +943,7 @@ class AgentLoop:
                         tool_names.append(name)
 
         # Multi-line aware response summary
-        response_lines = [l.strip() for l in assistant_msg.splitlines() if l.strip()]
+        response_lines = [line.strip() for line in assistant_msg.splitlines() if line.strip()]
         if len(response_lines) <= 2:
             response_summary = " ".join(response_lines)
         else:

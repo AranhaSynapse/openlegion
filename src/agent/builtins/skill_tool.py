@@ -13,10 +13,15 @@ from pathlib import Path
 from src.agent.skills import skill
 
 _FORBIDDEN_IMPORTS = frozenset({
-    "os.system", "subprocess", "shutil.rmtree", "ctypes",
-    "importlib", "socket",
+    "os", "subprocess", "shutil", "ctypes",
+    "importlib", "socket", "sys", "signal",
+    "multiprocessing", "threading",
 })
-_FORBIDDEN_CALLS = frozenset({"eval", "exec", "__import__"})
+_FORBIDDEN_CALLS = frozenset({
+    "eval", "exec", "__import__", "compile",
+    "globals", "locals", "getattr", "setattr", "delattr",
+    "breakpoint", "open",
+})
 _MAX_SKILL_SIZE = 10_000
 
 
@@ -36,13 +41,16 @@ def _validate_skill_code(code: str) -> str | None:
                 if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name) and dec.func.id == "skill":
                     has_skill_decorator = True
         if isinstance(node, (ast.Import, ast.ImportFrom)):
-            module = ""
+            modules: list[str] = []
             if isinstance(node, ast.ImportFrom) and node.module:
-                module = node.module
+                modules.append(node.module)
             elif isinstance(node, ast.Import):
-                module = node.names[0].name if node.names else ""
-            if any(f in module for f in _FORBIDDEN_IMPORTS):
-                return f"Forbidden import: {module}"
+                modules.extend(alias.name for alias in node.names)
+            for module in modules:
+                # Check each segment of the module path (e.g. "os.path" → ["os", "path"])
+                parts = module.split(".")
+                if any(p in _FORBIDDEN_IMPORTS for p in parts) or module in _FORBIDDEN_IMPORTS:
+                    return f"Forbidden import: {module}"
         if isinstance(node, ast.Call):
             func_name = ""
             if isinstance(node.func, ast.Name):

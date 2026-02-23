@@ -216,6 +216,7 @@ class RuntimeContext:
         mesh_port = self.cfg["mesh"]["port"]
 
         self.event_bus = EventBus()
+        self.trace_store = TraceStore()
         self.blackboard = Blackboard(event_bus=self.event_bus)
         self.pubsub = PubSub(db_path="pubsub.db")
         self.permissions = PermissionMatrix()
@@ -233,7 +234,6 @@ class RuntimeContext:
             container_manager=self.runtime,
             trace_store=self.trace_store,
         )
-        self.trace_store = TraceStore()
 
         # Create HealthMonitor early so the dashboard router can reference it.
         # Only register() is called here; start() happens in _start_background().
@@ -663,6 +663,6 @@ class RuntimeContext:
                 click.echo(" /help for commands.")
         else:
             mesh_port = self.cfg["mesh"]["port"]
-            click.echo(f"\nNo agents running. Add one with /add or via the dashboard:")
+            click.echo("\nNo agents running. Add one with /add or via the dashboard:")
             click.echo(f"  http://localhost:{mesh_port}/dashboard")
         click.echo("")

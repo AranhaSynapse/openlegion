@@ -7,7 +7,6 @@ referenced via opaque ``$CRED{name}`` handles.
 
 from __future__ import annotations
 
-import re
 import secrets
 import string
 

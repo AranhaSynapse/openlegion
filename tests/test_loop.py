@@ -200,11 +200,11 @@ def test_get_status():
 
 # === LLM Retry Logic ===
 
-from unittest.mock import patch
+from unittest.mock import patch  # noqa: E402
 
-import httpx
+import httpx  # noqa: E402
 
-from src.agent.loop import _llm_call_with_retry
+from src.agent.loop import _llm_call_with_retry  # noqa: E402
 
 
 @pytest.mark.asyncio
@@ -1013,7 +1013,7 @@ async def test_task_terminate_mid_batch_blocks_tool():
     assignment = TaskAssignment(
         workflow_id="wf1", step_id="s1", task_type="research", input_data={}
     )
-    result = await loop.execute_task(assignment)
+    await loop.execute_task(assignment)
     # Should either terminate or complete, but tools should NOT all execute
     # With 2 per batch: batch 1 (2 ok), batch 2 (2 ok=4 total), batch 3 (block+block),
     # batch 4 (block+block), batch 5 pre-scan: 8 recorded, not 9 → pass,

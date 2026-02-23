@@ -107,8 +107,14 @@ class TestMCPClientCallTool:
         client._sessions = {"server_a": session_a, "server_b": session_b}
         client._tool_to_server = {"tool_a": "server_a", "tool_b": "server_b"}
         client._tool_schemas = {
-            "tool_a": {"name": "tool_a", "description": "", "parameters": {}, "function": "mcp", "_mcp_original_name": "tool_a"},
-            "tool_b": {"name": "tool_b", "description": "", "parameters": {}, "function": "mcp", "_mcp_original_name": "tool_b"},
+            "tool_a": {
+                "name": "tool_a", "description": "", "parameters": {},
+                "function": "mcp", "_mcp_original_name": "tool_a",
+            },
+            "tool_b": {
+                "name": "tool_b", "description": "", "parameters": {},
+                "function": "mcp", "_mcp_original_name": "tool_b",
+            },
         }
 
         session_a.call_tool = AsyncMock(return_value=_make_mock_result("result_a"))
@@ -132,7 +138,10 @@ class TestMCPClientCallTool:
         client._sessions = {"srv": session}
         client._tool_to_server = {"broken": "srv"}
         client._tool_schemas = {
-            "broken": {"name": "broken", "description": "", "parameters": {}, "function": "mcp", "_mcp_original_name": "broken"},
+            "broken": {
+                "name": "broken", "description": "", "parameters": {},
+                "function": "mcp", "_mcp_original_name": "broken",
+            },
         }
 
         session.call_tool = AsyncMock(
@@ -157,7 +166,10 @@ class TestMCPClientCallTool:
         client = MCPClient()
         client._tool_to_server = {"orphan": "dead_server"}
         client._tool_schemas = {
-            "orphan": {"name": "orphan", "description": "", "parameters": {}, "function": "mcp", "_mcp_original_name": "orphan"},
+            "orphan": {
+                "name": "orphan", "description": "", "parameters": {},
+                "function": "mcp", "_mcp_original_name": "orphan",
+            },
         }
         # No session for "dead_server"
 

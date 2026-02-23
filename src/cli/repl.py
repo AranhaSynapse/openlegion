@@ -834,6 +834,7 @@ class REPLSession:
 
         # Remove from config and permissions
         import yaml
+
         from src.cli.config import AGENTS_FILE
 
         if AGENTS_FILE.exists():

@@ -5,7 +5,7 @@ OpenLegion is a container-isolated multi-agent runtime. LLM-powered agents run i
 ## System Overview
 
 ```
-User (CLI REPL / Telegram / Discord / Webhook)
+User (CLI REPL / Telegram / Discord / Slack / WhatsApp / Webhook)
   -> Mesh Host (FastAPI :8420) -- routes messages, enforces permissions, proxies APIs
     -> Agent Containers (FastAPI :8400 each) -- isolated execution with private memory
 ```

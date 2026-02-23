@@ -1,6 +1,6 @@
 """Tests for vault tools (credential-blind agent tools)."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

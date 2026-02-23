@@ -215,12 +215,16 @@ class WorkspaceManager:
         Returns metadata about the write.
         """
         if filename not in self.AGENT_WRITABLE:
-            return {"error": f"Cannot update {filename}. Agents can only update: {', '.join(sorted(self.AGENT_WRITABLE))}"}
+            allowed = ", ".join(sorted(self.AGENT_WRITABLE))
+            return {"error": f"Cannot update {filename}. Agents can only update: {allowed}"}
 
         if len(content) > self._MAX_WRITABLE_SIZE:
             return {"error": f"Content too large ({len(content)} chars). Max is {self._MAX_WRITABLE_SIZE}."}
 
-        path = self.root / filename
+        path = (self.root / filename).resolve()
+        # Defense-in-depth: ensure resolved path stays within workspace
+        if not path.is_relative_to(self.root.resolve()):
+            return {"error": f"Invalid filename: {filename}"}
         backup_dir = self.root / "backups"
         backup_dir.mkdir(exist_ok=True)
 

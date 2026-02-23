@@ -8,7 +8,10 @@ State persisted to config/webhooks.json.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import secrets
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable, Optional
@@ -45,15 +48,17 @@ class WebhookManager:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         self.config_path.write_text(json.dumps({"hooks": self.hooks}, indent=2) + "\n")
 
-    def add_hook(self, agent: str, name: str) -> dict:
+    def add_hook(self, agent: str, name: str, *, require_signature: bool = False) -> dict:
         hook_id = generate_id("hook")[:16]
-        hook = {
+        hook: dict = {
             "id": hook_id,
             "agent": agent,
             "name": name,
             "created_at": datetime.now(UTC).isoformat(),
             "call_count": 0,
         }
+        if require_signature:
+            hook["secret"] = secrets.token_hex(32)
         self.hooks[hook_id] = hook
         self._save()
         logger.info(f"Added webhook {hook_id}: agent={agent} name={name}")
@@ -80,10 +85,22 @@ class WebhookManager:
             if not hook:
                 raise HTTPException(status_code=404, detail="Unknown webhook")
 
+            raw_body = await request.body()
+
+            # HMAC-SHA256 signature verification (when hook has a secret)
+            hook_secret = hook.get("secret")
+            if hook_secret:
+                sig_header = request.headers.get("x-webhook-signature", "")
+                expected = hmac.new(
+                    hook_secret.encode(), raw_body, hashlib.sha256,
+                ).hexdigest()
+                if not hmac.compare_digest(sig_header, expected):
+                    raise HTTPException(status_code=401, detail="Invalid signature")
+
             try:
-                body = await request.json()
+                body = json.loads(raw_body)
             except Exception:
-                body = {"raw": (await request.body()).decode(errors="replace")[:5000]}
+                body = {"raw": raw_body.decode(errors="replace")[:5000]}
 
             hook["call_count"] = hook.get("call_count", 0) + 1
             manager._save()

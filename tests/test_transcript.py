@@ -10,7 +10,6 @@ from src.host.transcript import (
     sanitize_for_provider,
 )
 
-
 # ── _detect_provider ───────────────────────────────────────────
 
 
@@ -53,8 +52,10 @@ class TestRemapToolIds:
                 "role": "assistant",
                 "content": None,
                 "tool_calls": [
-                    {"id": "call_tc_a1b2c3d4e5f6", "type": "function", "function": {"name": "search", "arguments": "{}"}},
-                    {"id": "call_tc_x9y8z7w6v5u4", "type": "function", "function": {"name": "read", "arguments": "{}"}},
+                    {"id": "call_tc_a1b2c3d4e5f6", "type": "function",
+                     "function": {"name": "search", "arguments": "{}"}},
+                    {"id": "call_tc_x9y8z7w6v5u4", "type": "function",
+                     "function": {"name": "read", "arguments": "{}"}},
                 ],
             },
             {"role": "tool", "tool_call_id": "call_tc_a1b2c3d4e5f6", "content": "result1"},
@@ -262,7 +263,8 @@ class TestSanitizeForProvider:
                 "role": "assistant",
                 "content": None,
                 "tool_calls": [
-                    {"id": "call_tc_a1b2c3d4e5f6", "type": "function", "function": {"name": "web_search", "arguments": '{"q": "cats"}'}},
+                    {"id": "call_tc_a1b2c3d4e5f6", "type": "function",
+                     "function": {"name": "web_search", "arguments": '{"q": "cats"}'}},
                 ],
             },
             {"role": "tool", "tool_call_id": "call_tc_a1b2c3d4e5f6", "content": "cats are great"},

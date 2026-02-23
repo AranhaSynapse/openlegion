@@ -321,7 +321,7 @@ class TelegramChannel(Channel):
                     tool_count += 1
                     name = event.get("name", "?")
                     tool_lines.append(f"{tool_count}. {name}")
-                    progress = f"Working...\n" + "\n".join(tool_lines)
+                    progress = "Working...\n" + "\n".join(tool_lines)
                     # Delete streaming text msg when tools start (any round)
                     if streaming_msg:
                         try:
@@ -355,7 +355,7 @@ class TelegramChannel(Channel):
                         else:
                             hint = " ✓"
                         tool_lines[-1] += hint
-                        progress = f"Working...\n" + "\n".join(tool_lines)
+                        progress = "Working...\n" + "\n".join(tool_lines)
                         try:
                             if progress_msg:
                                 await self._app.bot.edit_message_text(

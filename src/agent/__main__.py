@@ -138,7 +138,13 @@ def main() -> None:
                 try:
                     await asyncio.wait_for(handle, timeout=5.0)
                 except (asyncio.TimeoutError, asyncio.CancelledError):
-                    pass
+                    # Force-cancel the stuck task to prevent asyncio task leak
+                    if not handle.done():
+                        handle.cancel()
+                        try:
+                            await asyncio.wait_for(handle, timeout=2.0)
+                        except (asyncio.TimeoutError, asyncio.CancelledError):
+                            pass
         if mcp_client:
             await mcp_client.stop()
         from src.agent.builtins.browser_tool import browser_cleanup

@@ -58,7 +58,7 @@ def create_dashboard_router(
     )
 
     # Build flat valid-models list and browser backend names for validation
-    from src.cli.config import BROWSER_BACKENDS, _PROVIDER_MODELS
+    from src.cli.config import _PROVIDER_MODELS, BROWSER_BACKENDS
     _valid_models = [m for models in _PROVIDER_MODELS.values() for m in models]
     _valid_browsers = [b["name"] for b in BROWSER_BACKENDS]
 
@@ -213,8 +213,8 @@ def create_dashboard_router(
         # Remove from config and permissions (best-effort — don't fail if files are missing)
         try:
             import yaml
-            from src.cli.config import AGENTS_FILE
-            from src.cli.config import _load_permissions, _save_permissions
+
+            from src.cli.config import AGENTS_FILE, _load_permissions, _save_permissions
 
             if AGENTS_FILE.exists():
                 with open(AGENTS_FILE) as f:

@@ -73,7 +73,8 @@ class TraceStore:
         import json as _json
         meta_json = _json.dumps(meta, default=str) if meta else ""
         self._conn.execute(
-            "INSERT INTO traces (trace_id, timestamp, source, agent, event_type, detail, duration_ms, status, error, meta_json) "
+            "INSERT INTO traces "
+            "(trace_id, timestamp, source, agent, event_type, detail, duration_ms, status, error, meta_json) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (trace_id, time.time(), source, agent, event_type, detail, duration_ms, status, error, meta_json),
         )

@@ -22,11 +22,21 @@ _PROTECTED_WORKSPACE_FILES = frozenset({
 
 
 def _safe_path(path: str) -> Path:
-    """Resolve a path and ensure it stays within the allowed root."""
+    """Resolve a path and ensure it stays within the allowed root.
+
+    resolve() follows symlinks, so a symlink pointing outside /data
+    will be caught by the is_relative_to check.
+    """
     resolved = Path(_ALLOWED_ROOT, path).resolve()
     root = Path(_ALLOWED_ROOT).resolve()
     if not resolved.is_relative_to(root):
         raise ValueError(f"Path escapes allowed root: {path}")
+    # Reject symlinks that point outside the allowed root
+    raw_path = Path(_ALLOWED_ROOT, path)
+    if raw_path.is_symlink():
+        link_target = raw_path.resolve()
+        if not link_target.is_relative_to(root):
+            raise ValueError(f"Symlink escapes allowed root: {path}")
     return resolved
 
 
@@ -64,13 +74,16 @@ def read_file(path: str, offset: int = 0, limit: int = 0) -> dict:
     if not safe.is_file():
         return {"error": f"Not a file: {path}"}
 
-    content = safe.read_text(errors="replace")[:_MAX_READ]
+    file_size = safe.stat().st_size
+    # Read with a size limit to avoid OOM on very large files
+    with safe.open("r", errors="replace") as f:
+        content = f.read(_MAX_READ)
     if offset or limit:
         lines = content.splitlines(keepends=True)
         end = offset + limit if limit else len(lines)
         content = "".join(lines[offset:end])
 
-    return {"content": content, "size": safe.stat().st_size}
+    return {"content": content, "size": file_size, "truncated": file_size > _MAX_READ}
 
 
 @skill(

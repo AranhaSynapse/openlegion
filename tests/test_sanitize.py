@@ -6,10 +6,7 @@ JSON content, and idempotency.
 
 import json
 
-import pytest
-
 from src.shared.utils import sanitize_for_prompt
-
 
 # === Guards ===
 
@@ -147,7 +144,7 @@ def test_supplementary_variation_selectors_stripped():
 
 
 def test_combining_grapheme_joiner_stripped():
-    assert sanitize_for_prompt(f"a\u034Fb") == "ab"
+    assert sanitize_for_prompt("a\u034Fb") == "ab"
 
 
 def test_hangul_fillers_stripped():
@@ -157,7 +154,7 @@ def test_hangul_fillers_stripped():
 
 
 def test_object_replacement_stripped():
-    assert sanitize_for_prompt(f"a\uFFFCb") == "ab"
+    assert sanitize_for_prompt("a\uFFFCb") == "ab"
 
 
 def test_soft_hyphen_stripped():
@@ -178,7 +175,7 @@ def test_bom_stripped():
 
 def test_private_use_stripped():
     # U+E000 (private use area)
-    assert sanitize_for_prompt(f"a\uE000b") == "ab"
+    assert sanitize_for_prompt("a\uE000b") == "ab"
 
 
 # === Compound attack vectors ===

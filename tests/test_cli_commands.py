@@ -621,6 +621,7 @@ class TestREPLBlackboard:
 class TestREPLQueue:
     def test_queue_shows_status(self, capsys):
         from unittest.mock import MagicMock
+
         from src.cli.repl import REPLSession
         lm = MagicMock()
         lm.get_status.return_value = {
@@ -640,6 +641,7 @@ class TestREPLQueue:
 
     def test_queue_empty(self, capsys):
         from unittest.mock import MagicMock
+
         from src.cli.repl import REPLSession
         lm = MagicMock()
         lm.get_status.return_value = {}
@@ -662,6 +664,7 @@ class TestREPLQueue:
 class TestREPLWorkflow:
     def test_list_no_workflows(self, capsys):
         from unittest.mock import MagicMock
+
         from src.cli.repl import REPLSession
         orch = MagicMock()
         orch.workflows = {}
@@ -675,6 +678,7 @@ class TestREPLWorkflow:
 
     def test_list_with_workflows(self, capsys):
         from unittest.mock import MagicMock
+
         from src.cli.repl import REPLSession
         wf = MagicMock()
         wf.steps = [1, 2, 3]
@@ -691,6 +695,7 @@ class TestREPLWorkflow:
 
     def test_run_missing_name(self, capsys):
         from unittest.mock import MagicMock
+
         from src.cli.repl import REPLSession
         orch = MagicMock()
         ctx = _MockCtx(orchestrator=orch)
@@ -725,6 +730,7 @@ class TestREPLCronExtended:
 
     def test_resume_job(self, tmp_path, capsys):
         import asyncio
+
         from src.cli.repl import REPLSession
         from src.host.cron import CronScheduler
         sched = CronScheduler(config_path=str(tmp_path / "cron.json"))
@@ -850,6 +856,7 @@ class TestREPLWorkflowActive:
 
     def test_list_with_active_executions(self, capsys):
         from unittest.mock import MagicMock
+
         from src.cli.repl import REPLSession
         wf = MagicMock()
         wf.steps = [1, 2]
@@ -875,8 +882,8 @@ class TestREPLBlackboardSetMissingArgs:
     """Blackboard set with insufficient arguments."""
 
     def test_set_missing_value(self, tmp_path, capsys):
-        from src.host.mesh import Blackboard
         from src.cli.repl import REPLSession
+        from src.host.mesh import Blackboard
         bb = Blackboard(db_path=str(tmp_path / "bb.db"))
         ctx = _MockCtx(agent_urls={"bot": "http://bot:8400"}, blackboard=bb)
         repl = REPLSession(ctx)
@@ -887,8 +894,8 @@ class TestREPLBlackboardSetMissingArgs:
         bb.close()
 
     def test_set_missing_key_and_value(self, tmp_path, capsys):
-        from src.host.mesh import Blackboard
         from src.cli.repl import REPLSession
+        from src.host.mesh import Blackboard
         bb = Blackboard(db_path=str(tmp_path / "bb.db"))
         ctx = _MockCtx(agent_urls={"bot": "http://bot:8400"}, blackboard=bb)
         repl = REPLSession(ctx)
@@ -934,6 +941,7 @@ class TestREPLCronListFormatting:
 
     def test_cron_list_paused_job(self, tmp_path, capsys):
         import asyncio
+
         from src.cli.repl import REPLSession
         from src.host.cron import CronScheduler
         sched = CronScheduler(config_path=str(tmp_path / "cron.json"))
@@ -951,8 +959,8 @@ class TestREPLBlackboardGetMultiline:
     """Blackboard get with multiline values are properly indented."""
 
     def test_multiline_value_indented(self, tmp_path, capsys):
-        from src.host.mesh import Blackboard
         from src.cli.repl import REPLSession
+        from src.host.mesh import Blackboard
         bb = Blackboard(db_path=str(tmp_path / "bb.db"))
         bb.write("test/multi", {"a": 1, "b": {"nested": "value"}}, written_by="cli")
         ctx = _MockCtx(agent_urls={"bot": "http://bot:8400"}, blackboard=bb)

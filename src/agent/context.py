@@ -228,9 +228,15 @@ class ContextManager:
                 temperature=0.3,
             )
             raw = response.content.strip()
-            # Strip markdown code fences if present
+            # Strip markdown code fences if present (e.g. ```json\n...\n```)
             if raw.startswith("```"):
-                raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                lines = raw.split("\n", 1)
+                body = lines[1] if len(lines) > 1 else ""
+                # Remove only a trailing ``` fence, not arbitrary occurrences
+                if body.rstrip().endswith("```"):
+                    raw = body.rstrip()[:-3].strip()
+                else:
+                    raw = body.strip()
 
             facts = json.loads(raw)
             if not isinstance(facts, list) or not facts:

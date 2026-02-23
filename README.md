@@ -6,7 +6,7 @@
 
 [![AGPLv3 License](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
-[![Tests: 1103](https://img.shields.io/badge/tests-1103%20passing-brightgreen)](https://github.com/openlegion-ai/openlegion/actions/workflows/test.yml)
+[![Tests: 1112](https://img.shields.io/badge/tests-1112%20passing-brightgreen)](https://github.com/openlegion-ai/openlegion/actions/workflows/test.yml)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/mXNkjpDvvr)
 [![Twitter](https://img.shields.io/badge/Twitter-@openlegion-1DA1F2?logo=x&logoColor=white)](https://x.com/openlegion)
 [![LiteLLM](https://img.shields.io/badge/LLM-100%2B%20providers-orange.svg)](https://litellm.ai)
@@ -112,7 +112,7 @@ OpenLegion was designed from day one assuming agents will be compromised.
 | **Cost controls** | None | Per-agent daily + monthly budget caps |
 | **Multi-agent routing** | LLM CEO agent | Deterministic YAML DAG workflows |
 | **LLM providers** | Broad | 100+ via LiteLLM with health-tracked failover |
-| **Test coverage** | Minimal | 1103 tests including full Docker E2E |
+| **Test coverage** | Minimal | 1112 tests including full Docker E2E |
 | **Codebase size** | 430,000+ lines | ~19,000 lines — auditable in a day |
 
 ---
@@ -127,7 +127,7 @@ Chat with your agent fleet via **Telegram**, **Discord**, **Slack**, **WhatsApp*
 via cron schedules, webhooks, heartbeat monitoring, and file watchers — without being
 prompted.
 
-**1103 tests passing** across **~19,000 lines** of application code.
+**1112 tests passing** across **~19,000 lines** of application code.
 **Fully auditable in a day.**
 No LangChain. No Redis. No Kubernetes. No CEO agent. AGPLv3 License.
 
@@ -611,6 +611,11 @@ openlegion
 │   ├── list                             # List configured agents
 │   └── remove <name> [--yes]            # Remove an agent
 │
+├── skill
+│   ├── install <repo_url> [--ref TAG]         # Install skill from git repo
+│   ├── list                                    # List installed marketplace skills
+│   └── remove <name> [--yes]                   # Remove an installed skill
+│
 └── channels
     ├── add [telegram|discord|slack|whatsapp]  # Connect a messaging channel
     ├── list                                    # Show configured channels
@@ -681,7 +686,7 @@ mesh:
   port: 8420
 
 llm:
-  default_model: "openai/gpt-4o-mini"
+  default_model: "openai/gpt-4.1-mini"
   embedding_model: "text-embedding-3-small"
   max_tokens: 4096
   temperature: 0.7
@@ -695,7 +700,7 @@ Created automatically by `openlegion setup` or `openlegion agent add`.
 agents:
   researcher:
     role: "research"
-    model: "openai/gpt-4o-mini"
+    model: "openai/gpt-4.1-mini"
     skills_dir: "./skills/research"
     system_prompt: "You are a research specialist..."
     browser_backend: "stealth"          # basic (default), stealth, or advanced
@@ -768,7 +773,7 @@ Add `mcp_servers` to any agent in `config/agents.yaml`:
 agents:
   researcher:
     role: "research"
-    model: "openai/gpt-4o-mini"
+    model: "openai/gpt-4.1-mini"
     mcp_servers:
       - name: filesystem
         command: mcp-server-filesystem
@@ -825,12 +830,12 @@ pytest tests/
 | Category | Tests | What's Tested |
 |----------|-------|---------------|
 | Built-in Tools | 98 | exec, file, browser (incl. backend tiers + screenshots), memory, mesh tools, notifications, path traversal, discovery |
-| Dashboard | 66 | Index, agents, blackboard, costs, traces, queues, cron, settings, config |
+| Dashboard | 72 | Index, agents, blackboard, costs, traces, queues, cron, settings, config |
 | CLI | 61 | Agent add/list/edit/remove, chat, setup, REPL commands, cron management |
 | Agent Loop | 57 | Task execution, tool calling, cancellation, tool memory, chat helpers, daily log enrichment, task logging |
 | Workspace | 55 | File scaffold, loading, BM25 search, daily logs, learnings, heartbeat, identity files |
 | Cron | 42 | Cron expressions, intervals, dispatch, persistence, enriched heartbeat, skip-LLM, concurrent mutations |
-| Credentials | 42 | Vault, API proxy, provider detection, credential lifecycle |
+| Credentials | 44 | Vault, API proxy, provider detection, credential lifecycle |
 | Sanitization | 38 | Invisible Unicode stripping, bidi overrides, tag chars, zero-width |
 | Channels (base) | 37 | Abstract channel, commands, per-user routing, chunking, steer, debug |
 | Memory Store | 34 | SQLite ops, vector search, categories, hierarchical search, tool outcomes |
@@ -846,7 +851,7 @@ pytest tests/
 | Slack Channel | 21 | Socket Mode, thread routing, pairing, command translation |
 | WhatsApp Channel | 21 | Cloud API, webhook verification, message chunking |
 | Skills | 20 | Discovery, execution, injection, MCP integration |
-| Setup Wizard | 20 | Quickstart, full setup, API key validation, templates |
+| Setup Wizard | 21 | Quickstart, full setup, API key validation, templates |
 | Marketplace | 20 | Install, manifest parsing, validation, path traversal, remove |
 | Transport | 18 | HttpTransport, SandboxTransport, resolve_url |
 | Dashboard Workspace | 17 | Workspace proxy endpoints, filename validation, transport forwarding, sanitization |
@@ -867,7 +872,7 @@ pytest tests/
 | Memory Tools | 6 | memory_search, memory_save, memory_recall |
 | Memory Integration | 6 | Vector search, cross-task recall, salience |
 | E2E | 17 | Container health, workflow, chat, memory, triggering |
-| **Total** | **1103** | |
+| **Total** | **1112** | |
 
 ---
 
