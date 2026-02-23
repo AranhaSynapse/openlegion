@@ -7,6 +7,7 @@ and enforces permissions.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import time
@@ -401,8 +402,6 @@ class MessageRouter:
                     event_type="message_route",
                     detail=f"{message.from_agent}->{message.to} ({message.type})",
                 )
-        import asyncio as _asyncio
-
         payload = message.model_dump(mode="json")
         last_err: Exception | None = None
         for attempt in range(2):  # 1 attempt + 1 retry
@@ -420,7 +419,7 @@ class MessageRouter:
                     logger.warning(
                         f"Transient error routing to {message.to}, retrying in 1s: {e}"
                     )
-                    await _asyncio.sleep(1)
+                    await asyncio.sleep(1)
             except httpx.HTTPError as e:
                 logger.error(f"Failed to route message to {message.to}: {e}")
                 return {"error": f"Delivery failed: {e}"}

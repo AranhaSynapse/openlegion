@@ -31,12 +31,6 @@ def _safe_path(path: str) -> Path:
     root = Path(_ALLOWED_ROOT).resolve()
     if not resolved.is_relative_to(root):
         raise ValueError(f"Path escapes allowed root: {path}")
-    # Reject symlinks that point outside the allowed root
-    raw_path = Path(_ALLOWED_ROOT, path)
-    if raw_path.is_symlink():
-        link_target = raw_path.resolve()
-        if not link_target.is_relative_to(root):
-            raise ValueError(f"Symlink escapes allowed root: {path}")
     return resolved
 
 
