@@ -37,6 +37,7 @@ _PROVIDERS = [
     {"name": "gemini", "label": "Google Gemini"},
     {"name": "xai", "label": "xAI (Grok)"},
     {"name": "groq", "label": "Groq"},
+    {"name": "minimax", "label": "MiniMax"},
 ]
 
 _PROVIDER_MODELS: dict[str, list[str]] = {
@@ -82,6 +83,12 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "groq/llama-3.3-70b-versatile",
         "groq/llama-3.1-8b-instant",
         "groq/llama-3-groq-70b-tool-use",
+    ],
+    "minimax": [
+        "minimax/MiniMax-M2.5",
+        "minimax/MiniMax-M2.1",
+        "minimax/MiniMax-M2.1-lightning",
+        "minimax/MiniMax-M2",
     ],
 }
 
