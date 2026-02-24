@@ -456,7 +456,7 @@
       </div>
 
       <!-- Docked chat panel bar (multi-agent) -->
-      <div x-show="openChats.length > 0" x-cloak class="fixed bottom-0 right-0 z-40 flex flex-wrap-reverse items-end gap-2 p-3 pointer-events-none max-w-full">
+      <div x-show="openChats.length > 0" x-cloak class="fixed bottom-0 right-0 z-40 flex flex-wrap-reverse items-start gap-2 p-3 pointer-events-none max-w-full">
         <!-- Close-all button (shown when 2+ panels open) -->
         <button x-show="openChats.length > 1" @click="openChats.slice().forEach(id => closeChat(id))"
           class="pointer-events-auto mb-1 text-[10px] px-2 py-1 rounded-full bg-gray-800/90 text-gray-400 hover:text-white hover:bg-gray-700 border border-gray-700 transition-colors shadow-lg"
