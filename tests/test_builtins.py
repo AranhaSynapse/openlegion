@@ -1154,6 +1154,15 @@ class TestBrowserBackendSelection:
             await bt._launch_advanced(mock_mesh)
 
     @pytest.mark.asyncio
+    async def test_advanced_vault_403_gives_clear_error(self):
+        """_launch_advanced() wraps vault 403 into a clear error message."""
+        import src.agent.builtins.browser_tool as bt
+        mock_mesh = AsyncMock()
+        mock_mesh.vault_resolve = AsyncMock(side_effect=Exception("403 Forbidden"))
+        with pytest.raises(RuntimeError, match="permissions"):
+            await bt._launch_advanced(mock_mesh)
+
+    @pytest.mark.asyncio
     async def test_stealth_import_error(self):
         """_launch_stealth() gives helpful error when camoufox not installed."""
         import src.agent.builtins.browser_tool as bt

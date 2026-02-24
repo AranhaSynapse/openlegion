@@ -588,7 +588,9 @@ class AgentLoop:
 
     def _build_system_prompt(self, assignment: TaskAssignment) -> str:
         tools_desc = self.skills.get_descriptions()
-        parts = [self.system_prompt]
+        parts = []
+        if self.system_prompt:
+            parts.append(self.system_prompt)
 
         # Load workspace identity + project files into system prompt
         if self.workspace:
@@ -976,7 +978,9 @@ class AgentLoop:
 
     def _build_chat_system_prompt(self, goals: dict | None = None, fleet_roster: list[dict] | None = None) -> str:
         tools_desc = self.skills.get_descriptions()
-        parts = [self.system_prompt]
+        parts = []
+        if self.system_prompt:
+            parts.append(self.system_prompt)
 
         if goals:
             parts.append(f"## Your Current Goals\n\n{sanitize_for_prompt(format_dict(goals))}")

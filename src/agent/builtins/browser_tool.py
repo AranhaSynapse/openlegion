@@ -144,7 +144,13 @@ async def _launch_advanced(mesh_client):
         raise RuntimeError(
             "Advanced browser backend requires mesh connectivity for credential resolution"
         )
-    cdp_url = await mesh_client.vault_resolve("brightdata_cdp_url")
+    try:
+        cdp_url = await mesh_client.vault_resolve("brightdata_cdp_url")
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to resolve 'brightdata_cdp_url' from vault: {e}. "
+            "Check agent permissions in config/permissions.json."
+        ) from e
     if not cdp_url:
         raise RuntimeError(
             "Credential 'brightdata_cdp_url' not found in vault. "

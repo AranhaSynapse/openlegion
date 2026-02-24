@@ -270,8 +270,9 @@ def _build_docker_image() -> None:
 
 
 def _add_agent_to_config(
-    name: str, role: str, model: str, system_prompt: str,
+    name: str, role: str, model: str,
     browser_backend: str = "",
+    initial_instructions: str = "",
 ) -> None:
     """Add an agent entry to agents.yaml."""
     agents_cfg: dict = {"agents": {}}
@@ -285,11 +286,12 @@ def _add_agent_to_config(
         "role": role,
         "model": model,
         "skills_dir": f"./skills/{name}",
-        "system_prompt": system_prompt,
         "resources": {"memory_limit": "512m", "cpu_limit": 0.5},
     }
     if browser_backend:
         entry["browser_backend"] = browser_backend
+    if initial_instructions:
+        entry["initial_instructions"] = initial_instructions
     agents_cfg["agents"][name] = entry
     AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(AGENTS_FILE, "w") as f:
@@ -322,6 +324,16 @@ def _add_agent_permissions(name: str) -> None:
         "can_manage_vault": True,
     }
     _save_permissions(perms)
+
+
+def _ensure_all_agent_permissions() -> None:
+    """Backfill permissions for agents missing from permissions.json."""
+    cfg = _load_config()
+    perms = _load_permissions()
+    existing = set(perms.get("permissions", {}).keys())
+    for name in cfg.get("agents", {}):
+        if name not in existing:
+            _add_agent_permissions(name)
 
 
 def _set_collaborative_permissions() -> None:
@@ -361,14 +373,7 @@ def _create_agent(
 ) -> None:
     """Create an agent: config, permissions, skills directory."""
     name = _validate_agent_name(name)
-    from src.shared.utils import sanitize_for_prompt
-    safe_desc = sanitize_for_prompt(description)
-    system_prompt = (
-        f"You are the '{name}' agent. {safe_desc} "
-        "Use your tools and knowledge to accomplish tasks. "
-        "Check PROJECT.md for the current priorities and constraints."
-    )
-    _add_agent_to_config(name, description, model, system_prompt, browser_backend=browser_backend)
+    _add_agent_to_config(name, description, model, browser_backend=browser_backend)
     _add_agent_permissions(name)
     skills_dir = PROJECT_ROOT / "skills" / name
     skills_dir.mkdir(parents=True, exist_ok=True)
@@ -488,11 +493,12 @@ def _apply_template(template_name: str, tpl: dict) -> list[str]:
 
     for agent_name, agent_def in tpl_agents.items():
         model = agent_def.get("model", default_model).replace("{default_model}", default_model)
+        instructions = agent_def.get("instructions", "") or agent_def.get("system_prompt", "")
         _add_agent_to_config(
             name=agent_name,
             role=agent_def.get("role", agent_name),
             model=model,
-            system_prompt=agent_def.get("system_prompt", ""),
+            initial_instructions=instructions,
         )
         if "resources" in agent_def:
             agents_cfg: dict = {"agents": {}}
@@ -553,9 +559,9 @@ def _edit_agent_interactive(name: str) -> str | None:
     """Interactive property editor for an agent. Reads fresh config.
 
     Returns the field name that was changed (``"model"``, ``"browser"``,
-    ``"role"``, ``"system_prompt"``, ``"budget"``), or ``None`` if nothing
-    changed.  Callers decide how to apply the change (restart hint, live
-    restart, cost-tracker update, etc.).
+    ``"role"``, ``"budget"``), or ``None`` if nothing changed.  Callers
+    decide how to apply the change (restart hint, live restart,
+    cost-tracker update, etc.).
     """
     cfg = _load_config()
     agent_cfg = cfg.get("agents", {}).get(name, {})
@@ -564,7 +570,6 @@ def _edit_agent_interactive(name: str) -> str | None:
     current_model = agent_cfg.get("model", default_model)
     current_browser = agent_cfg.get("browser_backend", "basic") or "basic"
     current_desc = agent_cfg.get("role", "")
-    current_sysprompt = agent_cfg.get("system_prompt", "")
     budget_cfg = agent_cfg.get("budget", {})
     current_budget = budget_cfg.get("daily_usd") if budget_cfg else None
 
@@ -580,7 +585,6 @@ def _edit_agent_interactive(name: str) -> str | None:
         ("model", current_model),
         ("browser", current_browser),
         ("description", _truncate(current_desc, 50) or "(none)"),
-        ("system prompt", _truncate(current_sysprompt, 50) or "(none)"),
         ("budget", f"${current_budget:.2f}/day" if current_budget is not None else "(none)"),
     ]
 
@@ -622,18 +626,7 @@ def _edit_agent_interactive(name: str) -> str | None:
         click.echo("No change.")
         return None
 
-    elif choice == 4:  # system prompt
-        if current_sysprompt:
-            click.echo(f"  Current: {_truncate(current_sysprompt, 80)}")
-        new_sysprompt = click.prompt("  System prompt", default=current_sysprompt or "")
-        if new_sysprompt != current_sysprompt:
-            _update_agent_field(name, "system_prompt", new_sysprompt)
-            click.echo(f"Agent '{name}' system prompt updated.")
-            return "system_prompt"
-        click.echo("No change.")
-        return None
-
-    elif choice == 5:  # budget
+    elif choice == 4:  # budget
         default_budget = str(current_budget) if current_budget is not None else ""
         new_budget_str = click.prompt("  Daily budget (USD)", default=default_budget)
         if not new_budget_str.strip():

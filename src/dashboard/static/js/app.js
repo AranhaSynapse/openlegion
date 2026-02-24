@@ -159,9 +159,30 @@ function dashboard() {
 
     // ── Helpers ────────────────────────────────────────────
 
-    _needsBrightDataWarning(browserBackend) {
-      return browserBackend === 'advanced' && this.settingsData &&
-        !(this.settingsData?.credentials?.names || []).includes('brightdata_cdp_url');
+    async _ensureBrightDataKey(browserBackend) {
+      if (browserBackend !== 'advanced') return true;
+      if (this.settingsData && (this.settingsData?.credentials?.names || []).includes('brightdata_cdp_url')) return true;
+      const url = prompt(
+        'Bright Data CDP URL required for Advanced browsing.\n\n' +
+        'Sign up at https://brightdata.com/products/scraping-browser and paste your wss:// URL below.\n' +
+        'Leave empty to skip (agent will fall back to basic browser).'
+      );
+      if (url === null) return false; // Cancel pressed
+      if (!url.trim()) return true;   // Empty = skip
+      try {
+        const resp = await fetch(`${window.__config.apiBase}/credentials`, {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ service: 'brightdata_cdp_url', key: url.trim() }),
+        });
+        if (resp.ok) {
+          this.showToast('Bright Data credential saved');
+          await this.fetchSettings();
+        } else {
+          const err = await resp.json();
+          this.showToast(`Error saving credential: ${err.detail || 'unknown'}`);
+        }
+      } catch (e) { this.showToast(`Error: ${e.message}`); }
+      return true;
     },
 
     // ── Computed ───────────────────────────────────────────
@@ -695,7 +716,6 @@ function dashboard() {
         model: cfg.model || '',
         browser_backend: cfg.browser_backend || 'basic',
         role: cfg.role || '',
-        system_prompt: cfg.system_prompt || '',
         budget_daily: cfg.budget?.daily_usd || '',
       };
       this.configEditing = true;
@@ -720,7 +740,6 @@ function dashboard() {
       if (this.editForm.model && this.editForm.model !== cfg.model) body.model = this.editForm.model;
       if (this.editForm.browser_backend && this.editForm.browser_backend !== cfg.browser_backend) body.browser_backend = this.editForm.browser_backend;
       if (this.editForm.role !== undefined && this.editForm.role !== cfg.role) body.role = this.editForm.role;
-      if (this.editForm.system_prompt !== undefined && this.editForm.system_prompt !== cfg.system_prompt) body.system_prompt = this.editForm.system_prompt;
       if (this.editForm.budget_daily && parseFloat(this.editForm.budget_daily) > 0) {
         body.budget = { daily_usd: parseFloat(this.editForm.budget_daily) };
       }
@@ -728,9 +747,7 @@ function dashboard() {
         this.cancelConfigEdit();
         return;
       }
-      if (this._needsBrightDataWarning(body.browser_backend)) {
-        if (!confirm('The Advanced (Bright Data) browser requires a "brightdata_cdp_url" credential, which is not configured yet. The agent will fall back to basic browsing until you add it via /addkey or the System tab.\n\nContinue anyway?')) return;
-      }
+      if (!await this._ensureBrightDataKey(body.browser_backend)) return;
       try {
         const resp = await fetch(`${window.__config.apiBase}/agents/${agentId}/config`, {
           method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
@@ -777,9 +794,7 @@ function dashboard() {
     async addAgent() {
       const f = this.addAgentForm;
       if (!f.name.trim()) { this.showToast('Name is required'); return; }
-      if (this._needsBrightDataWarning(f.browser_backend)) {
-        if (!confirm('The Advanced (Bright Data) browser requires a "brightdata_cdp_url" credential, which is not configured yet. The agent will fall back to basic browsing until you add it via /addkey or the System tab.\n\nContinue anyway?')) return;
-      }
+      if (!await this._ensureBrightDataKey(f.browser_backend)) return;
       this.addAgentLoading = true;
       try {
         const resp = await fetch(`${window.__config.apiBase}/agents`, {

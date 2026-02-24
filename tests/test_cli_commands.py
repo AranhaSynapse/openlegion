@@ -1025,3 +1025,57 @@ class TestPermissionsDefault:
         assert "llm" in perms.allowed_apis
         assert pm.can_use_api("some_unknown_agent", "llm")
         os.unlink(f.name)
+
+
+class TestEnsureAllAgentPermissions:
+    def test_backfills_missing_agents(self, tmp_path):
+        """_ensure_all_agent_permissions adds permissions for agents not yet in permissions.json."""
+        from unittest.mock import patch
+
+        from src.cli.config import _ensure_all_agent_permissions
+
+        agents_yaml = tmp_path / "agents.yaml"
+        agents_yaml.write_text("agents:\n  alice:\n    role: helper\n  bob:\n    role: coder\n")
+        perms_file = tmp_path / "permissions.json"
+        perms_file.write_text(json.dumps({"permissions": {"alice": {"can_message": ["orchestrator"]}}}))
+
+        with patch("src.cli.config.AGENTS_FILE", agents_yaml), \
+             patch("src.cli.config.CONFIG_FILE", tmp_path / "mesh.yaml"), \
+             patch("src.cli.config.PERMISSIONS_FILE", perms_file):
+            _ensure_all_agent_permissions()
+
+        perms = json.loads(perms_file.read_text())
+        assert "alice" in perms["permissions"]
+        assert "bob" in perms["permissions"]
+        assert perms["permissions"]["bob"]["can_manage_vault"] is True
+
+
+class TestAddAgentToConfigInitialInstructions:
+    def test_initial_instructions_persisted(self, tmp_path):
+        """_add_agent_to_config writes initial_instructions to agents.yaml when provided."""
+        from src.cli.config import _add_agent_to_config
+
+        agents_file = tmp_path / "agents.yaml"
+
+        with patch("src.cli.config.AGENTS_FILE", agents_file):
+            _add_agent_to_config(
+                name="writer", role="content", model="openai/gpt-4o-mini",
+                initial_instructions="You write blog posts.",
+            )
+
+        data = yaml.safe_load(agents_file.read_text())
+        assert data["agents"]["writer"]["initial_instructions"] == "You write blog posts."
+
+    def test_no_initial_instructions_omitted(self, tmp_path):
+        """_add_agent_to_config omits initial_instructions when empty."""
+        from src.cli.config import _add_agent_to_config
+
+        agents_file = tmp_path / "agents.yaml"
+
+        with patch("src.cli.config.AGENTS_FILE", agents_file):
+            _add_agent_to_config(
+                name="helper", role="assistant", model="openai/gpt-4o-mini",
+            )
+
+        data = yaml.safe_load(agents_file.read_text())
+        assert "initial_instructions" not in data["agents"]["helper"]

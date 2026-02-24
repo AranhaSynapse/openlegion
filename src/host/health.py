@@ -209,7 +209,7 @@ class HealthMonitor:
                 agent_id=agent_id,
                 role=info.get("role", ""),
                 skills_dir=info.get("skills_dir", ""),
-                system_prompt=info.get("system_prompt", ""),
+                system_prompt="",
                 model=info.get("model", ""),
                 mcp_servers=info.get("mcp_servers"),
                 browser_backend=info.get("browser_backend", ""),

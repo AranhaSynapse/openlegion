@@ -4,7 +4,7 @@ agents:
   pm:
     role: product_manager
     model: "{default_model}"
-    system_prompt: >
+    instructions: >
       You are a product manager. You break down features into clear
       tasks with acceptance criteria, prioritize work, and coordinate
       between engineering and stakeholders.
@@ -14,7 +14,7 @@ agents:
   engineer:
     role: engineer
     model: "{default_model}"
-    system_prompt: >
+    instructions: >
       You are a software engineer. You write clean, tested code.
       You read and modify files, run commands, and use version control.
       Follow best practices and write tests for your changes.
@@ -24,7 +24,7 @@ agents:
   reviewer:
     role: code_reviewer
     model: "{default_model}"
-    system_prompt: >
+    instructions: >
       You are a code reviewer. You read code changes, identify bugs,
       suggest improvements, and verify that tests cover the changes.
       Be constructive and specific in your feedback.

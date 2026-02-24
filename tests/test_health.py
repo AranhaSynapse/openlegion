@@ -91,7 +91,7 @@ class TestHealthRestartMissingConfig:
     async def test_restart_succeeds_with_config(self):
         """Restart with valid agent metadata proceeds normally."""
         monitor = _make_monitor({
-            "good-agent": {"role": "coder", "skills_dir": "/skills", "system_prompt": "You are a coder."},
+            "good-agent": {"role": "coder", "skills_dir": "/skills"},
         })
         monitor.register("good-agent")
         health = monitor.agents["good-agent"]
