@@ -879,6 +879,190 @@ class TestBrowserNavigateClearsRefs:
         assert result["url"] == "https://new.example.com"
 
 
+# ── browser_reset & auto-recovery ─────────────────────────────
+
+
+class TestBrowserReset:
+    @pytest.mark.asyncio
+    async def test_browser_reset_clears_state(self):
+        """browser_reset tears down session and clears refs."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._page_refs["e1"] = MagicMock()
+        bt._credential_filled_refs.add("e1")
+        bt._page = MagicMock()
+        bt._page.is_closed = MagicMock(return_value=False)
+        bt._page.close = AsyncMock()
+        bt._context = MagicMock()
+        bt._context.close = AsyncMock()
+        bt._browser = MagicMock()
+        bt._browser.close = AsyncMock()
+
+        result = await bt.browser_reset()
+
+        assert result["status"] == "reset"
+        assert bt._page is None
+        assert bt._browser is None
+        assert bt._context is None
+        assert len(bt._page_refs) == 0
+        assert len(bt._credential_filled_refs) == 0
+
+    @pytest.mark.asyncio
+    async def test_browser_reset_safe_when_no_session(self):
+        """browser_reset works even with no active session."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._page = None
+        bt._browser = None
+        bt._context = None
+        bt._pw = None
+
+        result = await bt.browser_reset()
+
+        assert result["status"] == "reset"
+
+
+class TestBrowserNavigateAutoRecovery:
+    @pytest.mark.asyncio
+    async def test_navigate_auto_recovers_from_navigation_limit(self):
+        """browser_navigate resets and retries on 'Page.navigate limit reached'."""
+        import src.agent.builtins.browser_tool as bt
+
+        dead_page = AsyncMock()
+        dead_page.goto = AsyncMock(
+            side_effect=Exception("Protocol error (Page.navigate): Page.navigate limit reached")
+        )
+
+        fresh_page = AsyncMock()
+        fresh_page.url = "https://example.com"
+        fresh_page.title = AsyncMock(return_value="Example")
+        fresh_response = AsyncMock()
+        fresh_response.status = 200
+        fresh_page.goto = AsyncMock(return_value=fresh_response)
+        fresh_page.inner_text = AsyncMock(return_value="Hello")
+
+        call_count = 0
+
+        async def mock_get_page(*, mesh_client=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return dead_page
+            return fresh_page
+
+        with patch.object(bt, "_get_page", side_effect=mock_get_page), \
+             patch.object(bt, "browser_cleanup", new_callable=AsyncMock) as mock_cleanup:
+            result = await bt.browser_navigate(url="https://example.com")
+
+        mock_cleanup.assert_awaited_once()
+        assert result["status"] == 200
+        assert result["content"] == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_navigate_auto_recovers_from_tunnel_failure(self):
+        """browser_navigate resets and retries on ERR_TUNNEL_CONNECTION_FAILED."""
+        import src.agent.builtins.browser_tool as bt
+
+        dead_page = AsyncMock()
+        dead_page.goto = AsyncMock(
+            side_effect=Exception("net::ERR_TUNNEL_CONNECTION_FAILED")
+        )
+
+        fresh_page = AsyncMock()
+        fresh_page.url = "https://example.com"
+        fresh_page.title = AsyncMock(return_value="Example")
+        fresh_response = AsyncMock()
+        fresh_response.status = 200
+        fresh_page.goto = AsyncMock(return_value=fresh_response)
+        fresh_page.inner_text = AsyncMock(return_value="Works now")
+
+        call_count = 0
+
+        async def mock_get_page(*, mesh_client=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return dead_page
+            return fresh_page
+
+        with patch.object(bt, "_get_page", side_effect=mock_get_page), \
+             patch.object(bt, "browser_cleanup", new_callable=AsyncMock):
+            result = await bt.browser_navigate(url="https://example.com")
+
+        assert result["content"] == "Works now"
+
+    @pytest.mark.asyncio
+    async def test_navigate_returns_error_for_non_cdp_failures(self):
+        """Normal errors (e.g. timeout) are returned without retry."""
+        import src.agent.builtins.browser_tool as bt
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(
+            side_effect=Exception("Timeout 30000ms exceeded")
+        )
+
+        with patch.object(bt, "_get_page", return_value=mock_page), \
+             patch.object(bt, "browser_cleanup", new_callable=AsyncMock) as mock_cleanup:
+            result = await bt.browser_navigate(url="https://slow-site.com")
+
+        mock_cleanup.assert_not_awaited()
+        assert "error" in result
+        assert "Timeout" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_navigate_returns_error_if_retry_also_fails(self):
+        """If the fresh session also fails, return the error."""
+        import src.agent.builtins.browser_tool as bt
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(
+            side_effect=Exception("Protocol error (Page.navigate): Page.navigate limit reached")
+        )
+
+        with patch.object(bt, "_get_page", return_value=mock_page), \
+             patch.object(bt, "browser_cleanup", new_callable=AsyncMock):
+            result = await bt.browser_navigate(url="https://example.com")
+
+        assert "error" in result
+
+
+class TestIsDeadSessionError:
+    def test_detects_navigation_limit(self):
+        from src.agent.builtins.browser_tool import _is_dead_session_error
+
+        assert _is_dead_session_error("Protocol error (Page.navigate): Page.navigate limit reached")
+
+    def test_detects_tunnel_failure(self):
+        from src.agent.builtins.browser_tool import _is_dead_session_error
+
+        assert _is_dead_session_error("net::ERR_TUNNEL_CONNECTION_FAILED")
+
+    def test_detects_target_closed(self):
+        from src.agent.builtins.browser_tool import _is_dead_session_error
+
+        assert _is_dead_session_error("Target closed")
+
+    def test_detects_connection_refused(self):
+        from src.agent.builtins.browser_tool import _is_dead_session_error
+
+        assert _is_dead_session_error("Connection refused")
+
+    def test_ignores_timeout(self):
+        from src.agent.builtins.browser_tool import _is_dead_session_error
+
+        assert not _is_dead_session_error("Timeout 30000ms exceeded")
+
+    def test_ignores_normal_errors(self):
+        from src.agent.builtins.browser_tool import _is_dead_session_error
+
+        assert not _is_dead_session_error("Element not found")
+
+    def test_ignores_generic_protocol_error(self):
+        from src.agent.builtins.browser_tool import _is_dead_session_error
+
+        assert not _is_dead_session_error("Protocol error (Page.navigate): Cannot navigate to invalid URL")
+
+
 # ── SkillRegistry discovers builtins ─────────────────────────
 
 
@@ -894,6 +1078,7 @@ class TestBuiltinDiscovery:
         assert "http_request" in registry.skills
         assert "browser_navigate" in registry.skills
         assert "browser_snapshot" in registry.skills
+        assert "browser_reset" in registry.skills
         assert "memory_recall" in registry.skills
 
 
