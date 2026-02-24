@@ -201,6 +201,52 @@ async def browser_cleanup():
     except Exception as e:
         logger.debug("Error stopping playwright: %s", e)
     _pw = _camoufox_cm = _browser = _context = _page = None
+    _page_refs.clear()
+    _credential_filled_refs.clear()
+
+
+# Error patterns that indicate a dead CDP session (navigation limit, tunnel drop).
+# Keep these specific — broad patterns like "Protocol error" cause false positives
+# on non-fatal errors (e.g. invalid URL) and mask the real issue from the agent.
+_CDP_DEAD_SESSION_PATTERNS = (
+    "Page.navigate limit reached",
+    "ERR_TUNNEL_CONNECTION_FAILED",
+    "Target closed",
+    "Session closed",
+    "Browser has been closed",
+    "Connection refused",
+)
+
+
+def _is_dead_session_error(error_msg: str) -> bool:
+    """Check if an error indicates the CDP session is dead and needs reset."""
+    return any(pattern.lower() in error_msg.lower() for pattern in _CDP_DEAD_SESSION_PATTERNS)
+
+
+@skill(
+    name="browser_reset",
+    description=(
+        "Reset the browser by closing the current session and starting fresh. "
+        "Use this when the browser is stuck, showing tunnel errors, or has hit "
+        "navigation limits. After reset, the next browser_navigate call will "
+        "establish a new connection (and a new IP for Bright Data)."
+    ),
+    parameters={},
+)
+async def browser_reset(*, mesh_client=None) -> dict:
+    """Force-close the browser session so the next call gets a fresh one."""
+    async with _page_op_lock:
+        backend = os.environ.get("BROWSER_BACKEND", "basic")
+        await browser_cleanup()
+        logger.info("Browser session reset (backend: %s)", backend)
+        return {
+            "status": "reset",
+            "backend": backend,
+            "message": (
+                "Browser session closed. Next browser call will establish "
+                "a fresh connection."
+            ),
+        }
 
 
 def _flatten_tree(node: dict) -> list[dict]:
@@ -252,24 +298,38 @@ def _flatten_tree(node: dict) -> list[dict]:
     },
 )
 async def browser_navigate(url: str, wait_ms: int = 1000, *, mesh_client=None) -> dict:
-    """Navigate to a URL and extract text content."""
+    """Navigate to a URL and extract text content.
+
+    If the CDP session is dead (navigation limit, tunnel failure), automatically
+    resets the browser and retries once with a fresh session.
+    """
     async with _page_op_lock:
-        try:
-            _page_refs.clear()
-            _credential_filled_refs.clear()
-            page = await _get_page(mesh_client=mesh_client)
-            response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            if wait_ms:
-                await page.wait_for_timeout(wait_ms)
-            text = await page.inner_text("body")
-            return {
-                "url": page.url,
-                "title": await page.title(),
-                "status": response.status if response else 0,
-                "content": _redact_credentials(text[:50000]),
-            }
-        except Exception as e:
-            return {"error": str(e), "url": url}
+        for attempt in range(2):
+            try:
+                _page_refs.clear()
+                _credential_filled_refs.clear()
+                page = await _get_page(mesh_client=mesh_client)
+                response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                if wait_ms:
+                    await page.wait_for_timeout(wait_ms)
+                text = await page.inner_text("body")
+                return {
+                    "url": page.url,
+                    "title": await page.title(),
+                    "status": response.status if response else 0,
+                    "content": _redact_credentials(text[:50000]),
+                }
+            except Exception as e:
+                error_msg = str(e)
+                if attempt == 0 and _is_dead_session_error(error_msg):
+                    logger.warning(
+                        "Dead CDP session detected (%s), resetting browser and retrying",
+                        error_msg[:120],
+                    )
+                    await browser_cleanup()
+                    continue
+                return {"error": error_msg, "url": url}
+        return {"error": "Navigation failed after session reset", "url": url}
 
 
 def _parse_aria_snapshot(yaml_text: str) -> list[dict]:
