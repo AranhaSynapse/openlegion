@@ -488,7 +488,7 @@ select:focus-visible,
   max-height: 20rem;
   overflow: auto;
   white-space: pre-wrap;
-  word-break: break-all;
+  overflow-wrap: break-word;
   color: #d1d5db;
 }
 
@@ -519,6 +519,31 @@ select:focus-visible,
 .bb-entry-row.bb-expanded.ns-accent-artifacts { border-left-color: rgba(139, 92, 246, 0.5); }
 .bb-entry-row.bb-expanded.ns-accent-history  { border-left-color: rgba(107, 114, 128, 0.5); }
 .bb-entry-row.bb-expanded.ns-accent-default  { border-left-color: rgba(107, 114, 128, 0.3); }
+
+/* Expand chevron */
+.bb-chevron {
+  width: 0.75rem;
+  height: 0.75rem;
+  flex-shrink: 0;
+  color: #4b5563;
+  transition: transform 0.15s ease, color 0.15s;
+}
+
+.bb-entry-row:hover .bb-chevron { color: #9ca3af; }
+.bb-entry-row.bb-expanded .bb-chevron { transform: rotate(90deg); color: #9ca3af; }
+
+/* Detail panel transition */
+.bb-detail {
+  overflow: hidden;
+  transition: max-height 0.2s ease, opacity 0.15s ease;
+  max-height: 0;
+  opacity: 0;
+}
+
+.bb-detail.bb-detail-open {
+  max-height: 30rem;
+  opacity: 1;
+}
 
 /* ── Heartbeat indicator ──────────────────────────── */
 
@@ -558,7 +583,10 @@ select:focus-visible,
   .agent-card,
   .nav-tab,
   .action-btn,
-  .waterfall-bar {
+  .waterfall-bar,
+  .bb-entry-row,
+  .bb-chevron,
+  .bb-detail {
     transition: none !important;
   }
 }

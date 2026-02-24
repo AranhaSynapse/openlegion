@@ -1179,19 +1179,19 @@
               <div :class="bbHighlights.includes(entry.key) ? 'flash-yellow' : ''">
                 <!-- Entry row -->
                 <div class="bb-entry-row"
-                  :class="[
-                    bbExpanded[entry.key] ? 'bb-expanded ns-accent-' + (bbNsBadgeClass(entry.key).split(' ')[1] || 'default').replace('ns-', '') : ''
-                  ]"
+                  :class="bbExpanded[entry.key] ? 'bb-expanded ' + bbNsAccentClass(entry.key) : ''"
                   @click="toggleBbExpand(entry.key)">
+                  <!-- Expand chevron -->
+                  <svg class="bb-chevron" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" /></svg>
                   <!-- Agent avatar -->
-                  <div class="agent-avatar agent-avatar-sm flex-shrink-0"
+                  <div class="agent-avatar agent-avatar-sm"
                     :class="'agent-color-' + agentColorIndex(entry.written_by)"
                     x-text="agentInitials(entry.written_by)"></div>
                   <!-- Namespace badge -->
                   <span x-show="bbNamespaceOf(entry.key)" :class="bbNsBadgeClass(entry.key)"
-                    x-text="bbNamespaceOf(entry.key).replace('/', '')"></span>
+                    x-text="bbNsName(entry.key)"></span>
                   <!-- Key (after namespace) -->
-                  <span class="font-mono text-xs text-blue-400 truncate min-w-0" x-text="bbKeyAfterNs(entry.key)"></span>
+                  <span class="font-mono text-xs text-blue-400 truncate" style="min-width:5rem;max-width:14rem" x-text="bbKeyAfterNs(entry.key)"></span>
                   <!-- Value summary -->
                   <span class="text-gray-500 text-xs truncate flex-1 min-w-0" x-text="valueSummary(entry.value)"></span>
                   <!-- Relative time -->
@@ -1204,15 +1204,17 @@
                   >Del</button>
                 </div>
                 <!-- Expanded detail -->
-                <div x-show="bbExpanded[entry.key]" x-cloak class="px-4 pb-3 pt-1">
-                  <div class="flex items-center gap-3 mb-2 text-[11px] text-gray-500">
-                    <span>Written by <span class="text-gray-400" x-text="entry.written_by"></span></span>
-                    <span class="text-gray-700">&middot;</span>
-                    <span>v<span x-text="entry.version"></span></span>
-                    <span class="text-gray-700">&middot;</span>
-                    <span class="font-mono text-gray-600" x-text="entry.updated_at"></span>
+                <div class="bb-detail" :class="bbExpanded[entry.key] ? 'bb-detail-open' : ''">
+                  <div class="px-4 pb-3 pt-1">
+                    <div class="flex items-center gap-3 mb-2 text-[11px] text-gray-500">
+                      <span>Written by <span class="text-gray-400" x-text="entry.written_by"></span></span>
+                      <span class="text-gray-700">&middot;</span>
+                      <span>v<span x-text="entry.version"></span></span>
+                      <span class="text-gray-700">&middot;</span>
+                      <span class="font-mono text-gray-600" x-text="entry.updated_at"></span>
+                    </div>
+                    <pre class="bb-detail-pre custom-scrollbar" x-text="fullJson(entry.value)"></pre>
                   </div>
-                  <pre class="bb-detail-pre custom-scrollbar" x-text="fullJson(entry.value)"></pre>
                 </div>
               </div>
             </template>

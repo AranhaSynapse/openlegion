@@ -1661,6 +1661,7 @@ function dashboard() {
     },
 
     agentColorIndex(agentId) {
+      if (!agentId) return 0;
       let hash = 0;
       for (let i = 0; i < agentId.length; i++) {
         hash = ((hash << 5) - hash) + agentId.charCodeAt(i);
@@ -1670,6 +1671,7 @@ function dashboard() {
     },
 
     agentInitials(agentId) {
+      if (!agentId) return '??';
       const parts = agentId.replace(/[_-]/g, ' ').trim().split(/\s+/);
       if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
       return agentId.substring(0, 2).toUpperCase();
@@ -1694,17 +1696,25 @@ function dashboard() {
       return idx === -1 ? '' : key.substring(0, idx + 1);
     },
 
+    _bbNsMap: {
+      'tasks/': 'tasks',
+      'context/': 'context',
+      'signals/': 'signals',
+      'goals/': 'goals',
+      'artifacts/': 'artifacts',
+      'history/': 'history',
+    },
+
+    bbNsName(key) {
+      return this._bbNsMap[this.bbNamespaceOf(key)] || 'default';
+    },
+
     bbNsBadgeClass(key) {
-      const ns = this.bbNamespaceOf(key);
-      const map = {
-        'tasks/': 'ns-tasks',
-        'context/': 'ns-context',
-        'signals/': 'ns-signals',
-        'goals/': 'ns-goals',
-        'artifacts/': 'ns-artifacts',
-        'history/': 'ns-history',
-      };
-      return 'ns-badge ' + (map[ns] || 'ns-default');
+      return 'ns-badge ns-' + this.bbNsName(key);
+    },
+
+    bbNsAccentClass(key) {
+      return 'ns-accent-' + this.bbNsName(key);
     },
 
     bbKeyAfterNs(key) {
