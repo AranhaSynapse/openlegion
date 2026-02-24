@@ -123,8 +123,17 @@ channels:
 
 When creating the Discord bot in the [Developer Portal](https://discord.com/developers/applications), enable:
 
-- **Message Content Intent** -- required for reading messages
+- **Message Content Intent** -- required for reading `!` prefix fallback messages
 - **Bot permissions**: Send Messages, Read Message History, Add Reactions
+- **OAuth2 scopes**: `bot`, `applications.commands` (required for slash commands)
+
+### Slash Commands
+
+All commands are registered as native Discord slash commands via `CommandTree`. They appear in Discord's autocomplete when users type `/`. Commands sync automatically on bot startup -- guild-specific when `allowed_guilds` is set (instant), global otherwise (may take up to an hour for Discord to propagate).
+
+The `!` prefix is still supported as a fallback via regular messages (e.g. `!agents`, `!start <code>`).
+
+**Note:** `/addkey` is intentionally not registered as a slash command because parameter values are visible in Discord's command UI. Use `!addkey <service> <key>` instead.
 
 ### Pairing
 
@@ -135,13 +144,16 @@ Discord uses the same pairing pattern as Telegram:
 | `/start <code>` | Pair with the bot (first user becomes owner) |
 | `/allow <user_id>` | Owner: allow a Discord user |
 | `/revoke <user_id>` | Owner: revoke a user's access |
+| `/paired` | Owner: list paired users |
 
-After pairing, the bot sends a help summary with all available commands. Unauthorized users receive a one-time access denial message with their user ID.
+After pairing, the bot sends a help summary with all available commands. Unauthorized users receive a one-time access denial message with their user ID. Security commands (`/start`, `/allow`, `/revoke`, `/paired`) respond ephemerally -- only visible to the invoker.
 
 Pairing state is stored in `config/discord_paired.json`.
 
 ### Features
 
+- Native Discord slash commands with autocomplete
+- `!` prefix fallback for all commands via regular messages
 - Token-level streaming with progressive message editing (debounced at 500ms)
 - Tool progress summary prepended to streaming responses
 - Typing indicators during dispatch

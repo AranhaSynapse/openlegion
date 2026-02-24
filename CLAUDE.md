@@ -190,6 +190,7 @@ pytest tests/test_loop.py -x -v
 | `src/dashboard/server.py` | `tests/test_dashboard.py`, `tests/test_dashboard_workspace.py` |
 | `src/marketplace.py` | `tests/test_marketplace.py` |
 | `src/channels/base.py` | `tests/test_channels.py` |
+| `src/channels/discord.py` | `tests/test_discord.py` |
 | `src/channels/slack.py` | `tests/test_slack.py` |
 | `src/channels/whatsapp.py` | `tests/test_whatsapp.py` |
 | `src/shared/types.py` | `tests/test_types.py` |
