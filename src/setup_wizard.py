@@ -28,7 +28,8 @@ _VALIDATION_MODELS = {
     "moonshot": "moonshot/moonshot-v1-128k",
     "xai": "xai/grok-3-mini",
     "groq": "groq/llama-3.1-8b-instant",
-    "minimax": "minimax/MiniMax-M2.1-lightning",
+    "minimax": "minimax/MiniMax-M2.5-Lightning",
+    "zai": "zai/glm-5",
 }
 
 

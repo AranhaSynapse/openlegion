@@ -38,6 +38,7 @@ _PROVIDERS = [
     {"name": "xai", "label": "xAI (Grok)"},
     {"name": "groq", "label": "Groq"},
     {"name": "minimax", "label": "MiniMax"},
+    {"name": "zai", "label": "Z.AI (GLM)"},
 ]
 
 _PROVIDER_MODELS: dict[str, list[str]] = {
@@ -86,9 +87,13 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
     ],
     "minimax": [
         "minimax/MiniMax-M2.5",
+        "minimax/MiniMax-M2.5-Lightning",
         "minimax/MiniMax-M2.1",
         "minimax/MiniMax-M2.1-lightning",
         "minimax/MiniMax-M2",
+    ],
+    "zai": [
+        "zai/glm-5",
     ],
 }
 
