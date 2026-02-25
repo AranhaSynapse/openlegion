@@ -854,9 +854,9 @@
       </div>
 
       <!-- Agent Detail -->
-      <div x-show="activeTab === 'fleet' && detailAgent" x-cloak @keydown.escape.window="if (detailAgent && !identityEditing && !configEditing && !cmdPaletteOpen && openChats.length === 0) detailAgent = null">
+      <div x-show="activeTab === 'fleet' && detailAgent" x-cloak @keydown.escape.window="if (detailAgent && !identityEditing && !configEditing && !cmdPaletteOpen && openChats.length === 0) closeDetail()">
         <div class="text-sm text-gray-500 mb-4 flex items-center gap-1">
-          <button @click="detailAgent = null" class="hover:text-gray-300 transition-colors flex items-center gap-1">
+          <button @click="closeDetail()" class="hover:text-gray-300 transition-colors flex items-center gap-1">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
             Agents
           </button>

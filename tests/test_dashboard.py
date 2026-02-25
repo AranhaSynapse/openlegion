@@ -1331,3 +1331,62 @@ class TestDashboardAgentConfigAllowedCredentials:
         resp = self.client.get("/dashboard/api/agents/alpha/config")
         data = resp.json()
         assert data["resolved_credentials"] == []
+
+
+def _make_full_client(components: dict) -> TestClient:
+    """Build a TestClient with dashboard router + root-level SPA catch-all."""
+    from src.dashboard.server import create_dashboard_router, create_spa_catchall_router
+
+    router = create_dashboard_router(**components, mesh_port=8420)
+    app = FastAPI()
+    app.include_router(router)
+    app.include_router(create_spa_catchall_router())  # Must be last
+    return TestClient(app)
+
+
+class TestDashboardSPACatchall:
+    """Tests for the root-level SPA catch-all route that enables deep linking."""
+
+    def setup_method(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.components = _make_components(self._tmpdir)
+        self.client = _make_full_client(self.components)
+
+    def teardown_method(self):
+        _teardown(self.components)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_catchall_serves_html_for_agent_path(self):
+        resp = self.client.get("/agents/alice")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "window.__config" in resp.text
+
+    def test_catchall_serves_html_for_activity(self):
+        resp = self.client.get("/activity")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+
+    def test_catchall_serves_html_for_system(self):
+        resp = self.client.get("/system")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+
+    def test_catchall_serves_html_for_nested_agent_path(self):
+        resp = self.client.get("/agents/alice/memory")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+
+    def test_catchall_404_for_dashboard_paths(self):
+        resp = self.client.get("/dashboard/agents/alice")
+        assert resp.status_code == 404
+
+    def test_catchall_404_for_mesh_paths(self):
+        resp = self.client.get("/mesh/agents")
+        assert resp.status_code == 404
+
+    def test_existing_api_routes_not_shadowed(self):
+        resp = self.client.get("/dashboard/api/agents")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "agents" in data

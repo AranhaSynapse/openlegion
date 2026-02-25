@@ -1057,3 +1057,24 @@ def create_dashboard_router(
         return FileResponse(str(full), media_type=_MEDIA_TYPES.get(suffix))
 
     return api_router
+
+
+def create_spa_catchall_router() -> APIRouter:
+    """Root-level catch-all for SPA deep linking (no /dashboard/ prefix).
+
+    Must be included LAST on the app so it never shadows mesh/dashboard routes.
+    """
+    from jinja2 import Environment, FileSystemLoader
+
+    env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)))
+    catchall = APIRouter()
+
+    @catchall.get("/{path:path}", response_class=HTMLResponse)
+    async def spa_catchall(path: str) -> HTMLResponse:
+        if path.startswith(("mesh/", "dashboard/", "ws/")):
+            raise HTTPException(status_code=404, detail="Not found")
+        template = env.get_template("index.html")
+        html = template.render(ws_path="/ws/events", api_base="/dashboard/api")
+        return HTMLResponse(html)
+
+    return catchall

@@ -6,7 +6,7 @@
  */
 const _IDENTITY_TABS = [
   { id: 'config', label: 'Config', file: null, access: 'user', desc: 'Model, role, browser backend, and daily budget.' },
-  { id: 'identity', label: 'Identity', file: null, access: 'user', desc: 'Agent personality, instructions, and user preferences.' },
+  { id: 'identity', label: 'Identity', file: null, access: 'user', desc: 'Agent personality and instructions.' },
   { id: 'memory', label: 'Memory', file: null, access: 'agent', desc: 'Long-term memory and autonomous heartbeat rules.' },
   { id: 'logs', label: 'Logs', file: null, access: 'auto', desc: 'Activity logs and learned corrections.' },
 ];
@@ -15,10 +15,10 @@ const _IDENTITY_FILE_MAP = {
   identity: [
     { file: 'SOUL.md', label: 'Soul', cap: 4000, access: 'user', desc: 'Core personality and behavioral guidelines.' },
     { file: 'AGENTS.md', label: 'Instructions', cap: 8000, access: 'user', desc: 'Operating instructions for the agent.' },
-    { file: 'USER.md', label: 'Preferences', cap: 4000, access: 'agent', desc: 'Your preferences and working style.' },
   ],
   memory: [
     { file: 'MEMORY.md', label: 'Memory', cap: 16000, access: 'agent', desc: 'Long-term facts from conversations.' },
+    { file: 'USER.md', label: 'Preferences', cap: 4000, access: 'agent', desc: 'Your preferences and working style.' },
     { file: 'HEARTBEAT.md', label: 'Heartbeat', cap: null, access: 'agent', desc: 'Rules for autonomous operation.' },
   ],
 };
@@ -192,6 +192,108 @@ function dashboard() {
     _cronInterval: null,
     _seenEventIds: new Set(),
 
+    // URL routing
+    _skipPush: false,
+    _popstateHandler: null,
+
+    // ── URL Routing ──────────────────────────────────────────
+
+    _buildPath() {
+      if (this.detailAgent) {
+        const tab = this.identityTab || 'identity';
+        return tab === 'identity'
+          ? `/agents/${this.detailAgent}`
+          : `/agents/${this.detailAgent}/${tab}`;
+      }
+      if (this.activeTab === 'activity') {
+        return this.activityView === 'events'
+          ? '/activity/events'
+          : '/activity';
+      }
+      if (this.activeTab === 'system') return '/system';
+      return '/';
+    },
+
+    _buildTitle() {
+      if (this.detailAgent) {
+        const tabLabel = (_IDENTITY_TABS.find(t => t.id === this.identityTab) || _IDENTITY_TABS[0]).label;
+        return `${this.detailAgent} \u00b7 ${tabLabel} \u2014 OpenLegion`;
+      }
+      if (this.activeTab === 'activity') {
+        return this.activityView === 'events'
+          ? 'Events \u2014 OpenLegion'
+          : 'Traces \u2014 OpenLegion';
+      }
+      if (this.activeTab === 'system') return 'System \u2014 OpenLegion';
+      return 'Agents \u2014 OpenLegion';
+    },
+
+    _parsePath(path) {
+      const clean = path.replace(/^\/+/, '').replace(/\/+$/, '');
+      const route = { tab: 'fleet', activityView: 'traces', agentId: null, identityTab: 'identity' };
+      if (!clean) return route;
+
+      const agentMatch = clean.match(/^agents\/([^/]+)(?:\/([^/]+))?$/);
+      if (agentMatch) {
+        route.agentId = agentMatch[1];
+        const tab = agentMatch[2];
+        if (tab && _IDENTITY_TABS.some(t => t.id === tab)) route.identityTab = tab;
+        return route;
+      }
+
+      if (clean === 'activity/events') { route.tab = 'activity'; route.activityView = 'events'; }
+      else if (clean === 'activity') { route.tab = 'activity'; }
+      else if (clean === 'system') { route.tab = 'system'; }
+      return route;
+    },
+
+    _pushUrl(replace) {
+      if (this._skipPush) return;
+      const path = this._buildPath();
+      const title = this._buildTitle();
+      document.title = title;
+      if (window.location.pathname === path) return;
+      if (replace) {
+        history.replaceState(null, '', path);
+      } else {
+        history.pushState(null, '', path);
+      }
+    },
+
+    _applyRoute(route) {
+      this._skipPush = true;
+      try {
+        if (route.agentId) {
+          if (this.detailAgent !== route.agentId) {
+            this.drillDown(route.agentId);
+          }
+          if (this.identityTab !== route.identityTab) {
+            this.identityTab = route.identityTab;
+            if (this.selectedAgent) this.loadIdentityTabContent(this.selectedAgent);
+          }
+        } else {
+          if (this.detailAgent) {
+            this.detailAgent = null;
+            this.selectedAgent = null;
+          }
+          if (this.activeTab !== route.tab) {
+            this.switchTab(route.tab);
+          }
+          if (route.tab === 'activity' && this.activityView !== route.activityView) {
+            this.setActivityView(route.activityView);
+          }
+        }
+      } finally {
+        this._skipPush = false;
+      }
+    },
+
+    closeDetail() {
+      this.detailAgent = null;
+      this.selectedAgent = null;
+      this._pushUrl(false);
+    },
+
     // ── Helpers ────────────────────────────────────────────
 
     async _ensureBrightDataKey(browserBackend) {
@@ -348,6 +450,46 @@ function dashboard() {
       };
       document.addEventListener('keydown', this._cmdPaletteHandler);
 
+      // Normalize legacy /dashboard/ URL to root
+      if (/^\/dashboard\/?$/.test(window.location.pathname)) {
+        history.replaceState(null, '', '/');
+      }
+
+      // Deep link restoration: parse initial URL and apply route
+      const initRoute = this._parsePath(window.location.pathname);
+      const isDeepLink = initRoute.agentId || initRoute.tab !== 'fleet' || initRoute.activityView !== 'traces';
+      if (isDeepLink) {
+        this.$nextTick(() => {
+          this._applyRoute(initRoute);
+          document.title = this._buildTitle();
+          history.replaceState(null, '', this._buildPath());
+        });
+      } else {
+        document.title = this._buildTitle();
+      }
+
+      // Popstate listener for browser back/forward
+      this._popstateHandler = () => {
+        // Guard unsaved edits
+        if (this.identityEditing || this.configEditing || this.projectEditing) {
+          if (!confirm('You have unsaved changes. Discard and navigate away?')) {
+            // Re-push current URL to cancel the back navigation
+            this._pushUrl(true);
+            return;
+          }
+          this.identityEditing = false;
+          this.identityEditBuffer = '';
+          this.configEditing = false;
+          this.editForm = {};
+          this.projectEditing = false;
+          this.projectEditBuffer = '';
+        }
+        const route = this._parsePath(window.location.pathname);
+        this._applyRoute(route);
+        document.title = this._buildTitle();
+      };
+      window.addEventListener('popstate', this._popstateHandler);
+
       // Pause polling when tab is hidden to save resources
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
@@ -379,6 +521,7 @@ function dashboard() {
       Object.values(this._chatAborts).forEach(c => c?.abort());
       if (this._broadcastAbort) this._broadcastAbort.abort();
       if (this._cmdPaletteHandler) document.removeEventListener('keydown', this._cmdPaletteHandler);
+      if (this._popstateHandler) window.removeEventListener('popstate', this._popstateHandler);
     },
 
     // ── Tab switching ─────────────────────────────────────
@@ -412,6 +555,7 @@ function dashboard() {
         this.fetchCronJobs();
         this._cronInterval = setInterval(() => this.fetchCronJobs(), 10000);
       }
+      if (!this._skipPush) this._pushUrl(false);
     },
 
     // ── Markdown rendering for chat messages ─────────────
@@ -556,6 +700,7 @@ function dashboard() {
         this.fetchTraces();
         this._startActivityRefresh();
       }
+      if (!this._skipPush) this._pushUrl(false);
     },
 
     async toggleTraceExpand(traceId) {
@@ -680,6 +825,7 @@ function dashboard() {
       // Reset file-loading flag to prevent stale spinner on non-file tabs
       this.identityContentLoading = false;
       await this.loadIdentityTabContent(agentId);
+      if (!this._skipPush) this._pushUrl(false);
     },
 
     startIdentityEdit(file) {
@@ -996,6 +1142,7 @@ function dashboard() {
           this.showToast(`${agentId} removed`);
           this.closeChat(agentId);
           delete this.chatHistories[agentId];
+          if (this.detailAgent === agentId) this.closeDetail();
           this.fetchAgents();
         } else {
           const err = await resp.json();
@@ -1779,6 +1926,7 @@ function dashboard() {
       this.fetchIdentityFiles(agentId);
       this.fetchAgentConfig(agentId);
       this.activeTab = 'fleet';
+      if (!this._skipPush) this._pushUrl(false);
     },
 
     // ── Chart.js rendering ────────────────────────────────

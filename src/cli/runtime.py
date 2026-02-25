@@ -438,7 +438,7 @@ class RuntimeContext:
         app.include_router(create_webhook_router(self.orchestrator))
         app.include_router(webhook_manager.create_router())
 
-        from src.dashboard.server import create_dashboard_router
+        from src.dashboard.server import create_dashboard_router, create_spa_catchall_router
 
         dashboard_router = create_dashboard_router(
             blackboard=self.blackboard,
@@ -459,6 +459,7 @@ class RuntimeContext:
             router=self.router,
         )
         app.include_router(dashboard_router)
+        app.include_router(create_spa_catchall_router())  # Must be last — SPA deep linking
         self._app = app
 
         server_config = uvicorn.Config(app, host="0.0.0.0", port=mesh_port, log_level="warning")
