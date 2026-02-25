@@ -2106,7 +2106,7 @@ class TestPersistentBrowserBackend:
             with patch.object(bt, "_get_page", new_callable=AsyncMock) as mock_get, \
                  patch("subprocess.Popen", side_effect=mock_popen), \
                  patch("subprocess.run", return_value=mock_run_result), \
-                 patch("time.sleep"), \
+                 patch("asyncio.sleep", new_callable=AsyncMock), \
                  patch("pathlib.Path.mkdir"), \
                  patch("pathlib.Path.write_bytes"):
                 await bt.start_persistent_browser()
@@ -2145,7 +2145,7 @@ class TestPersistentBrowserBackend:
             with patch.object(bt, "_get_page", new_callable=AsyncMock), \
                  patch("subprocess.Popen", side_effect=mock_popen), \
                  patch("subprocess.run", return_value=mock_run_result), \
-                 patch("time.sleep"), \
+                 patch("asyncio.sleep", new_callable=AsyncMock), \
                  patch("pathlib.Path.mkdir"), \
                  patch("pathlib.Path.write_bytes"):
                 await bt.start_persistent_browser()
@@ -2176,8 +2176,23 @@ class TestPersistentBrowserBackend:
             with patch.object(bt, "_get_page", new_callable=AsyncMock), \
                  patch("subprocess.Popen", side_effect=mock_popen), \
                  patch("subprocess.run", return_value=mock_run_result), \
-                 patch("time.sleep"), \
+                 patch("asyncio.sleep", new_callable=AsyncMock), \
                  patch("pathlib.Path.mkdir"), \
                  patch("pathlib.Path.write_bytes"):
                 with pytest.raises(RuntimeError, match="Xvnc exited immediately"):
+                    await bt.start_persistent_browser()
+
+    @pytest.mark.asyncio
+    async def test_start_persistent_browser_raises_on_vncpasswd_failure(self):
+        """start_persistent_browser raises if vncpasswd fails."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._vnc_proc = None
+        bt._novnc_proc = None
+
+        mock_run_result = MagicMock(returncode=1, stdout=b"", stderr=b"error")
+        with patch.dict(os.environ, {"BROWSER_BACKEND": "persistent", "VNC_PASSWORD": "pw"}):
+            with patch("subprocess.run", return_value=mock_run_result), \
+                 patch("pathlib.Path.mkdir"):
+                with pytest.raises(RuntimeError, match="vncpasswd failed"):
                     await bt.start_persistent_browser()

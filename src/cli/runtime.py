@@ -514,7 +514,7 @@ class RuntimeContext:
             for agent_id, ready in agent_results:
                 agent_cfg = agents_cfg.get(agent_id, {})
                 model = agent_cfg.get("model", default_model)
-                browser = agent_cfg.get("browser_backend", "basic") or "basic"
+                browser = agent_cfg.get("browser_backend", "persistent") or "persistent"
                 if ready:
                     echo_ok(f"{agent_id:<20} ready     model: {model:<20} browser: {browser}")
                     # Print noVNC URL for persistent browser agents

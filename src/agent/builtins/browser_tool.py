@@ -131,7 +131,7 @@ def _ensure_xvfb():
         return
     try:
         subprocess.Popen(
-            ["Xvfb", ":99", "-screen", "0", "1920x1080x16"],
+            ["Xvfb", ":99", "-screen", "0", "1280x720x24"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -232,7 +232,7 @@ async def _launch_persistent():
 
 
 async def _browser_cleanup_soft():
-    """Close browser/context/page/playwright but leave Xvfb and VNC alive.
+    """Close browser/context/page/playwright but leave Xvnc and VNC alive.
 
     Used by ``browser_reset`` in persistent mode to restart the browser
     while keeping the VNC session and profile directory intact.
@@ -277,7 +277,6 @@ async def start_persistent_browser():
     """
     global _vnc_proc, _novnc_proc
     import subprocess
-    import time as _time
 
     vnc_password = os.environ.get("VNC_PASSWORD", "openlegion")
 
@@ -290,6 +289,11 @@ async def start_persistent_browser():
         input=vnc_password.encode(),
         capture_output=True,
     )
+    if proc.returncode != 0 or not proc.stdout:
+        raise RuntimeError(
+            f"vncpasswd failed (code {proc.returncode}): "
+            f"{proc.stderr.decode(errors='replace').strip()}"
+        )
     Path(passwd_path).write_bytes(proc.stdout)
 
     # Start Xvnc (TigerVNC) — combined X server + VNC server.
@@ -308,7 +312,7 @@ async def start_persistent_browser():
         ],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    _time.sleep(0.5)
+    await asyncio.sleep(0.5)
     if _vnc_proc.poll() is not None:
         raise RuntimeError(
             f"Xvnc exited immediately (code {_vnc_proc.returncode})"
@@ -331,7 +335,7 @@ async def start_persistent_browser():
         ],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    _time.sleep(0.3)
+    await asyncio.sleep(0.3)
     if _novnc_proc.poll() is not None:
         raise RuntimeError(
             f"websockify exited immediately (code {_novnc_proc.returncode})"

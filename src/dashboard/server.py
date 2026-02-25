@@ -308,7 +308,7 @@ def create_dashboard_router(
             "model": agent_cfg.get("model", default_model),
             "role": agent_cfg.get("role", ""),
             "budget": agent_cfg.get("budget", {}),
-            "browser_backend": agent_cfg.get("browser_backend", "basic") or "basic",
+            "browser_backend": agent_cfg.get("browser_backend", "persistent") or "persistent",
             "allowed_credentials": allowed_creds,
             "available_credentials": sorted(agent_cred_names),
             "system_credentials": system_cred_names,
