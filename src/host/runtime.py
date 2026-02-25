@@ -254,6 +254,11 @@ class DockerBackend(RuntimeBackend):
             if vnc_port is not None:
                 ports["6080/tcp"] = vnc_port
             run_kwargs["ports"] = ports
+            # Bridge network: use public DNS so Chrome resolves domains
+            # reliably.  Docker Desktop's DNS forwarder becomes flaky
+            # after host crashes/reboots, causing permanent NXDOMAIN.
+            # host.docker.internal still works (injected via /etc/hosts).
+            run_kwargs["dns"] = ["8.8.8.8", "1.1.1.1"]
             # On Linux Docker Engine, host.docker.internal isn't automatic
             if platform.system() == "Linux":
                 run_kwargs["extra_hosts"] = {

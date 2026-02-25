@@ -290,32 +290,6 @@ def _cleanup_stale_profile():
                 logger.debug("Failed to remove %s: %s", lock_path, e)
 
 
-async def _verify_dns(context) -> bool:
-    """Verify DNS works after browser launch.
-
-    Chrome's built-in DNS resolver caches negative results — if it launches
-    before Docker Desktop's DNS forwarder is ready, it gets NXDOMAIN and
-    caches it indefinitely.  We detect this by navigating to a fast URL
-    and checking for ERR_NAME_NOT_RESOLVED.
-
-    Returns True if DNS works, False if DNS is broken.
-    """
-    page = context.pages[0] if context.pages else await context.new_page()
-    try:
-        await page.goto(
-            "https://www.google.com/generate_204",
-            timeout=10_000,
-            wait_until="commit",
-        )
-        return True
-    except Exception as e:
-        if "ERR_NAME_NOT_RESOLVED" not in str(e):
-            # Non-DNS error (e.g. timeout) — DNS itself may be fine
-            return True
-        logger.warning("DNS not ready after browser launch: %s", str(e)[:120])
-        return False
-
-
 async def _launch_persistent():
     """Launch Patchright Chromium with a persistent profile.
 
@@ -344,38 +318,20 @@ async def _launch_persistent():
     _pw = await async_playwright().start()
     profile_dir = "/data/browser_profile"
     Path(profile_dir).mkdir(parents=True, exist_ok=True)
-
-    for dns_attempt in range(3):
-        context = await _pw.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            headless=False,
-            no_viewport=True,  # let browser use Xvnc's native resolution
-            args=[
-                "--disable-dev-shm-usage",
-                "--no-first-run",
-                "--disable-infobars",
-            ],
-            # Do NOT set custom user_agent — Patchright docs warn against it.
-            # A mismatched UA is a detection vector.  The browser's real UA
-            # matches its actual version and capabilities.
-        )
-        await context.add_init_script(_STEALTH_INIT_SCRIPT)
-
-        if await _verify_dns(context):
-            break
-
-        # DNS failed — tear down and retry after a short wait
-        if dns_attempt < 2:
-            logger.warning(
-                "Restarting browser for DNS retry (%d/2)", dns_attempt + 1
-            )
-            try:
-                await context.close()
-            except Exception:
-                pass
-            _cleanup_stale_profile()
-            await asyncio.sleep(2)
-
+    context = await _pw.chromium.launch_persistent_context(
+        user_data_dir=profile_dir,
+        headless=False,
+        no_viewport=True,  # let browser use Xvnc's native resolution
+        args=[
+            "--disable-dev-shm-usage",
+            "--no-first-run",
+            "--disable-infobars",
+        ],
+        # Do NOT set custom user_agent — Patchright docs warn against it.
+        # A mismatched UA is a detection vector.  The browser's real UA
+        # matches its actual version and capabilities.
+    )
+    await context.add_init_script(_STEALTH_INIT_SCRIPT)
     page = context.pages[0] if context.pages else await context.new_page()
     logger.info("Browser backend: persistent (Patchright Chromium + KasmVNC)")
     return None, context, page
