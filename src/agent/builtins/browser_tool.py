@@ -27,8 +27,7 @@ _launch_lock = asyncio.Lock()
 _page_refs: dict[str, object] = {}
 _credential_filled_refs: set[str] = set()  # refs that had $CRED{} typed into them
 _page_op_lock = asyncio.Lock()  # serializes all page operations (Playwright pages aren't concurrent-safe)
-_vnc_proc = None  # Xvnc (TigerVNC) subprocess (persistent backend)
-_novnc_proc = None  # websockify/noVNC subprocess (persistent backend)
+_vnc_proc = None  # Xvnc (KasmVNC) subprocess (persistent backend)
 
 _ACTIONABLE_ROLES = frozenset({
     "button", "link", "textbox", "checkbox", "radio", "combobox",
@@ -202,12 +201,67 @@ async def _launch_advanced(mesh_client):
     return browser, context, page
 
 
+_STEALTH_INIT_SCRIPT = """
+// Stealth patches — runs before every page script to hide Playwright markers.
+
+// 1. navigator.webdriver → undefined (the primary detection vector)
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+
+// 2. Fake chrome.runtime (real Chrome has this, Playwright doesn't)
+if (!window.chrome) window.chrome = {};
+if (!window.chrome.runtime) window.chrome.runtime = {};
+
+// 3. Fake plugins array (Playwright Chromium reports empty plugins)
+Object.defineProperty(navigator, 'plugins', {
+    get: () => {
+        const plugins = [
+            {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer',
+             description: 'Portable Document Format', length: 1},
+            {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai',
+             description: '', length: 1},
+            {name: 'Native Client', filename: 'internal-nacl-plugin',
+             description: '', length: 2},
+        ];
+        plugins.refresh = () => {};
+        return plugins;
+    },
+});
+
+// 4. Fix permissions.query to not reveal automation
+const origQuery = window.navigator.permissions.query.bind(
+    window.navigator.permissions
+);
+window.navigator.permissions.query = (params) => {
+    if (params.name === 'notifications')
+        return Promise.resolve({state: Notification.permission});
+    return origQuery(params);
+};
+
+// 5. Hide Playwright-injected globals
+delete window.__playwright;
+delete window.__pw_manual;
+
+// 6. Fix navigator.languages (Playwright sometimes only has ['en-US'])
+Object.defineProperty(navigator, 'languages', {
+    get: () => ['en-US', 'en'],
+});
+
+// 7. Fake connection.rtt (0 in automation, ~50-100 in real browsers)
+if (navigator.connection) {
+    Object.defineProperty(navigator.connection, 'rtt', {get: () => 50});
+}
+"""
+
+
 async def _launch_persistent():
     """Launch Playwright Chromium with a persistent profile.
 
     Uses ``launch_persistent_context`` so cookies and sessions survive
     browser restarts.  Returns ``(None, context, page)`` — persistent
     contexts have no separate Browser object.
+
+    Injects stealth patches via ``add_init_script`` to hide Playwright's
+    automation markers from sites like X.com that detect and block bots.
     """
     global _pw
     try:
@@ -225,9 +279,21 @@ async def _launch_persistent():
         user_data_dir=profile_dir,
         headless=False,
         viewport={"width": 1280, "height": 720},
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",
+            "--no-first-run",
+            "--disable-infobars",
+        ],
+        ignore_default_args=["--enable-automation"],
+        user_agent=(
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        ),
     )
+    await context.add_init_script(_STEALTH_INIT_SCRIPT)
     page = context.pages[0] if context.pages else await context.new_page()
-    logger.info("Browser backend: persistent (Chromium + noVNC)")
+    logger.info("Browser backend: persistent (Chromium + KasmVNC)")
     return None, context, page
 
 
@@ -264,88 +330,55 @@ async def _browser_cleanup_soft():
 
 
 async def start_persistent_browser():
-    """Start persistent browser + VNC stack at container boot.
+    """Start persistent browser + KasmVNC at container boot.
 
     Called from ``__main__.py`` lifespan when ``BROWSER_BACKEND=persistent``.
-    Uses TigerVNC's Xvnc which is both an X server and VNC server in one
-    process — no screen scraping overhead like x11vnc.  Then launches the
-    browser and websockify/noVNC for the web viewer.
+    KasmVNC's Xvnc is an X server, VNC server, and web server in a single
+    process — no need for separate websockify or noVNC.  It serves its own
+    modern web client with seamless clipboard, smooth scrolling, and webp
+    compression.
 
-    The websockify listen port defaults to 6080 but can be overridden via
-    the ``VNC_PORT`` env var (used in host-network mode to avoid collisions
+    The web listen port defaults to 6080 but can be overridden via the
+    ``VNC_PORT`` env var (used in host-network mode to avoid collisions
     when multiple persistent agents share the host network namespace).
     """
-    global _vnc_proc, _novnc_proc
+    global _vnc_proc
     import subprocess
 
-    vnc_password = os.environ.get("VNC_PASSWORD", "openlegion")
+    listen_port = os.environ.get("VNC_PORT", "6080")
 
-    # Write TigerVNC password file
-    passwd_dir = Path("/tmp/.vnc")
-    passwd_dir.mkdir(parents=True, exist_ok=True)
-    passwd_path = str(passwd_dir / "passwd")
-    proc = subprocess.run(
-        ["vncpasswd", "-f"],
-        input=vnc_password.encode(),
-        capture_output=True,
-    )
-    if proc.returncode != 0 or not proc.stdout:
-        raise RuntimeError(
-            f"vncpasswd failed (code {proc.returncode}): "
-            f"{proc.stderr.decode(errors='replace').strip()}"
-        )
-    Path(passwd_path).write_bytes(proc.stdout)
-
-    # Start Xvnc (TigerVNC) — combined X server + VNC server.
-    # Renders and encodes VNC frames in one process, no screen scraping.
+    # Start KasmVNC Xvnc — combined X server + VNC server + web server.
+    # BasicAuth is disabled; access control is handled by Docker port mapping.
     _vnc_proc = subprocess.Popen(
         [
             "Xvnc", ":99",
             "-geometry", "1280x720",
             "-depth", "24",
-            "-rfbport", "5900",
-            "-rfbauth", passwd_path,
+            "-websocketPort", listen_port,
+            "-httpd", "/usr/share/kasmvnc/www",
+            "-sslOnly", "0",
+            "-SecurityTypes", "None",
+            "-disableBasicAuth",
             "-AlwaysShared",
-            "-AcceptKeyEvents",
-            "-AcceptPointerEvents",
-            "-SecurityTypes", "VncAuth",
+            "-interface", "0.0.0.0",
         ],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     await asyncio.sleep(0.5)
     if _vnc_proc.poll() is not None:
         raise RuntimeError(
-            f"Xvnc exited immediately (code {_vnc_proc.returncode})"
+            f"Xvnc (KasmVNC) exited immediately (code {_vnc_proc.returncode})"
         )
     os.environ["DISPLAY"] = ":99"
-    logger.info("Started Xvnc (TigerVNC) on :99, VNC on :5900")
+    logger.info("Started KasmVNC Xvnc on :99, web on :%s", listen_port)
 
     # Launch browser (DISPLAY is now set, _launch_persistent skips Xvfb)
     await _get_page()
 
-    # Start websockify / noVNC
-    # VNC_PORT is set by DockerBackend in host-network mode so each agent
-    # gets a unique external port; in bridge mode 6080 is mapped via Docker.
-    listen_port = os.environ.get("VNC_PORT", "6080")
-    novnc_dir = "/usr/share/novnc"
-    _novnc_proc = subprocess.Popen(
-        [
-            "websockify", "--web", novnc_dir,
-            listen_port, "localhost:5900",
-        ],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    await asyncio.sleep(0.3)
-    if _novnc_proc.poll() is not None:
-        raise RuntimeError(
-            f"websockify exited immediately (code {_novnc_proc.returncode})"
-        )
-    logger.info("Started noVNC (websockify) on :%s", listen_port)
-
 
 async def browser_cleanup():
     """Release browser resources. Called on agent shutdown."""
-    global _pw, _camoufox_cm, _browser, _context, _page, _vnc_proc, _novnc_proc
+    global _pw, _camoufox_cm, _browser, _context, _page, _vnc_proc
     try:
         if _page and not _page.is_closed():
             await _page.close()
@@ -371,15 +404,14 @@ async def browser_cleanup():
             await _pw.stop()
     except Exception as e:
         logger.debug("Error stopping playwright: %s", e)
-    for proc_name, proc in [("Xvnc", _vnc_proc), ("noVNC", _novnc_proc)]:
-        if proc:
-            try:
-                proc.terminate()
-                proc.wait(timeout=5)
-            except Exception as e:
-                logger.debug("Error stopping %s: %s", proc_name, e)
+    if _vnc_proc:
+        try:
+            _vnc_proc.terminate()
+            _vnc_proc.wait(timeout=5)
+        except Exception as e:
+            logger.debug("Error stopping Xvnc: %s", e)
     _pw = _camoufox_cm = _browser = _context = _page = None
-    _vnc_proc = _novnc_proc = None
+    _vnc_proc = None
     _page_refs.clear()
     _credential_filled_refs.clear()
 
@@ -494,6 +526,7 @@ async def browser_navigate(url: str, wait_ms: int = 1000, *, mesh_client=None) -
     resets the browser and retries once with a fresh session.
     """
     async with _page_op_lock:
+        backend = os.environ.get("BROWSER_BACKEND", "persistent")
         for attempt in range(2):
             try:
                 _page_refs.clear()
@@ -501,7 +534,6 @@ async def browser_navigate(url: str, wait_ms: int = 1000, *, mesh_client=None) -
                 page = await _get_page(mesh_client=mesh_client)
                 # Bright Data premium domains can take up to 2 min for
                 # CAPTCHA solving and proxy rotation; basic/stealth are fast.
-                backend = os.environ.get("BROWSER_BACKEND", "persistent")
                 nav_timeout = 120_000 if backend == "advanced" else 30_000
                 response = await page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout)
                 if wait_ms:

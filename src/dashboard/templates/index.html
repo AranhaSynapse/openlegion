@@ -913,7 +913,7 @@
                 </button>
               </div>
             </div>
-            <!-- Inline noVNC Browser Viewer -->
+            <!-- Inline KasmVNC Browser Viewer -->
             <div x-show="showBrowserViewer && agentDetail?.vnc_url" x-cloak
               class="bg-gray-900 border border-gray-800 rounded-lg mb-5 overflow-hidden">
               <div class="flex items-center justify-between px-4 py-2 border-b border-gray-800">
@@ -1520,12 +1520,12 @@
           <div x-show="bbWriteMode" x-cloak class="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-4">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label class="text-xs text-gray-500 mb-1 block">Key</label>
-                <input type="text" x-model="bbNewKey" placeholder="context/my_key" class="dash-input w-full">
+                <label for="bb-new-key" class="text-xs text-gray-500 mb-1 block">Key</label>
+                <input id="bb-new-key" type="text" x-model="bbNewKey" placeholder="context/my_key" class="dash-input w-full">
               </div>
               <div>
-                <label class="text-xs text-gray-500 mb-1 block">Value (JSON)</label>
-                <textarea x-model="bbNewValue" class="dash-textarea w-full" rows="2" placeholder='{"key": "value"}'></textarea>
+                <label for="bb-new-value" class="text-xs text-gray-500 mb-1 block">Value (JSON)</label>
+                <textarea id="bb-new-value" x-model="bbNewValue" class="dash-textarea w-full" rows="2" placeholder='{"key": "value"}'></textarea>
               </div>
             </div>
             <div class="mt-3 flex gap-2">
