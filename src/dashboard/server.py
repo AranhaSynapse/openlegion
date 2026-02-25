@@ -656,17 +656,15 @@ def create_dashboard_router(
         if not service or not key:
             raise HTTPException(status_code=400, detail="service and key are required")
         # Normalize bare provider names
-        from src.host.credentials import SYSTEM_CREDENTIAL_PROVIDERS
+        from src.host.credentials import (
+            SYSTEM_CREDENTIAL_PROVIDERS,
+            is_system_credential,
+        )
         if service.lower() in SYSTEM_CREDENTIAL_PROVIDERS and not service.lower().endswith("_api_key"):
             service = f"{service}_api_key"
-        # Explicit tier override from request body
+        # Explicit tier override from request body, then auto-detect
         tier_field = body.get("tier", "").strip().lower()
-        # Detect known LLM providers → system tier
-        is_system = tier_field == "system"
-        if not is_system and service.lower().endswith("_api_key"):
-            provider = service.lower().replace("_api_key", "")
-            if provider in SYSTEM_CREDENTIAL_PROVIDERS:
-                is_system = True
+        is_system = tier_field == "system" or is_system_credential(service)
         credential_vault.add_credential(service, key, system=is_system)
         # Store optional custom API base URL alongside the key
         base_url = body.get("base_url", "").strip()

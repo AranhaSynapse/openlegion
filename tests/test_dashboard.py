@@ -936,6 +936,72 @@ class TestDashboardCredentialRemove:
         assert resp.status_code == 404
 
 
+# ── V2 Tests: Credential Tier ───────────────────────────────
+
+
+class TestDashboardCredentialTier:
+    def setup_method(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.components = _make_components(self._tmpdir, include_v2=True)
+        self.client = _make_client(self.components)
+
+    def teardown_method(self):
+        _teardown(self.components)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_llm_provider_auto_promoted_to_system(self):
+        """LLM provider keys auto-detect as system tier."""
+        resp = self.client.post(
+            "/dashboard/api/credentials",
+            json={"service": "openai", "key": "sk-test"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["tier"] == "system"
+        vault = self.components["credential_vault"]
+        vault.add_credential.assert_called_once_with(
+            "openai_api_key", "sk-test", system=True,
+        )
+
+    def test_custom_credential_defaults_to_agent(self):
+        """Non-LLM credentials default to agent tier."""
+        resp = self.client.post(
+            "/dashboard/api/credentials",
+            json={"service": "brave_search_api_key", "key": "bsk-test"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["tier"] == "agent"
+        vault = self.components["credential_vault"]
+        vault.add_credential.assert_called_once_with(
+            "brave_search_api_key", "bsk-test", system=False,
+        )
+
+    def test_explicit_tier_system_overrides_default(self):
+        """Explicit tier='system' forces system tier for custom credentials."""
+        resp = self.client.post(
+            "/dashboard/api/credentials",
+            json={"service": "my_custom_svc", "key": "abc", "tier": "system"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["tier"] == "system"
+        vault = self.components["credential_vault"]
+        vault.add_credential.assert_called_once_with(
+            "my_custom_svc", "abc", system=True,
+        )
+
+    def test_invalid_tier_falls_through_to_auto_detect(self):
+        """Invalid tier values are ignored; auto-detect applies."""
+        resp = self.client.post(
+            "/dashboard/api/credentials",
+            json={"service": "my_svc", "key": "abc", "tier": "garbage"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["tier"] == "agent"
+
+
 # ── V2 Tests: Messages ──────────────────────────────────────
 
 

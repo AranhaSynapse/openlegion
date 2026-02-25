@@ -431,7 +431,11 @@ def channels_remove(channel_type: str):
             yaml.dump(mesh_cfg, f, default_flow_style=False, sort_keys=False)
 
     click.echo(f"Removed {ch['label']} channel.")
-    click.echo(f"  Token remains in .env — delete the OPENLEGION_CRED_{ch['env_key'].upper()} line to fully remove.")
+    env_name = ch['env_key'].upper()
+    click.echo(
+        f"  Token remains in .env — delete the OPENLEGION_SYSTEM_{env_name}"
+        f" (or OPENLEGION_CRED_{env_name}) line to fully remove."
+    )
 
 
 # ── skill marketplace ─────────────────────────────────────────

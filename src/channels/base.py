@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator, Callable, Coroutine
 from pathlib import Path
 from typing import Any
 
+from src.host.credentials import SYSTEM_CREDENTIAL_PROVIDERS, is_system_credential
 from src.shared.utils import setup_logging
 
 logger = setup_logging("channels.base")
@@ -306,15 +307,15 @@ class Channel(abc.ABC):
                 return "Usage: /addkey <service> <key>"
             service = args[1]
             # Normalize bare provider names to include _api_key suffix
-            known_providers = {"anthropic", "openai", "gemini", "deepseek", "moonshot", "minimax", "xai", "groq", "zai"}
-            if service.lower() in known_providers and not service.lower().endswith("_api_key"):
+            if service.lower() in SYSTEM_CREDENTIAL_PROVIDERS and not service.lower().endswith("_api_key"):
                 service = f"{service}_api_key"
             key = args[2] if len(args) > 2 else ""
             if not key:
                 return "Usage: /addkey <service> <key>"
             try:
                 self.addkey_fn(service, key)
-                return f"Credential '{service}' stored."
+                tier = "system" if is_system_credential(service) else "agent"
+                return f"Credential '{service}' stored ({tier} tier)."
             except Exception as e:
                 return f"Error storing credential: {e}"
 

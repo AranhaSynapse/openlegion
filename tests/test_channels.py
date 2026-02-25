@@ -506,6 +506,33 @@ class TestAddKeyNormalization:
         assert stored == [("brave_search", "my-key")]
 
 
+class TestAddKeyTierReporting:
+    @pytest.mark.asyncio
+    async def test_llm_provider_reports_system_tier(self):
+        """LLM provider keys report system tier in response."""
+        ch = _make_channel(addkey_fn=lambda svc, key: None)
+        result = await ch.handle_message("u1", "/addkey openai sk-test")
+        assert "system tier" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_non_llm_reports_agent_tier(self):
+        """Non-LLM credentials report agent tier in response."""
+        ch = _make_channel(addkey_fn=lambda svc, key: None)
+        result = await ch.handle_message("u1", "/addkey brave_search my-key")
+        assert "agent tier" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_zai_recognized_as_system(self):
+        """ZAI provider is recognized and reports system tier."""
+        stored = []
+        def addkey_fn(svc, key):
+            stored.append(svc)
+        ch = _make_channel(addkey_fn=addkey_fn)
+        result = await ch.handle_message("u1", "/addkey zai sk-zai")
+        assert stored == ["zai_api_key"]
+        assert "system tier" in result.lower()
+
+
 # ── /reset when reset_fn is None ──────────────────────────────
 
 class TestResetNotAvailable:

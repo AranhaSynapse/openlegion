@@ -653,7 +653,7 @@ class REPLSession:
         else:
             service = arg.split()[0]
         # Normalize: bare provider names get _api_key suffix
-        from src.host.credentials import SYSTEM_CREDENTIAL_PROVIDERS
+        from src.host.credentials import SYSTEM_CREDENTIAL_PROVIDERS, is_system_credential
         if service.lower() in SYSTEM_CREDENTIAL_PROVIDERS and not service.lower().endswith("_api_key"):
             service = f"{service}_api_key"
         inline_parts = arg.split(None, 1) if arg.strip() else []
@@ -665,11 +665,7 @@ class REPLSession:
             click.echo("No key provided.")
             return
         # Detect known LLM providers → store as system tier
-        is_llm_provider = False
-        if service.lower().endswith("_api_key"):
-            provider = service.lower().replace("_api_key", "")
-            if provider in SYSTEM_CREDENTIAL_PROVIDERS:
-                is_llm_provider = True
+        is_llm_provider = is_system_credential(service)
         if is_llm_provider:
             is_system = True
         else:
@@ -681,6 +677,7 @@ class REPLSession:
         click.echo(f"Credential '{service}' stored ({tier_label} tier).")
         # Prompt for optional base URL when the key is for a known LLM provider
         if is_llm_provider:
+            provider = service.lower().replace("_api_key", "")
             base_url = click.prompt(
                 "  Custom API base URL (leave blank for default)", default="", show_default=False,
             ).strip()

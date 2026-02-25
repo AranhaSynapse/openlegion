@@ -627,14 +627,16 @@ class RuntimeContext:
                 yield event
 
         def _channel_addkey(service: str, key: str) -> None:
-            from src.host.credentials import SYSTEM_CREDENTIAL_PROVIDERS
-            is_system = False
-            svc = service.lower()
-            if svc.endswith("_api_key"):
-                provider = svc.replace("_api_key", "")
-                if provider in SYSTEM_CREDENTIAL_PROVIDERS:
-                    is_system = True
-            self.credential_vault.add_credential(service, key, system=is_system)
+            from src.host.credentials import (
+                SYSTEM_CREDENTIAL_PROVIDERS,
+                is_system_credential,
+            )
+            # Normalize bare provider names (defense-in-depth, caller may also normalize)
+            if service.lower() in SYSTEM_CREDENTIAL_PROVIDERS and not service.lower().endswith("_api_key"):
+                service = f"{service}_api_key"
+            self.credential_vault.add_credential(
+                service, key, system=is_system_credential(service),
+            )
 
         def _channel_steer(agent: str, msg: str) -> None:
             if self.lane_manager:
