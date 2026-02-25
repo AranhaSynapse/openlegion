@@ -302,6 +302,8 @@ async def start_persistent_browser():
             "-httpd", "/usr/share/kasmvnc/www",
             "-sslOnly", "0",
             "-SecurityTypes", "None",
+            "-disableBasicAuth",
+            "-AlwaysShared",
             "-interface", "0.0.0.0",
         ],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -468,6 +470,7 @@ async def browser_navigate(url: str, wait_ms: int = 1000, *, mesh_client=None) -
     resets the browser and retries once with a fresh session.
     """
     async with _page_op_lock:
+        backend = os.environ.get("BROWSER_BACKEND", "persistent")
         for attempt in range(2):
             try:
                 _page_refs.clear()
@@ -475,7 +478,6 @@ async def browser_navigate(url: str, wait_ms: int = 1000, *, mesh_client=None) -
                 page = await _get_page(mesh_client=mesh_client)
                 # Bright Data premium domains can take up to 2 min for
                 # CAPTCHA solving and proxy rotation; basic/stealth are fast.
-                backend = os.environ.get("BROWSER_BACKEND", "persistent")
                 nav_timeout = 120_000 if backend == "advanced" else 30_000
                 response = await page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout)
                 if wait_ms:

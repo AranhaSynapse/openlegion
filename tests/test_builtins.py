@@ -2109,10 +2109,14 @@ class TestPersistentBrowserBackend:
             mock_get.assert_awaited_once()
             # Single Popen call: KasmVNC Xvnc (no websockify needed)
             assert len(popen_calls) == 1
-            assert "Xvnc" in popen_calls[0][0]
+            xvnc_cmd = popen_calls[0]
+            assert "Xvnc" in xvnc_cmd[0]
             # Default web port 6080 passed via -websocketPort
-            assert "-websocketPort" in popen_calls[0]
-            assert "6080" in popen_calls[0]
+            assert "-websocketPort" in xvnc_cmd
+            assert "6080" in xvnc_cmd
+            # Auth must be fully disabled (both VNC and BasicAuth layers)
+            assert "-SecurityTypes" in xvnc_cmd
+            assert "-disableBasicAuth" in xvnc_cmd
 
     @pytest.mark.asyncio
     async def test_start_persistent_browser_uses_vnc_port_env(self):

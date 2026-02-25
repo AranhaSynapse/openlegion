@@ -426,8 +426,8 @@ def _get_default_model() -> str:
 BROWSER_BACKENDS = [
     {
         "name": "persistent",
-        "label": "Persistent (noVNC)",
-        "description": "Visible browser with noVNC. Login manually, solve CAPTCHAs. Sessions survive restarts.",
+        "label": "Persistent (KasmVNC)",
+        "description": "Visible browser with KasmVNC. Login manually, solve CAPTCHAs. Sessions survive restarts.",
     },
     {
         "name": "basic",

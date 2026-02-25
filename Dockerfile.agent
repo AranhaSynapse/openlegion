@@ -38,6 +38,9 @@ COPY src/agent/ /app/src/agent/
 COPY src/shared/ /app/src/shared/
 COPY src/__init__.py /app/src/__init__.py
 
+# X11 socket directory — Xvnc cannot create this as non-root
+RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+
 # Data volume mount point -- owned by agent user
 RUN mkdir -p /data && chown agent:agent /data
 VOLUME /data
