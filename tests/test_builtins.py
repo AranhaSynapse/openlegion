@@ -1384,6 +1384,169 @@ class TestIsDeadSessionError:
 
         assert not _is_dead_session_error("Protocol error (Page.navigate): Cannot navigate to invalid URL")
 
+    def test_detects_dns_resolution_failure(self):
+        from src.agent.builtins.browser_tool import _is_dead_session_error
+
+        assert _is_dead_session_error("net::ERR_NAME_NOT_RESOLVED")
+
+
+class TestCleanupStaleProfile:
+    def test_removes_singleton_lock_files(self, tmp_path):
+        """_cleanup_stale_profile removes SingletonLock/Socket/Cookie."""
+        import src.agent.builtins.browser_tool as bt
+
+        profile_dir = tmp_path / "browser_profile"
+        profile_dir.mkdir()
+        (profile_dir / "SingletonLock").touch()
+        (profile_dir / "SingletonSocket").touch()
+        (profile_dir / "SingletonCookie").touch()
+        (profile_dir / "Cookies").touch()  # should NOT be removed
+
+        with patch.object(bt, "Path", return_value=profile_dir):
+            # We need to patch Path("/data/browser_profile") to return our tmp dir
+            pass
+
+        # Directly call with patched profile path
+        original_path = bt.Path
+        with patch("src.agent.builtins.browser_tool.Path") as mock_path:
+            mock_path.return_value = profile_dir
+            mock_path.__truediv__ = original_path.__truediv__
+            bt._cleanup_stale_profile()
+
+        assert not (profile_dir / "SingletonLock").exists()
+        assert not (profile_dir / "SingletonSocket").exists()
+        assert not (profile_dir / "SingletonCookie").exists()
+        assert (profile_dir / "Cookies").exists()  # untouched
+
+    def test_noop_when_profile_dir_missing(self):
+        """_cleanup_stale_profile does nothing when /data/browser_profile doesn't exist."""
+        import src.agent.builtins.browser_tool as bt
+
+        # Default /data/browser_profile won't exist in test env — should not raise
+        bt._cleanup_stale_profile()
+
+    def test_handles_pkill_failure(self, tmp_path):
+        """_cleanup_stale_profile handles pkill not found gracefully."""
+        import src.agent.builtins.browser_tool as bt
+
+        profile_dir = tmp_path / "browser_profile"
+        profile_dir.mkdir()
+        (profile_dir / "SingletonLock").touch()
+
+        with patch("subprocess.run", side_effect=FileNotFoundError("pkill not found")), \
+             patch("src.agent.builtins.browser_tool.Path") as mock_path:
+            mock_path.return_value = profile_dir
+            bt._cleanup_stale_profile()
+
+        # Lock file should still be removed even if pkill fails
+        assert not (profile_dir / "SingletonLock").exists()
+
+
+class TestVerifyDns:
+    @pytest.mark.asyncio
+    async def test_returns_true_on_success(self):
+        """_verify_dns returns True when navigation succeeds."""
+        import src.agent.builtins.browser_tool as bt
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(return_value=None)
+        mock_context = MagicMock()
+        mock_context.pages = [mock_page]
+
+        result = await bt._verify_dns(mock_context)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_dns_failure(self):
+        """_verify_dns returns False on ERR_NAME_NOT_RESOLVED."""
+        import src.agent.builtins.browser_tool as bt
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(
+            side_effect=Exception("net::ERR_NAME_NOT_RESOLVED")
+        )
+        mock_context = MagicMock()
+        mock_context.pages = [mock_page]
+
+        result = await bt._verify_dns(mock_context)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_non_dns_error(self):
+        """_verify_dns returns True on non-DNS errors (e.g. timeout)."""
+        import src.agent.builtins.browser_tool as bt
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock(
+            side_effect=Exception("Timeout 10000ms exceeded")
+        )
+        mock_context = MagicMock()
+        mock_context.pages = [mock_page]
+
+        result = await bt._verify_dns(mock_context)
+        assert result is True
+
+
+class TestBrowserNavigateDnsRecovery:
+    @pytest.mark.asyncio
+    async def test_navigate_auto_recovers_from_dns_failure(self):
+        """browser_navigate resets and retries on ERR_NAME_NOT_RESOLVED."""
+        import src.agent.builtins.browser_tool as bt
+
+        dead_page = AsyncMock()
+        dead_page.goto = AsyncMock(
+            side_effect=Exception("net::ERR_NAME_NOT_RESOLVED")
+        )
+
+        fresh_page = AsyncMock()
+        fresh_page.url = "https://example.com"
+        fresh_page.title = AsyncMock(return_value="Example")
+        fresh_response = AsyncMock()
+        fresh_response.status = 200
+        fresh_page.goto = AsyncMock(return_value=fresh_response)
+        fresh_page.inner_text = AsyncMock(return_value="DNS works now")
+
+        call_count = 0
+
+        async def mock_get_page(*, mesh_client=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return dead_page
+            return fresh_page
+
+        with patch.dict(os.environ, {"BROWSER_BACKEND": "persistent"}):
+            with patch.object(bt, "_get_page", side_effect=mock_get_page), \
+                 patch.object(bt, "_browser_cleanup_soft", new_callable=AsyncMock) as mock_soft:
+                result = await bt.browser_navigate(url="https://example.com")
+
+        mock_soft.assert_awaited_once()
+        assert result["status"] == 200
+        assert result["content"] == "DNS works now"
+
+
+class TestBrowserCleanupSoftCallsStaleCleanup:
+    @pytest.mark.asyncio
+    async def test_soft_cleanup_calls_stale_profile_cleanup(self):
+        """_browser_cleanup_soft calls _cleanup_stale_profile after closing."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._page = MagicMock()
+        bt._page.is_closed = MagicMock(return_value=False)
+        bt._page.close = AsyncMock()
+        bt._context = MagicMock()
+        bt._context.close = AsyncMock()
+        bt._browser = None
+        bt._pw = MagicMock()
+        bt._pw.stop = AsyncMock()
+
+        with patch.object(bt, "_cleanup_stale_profile") as mock_cleanup:
+            await bt._browser_cleanup_soft()
+
+        mock_cleanup.assert_called_once()
+        assert bt._page is None
+        assert bt._context is None
+
 
 # ── SkillRegistry discovers builtins ─────────────────────────
 
