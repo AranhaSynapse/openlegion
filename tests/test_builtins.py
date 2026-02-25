@@ -1442,51 +1442,6 @@ class TestCleanupStaleProfile:
         assert not (profile_dir / "SingletonLock").exists()
 
 
-class TestVerifyDns:
-    @pytest.mark.asyncio
-    async def test_returns_true_on_success(self):
-        """_verify_dns returns True when navigation succeeds."""
-        import src.agent.builtins.browser_tool as bt
-
-        mock_page = AsyncMock()
-        mock_page.goto = AsyncMock(return_value=None)
-        mock_context = MagicMock()
-        mock_context.pages = [mock_page]
-
-        result = await bt._verify_dns(mock_context)
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_returns_false_on_dns_failure(self):
-        """_verify_dns returns False on ERR_NAME_NOT_RESOLVED."""
-        import src.agent.builtins.browser_tool as bt
-
-        mock_page = AsyncMock()
-        mock_page.goto = AsyncMock(
-            side_effect=Exception("net::ERR_NAME_NOT_RESOLVED")
-        )
-        mock_context = MagicMock()
-        mock_context.pages = [mock_page]
-
-        result = await bt._verify_dns(mock_context)
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_returns_true_on_non_dns_error(self):
-        """_verify_dns returns True on non-DNS errors (e.g. timeout)."""
-        import src.agent.builtins.browser_tool as bt
-
-        mock_page = AsyncMock()
-        mock_page.goto = AsyncMock(
-            side_effect=Exception("Timeout 10000ms exceeded")
-        )
-        mock_context = MagicMock()
-        mock_context.pages = [mock_page]
-
-        result = await bt._verify_dns(mock_context)
-        assert result is True
-
-
 class TestBrowserNavigateDnsRecovery:
     @pytest.mark.asyncio
     async def test_navigate_auto_recovers_from_dns_failure(self):

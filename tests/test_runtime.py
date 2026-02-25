@@ -453,3 +453,45 @@ class TestDockerBackendVNCPort:
         run_call = mock_client.containers.run.call_args
         env = run_call.kwargs.get("environment", {})
         assert "VNC_PORT" not in env
+
+    def test_bridge_network_sets_dns_servers(self):
+        """Bridge-networked containers get explicit DNS servers."""
+        import docker as _docker
+
+        backend = self._make_backend()
+        mock_container = MagicMock()
+        mock_client = MagicMock()
+        mock_client.containers.run.return_value = mock_container
+        mock_client.containers.get.side_effect = _docker.errors.NotFound("not found")
+        backend.client = mock_client
+
+        backend.start_agent(
+            agent_id="test-dns",
+            role="test",
+            skills_dir="",
+        )
+
+        run_call = mock_client.containers.run.call_args
+        dns = run_call.kwargs.get("dns")
+        assert dns == ["8.8.8.8", "1.1.1.1"]
+
+    def test_host_network_no_dns_override(self):
+        """Host-networked containers do not override DNS."""
+        import docker as _docker
+
+        backend = self._make_backend()
+        backend.use_host_network = True
+        mock_container = MagicMock()
+        mock_client = MagicMock()
+        mock_client.containers.run.return_value = mock_container
+        mock_client.containers.get.side_effect = _docker.errors.NotFound("not found")
+        backend.client = mock_client
+
+        backend.start_agent(
+            agent_id="test-host-dns",
+            role="test",
+            skills_dir="",
+        )
+
+        run_call = mock_client.containers.run.call_args
+        assert "dns" not in run_call.kwargs
