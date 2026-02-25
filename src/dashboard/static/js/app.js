@@ -245,33 +245,6 @@ function dashboard() {
       return _IDENTITY_TABS.find(t => t.id === this.identityTab) || _IDENTITY_TABS[0];
     },
 
-    get identityCurrentFile() {
-      const tab = this.identityCurrentTab;
-      if (!tab.file) return null;
-      return this.identityFiles.find(f => f.name === tab.file) || null;
-    },
-
-    get identityBudgetPct() {
-      const tab = this.identityCurrentTab;
-      if (!tab.cap) return 0;
-      const text = this.identityEditing ? this.identityEditBuffer : (this.identityContent[tab.file] || '');
-      return Math.min(100, (text.length / tab.cap) * 100);
-    },
-
-    get identityBudgetColor() {
-      const pct = this.identityBudgetPct;
-      if (pct >= 95) return 'bg-red-500';
-      if (pct >= 80) return 'bg-amber-500';
-      return 'bg-indigo-500';
-    },
-
-    get identityCharCount() {
-      const tab = this.identityCurrentTab;
-      if (!tab.file) return 0;
-      const text = this.identityEditing ? this.identityEditBuffer : (this.identityContent[tab.file] || '');
-      return text.length;
-    },
-
     fileBudgetPct(file, cap) {
       if (!cap) return 0;
       const text = (this.identityEditing && this.identityEditingFile === file) ? this.identityEditBuffer : (this.identityContent[file] || '');
@@ -324,7 +297,7 @@ function dashboard() {
       this._refreshInterval = setInterval(() => this.fetchAgents(), 15000);
 
       // Command palette: Cmd+K / Ctrl+K
-      document.addEventListener('keydown', (e) => {
+      this._cmdPaletteHandler = (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
           e.preventDefault();
           this.cmdPaletteOpen = !this.cmdPaletteOpen;
@@ -339,9 +312,12 @@ function dashboard() {
           }
         }
         if (e.key === 'Escape' && this.cmdPaletteOpen) {
+          e.stopPropagation();
+          e.preventDefault();
           this.cmdPaletteOpen = false;
         }
-      });
+      };
+      document.addEventListener('keydown', this._cmdPaletteHandler);
 
       // Pause polling when tab is hidden to save resources
       document.addEventListener('visibilitychange', () => {
@@ -373,6 +349,7 @@ function dashboard() {
       Object.values(this._scrollTimers).forEach(clearTimeout);
       Object.values(this._chatAborts).forEach(c => c?.abort());
       if (this._broadcastAbort) this._broadcastAbort.abort();
+      if (this._cmdPaletteHandler) document.removeEventListener('keydown', this._cmdPaletteHandler);
     },
 
     // ── Tab switching ─────────────────────────────────────
@@ -1610,7 +1587,7 @@ function dashboard() {
 
     updateCmdPaletteResults() {
       const q = this.cmdPaletteQuery.toLowerCase().trim();
-      if (!q) { this.cmdPaletteResults = []; this.cmdPaletteIdx = 0; return; }
+      if (q.length < 2) { this.cmdPaletteResults = []; this.cmdPaletteIdx = 0; return; }
       const results = [];
       // Match agents
       for (const agent of this.agents) {
@@ -1637,7 +1614,7 @@ function dashboard() {
       for (const entry of this.bbEntries || []) {
         const key = (entry.key || '').toLowerCase();
         if (key.includes(q)) {
-          results.push({ type: 'blackboard', label: entry.key, desc: `by ${entry.writer || 'unknown'}`, action: () => { this.switchTab('activity'); this.setActivityView('blackboard'); } });
+          results.push({ type: 'blackboard', label: entry.key, desc: `by ${entry.written_by || 'unknown'}`, action: () => { this.switchTab('activity'); this.setActivityView('blackboard'); } });
         }
       }
       this.cmdPaletteResults = results.slice(0, 10);
@@ -1748,6 +1725,7 @@ function dashboard() {
       this.identityContent = {};
       this.identityEditing = false;
       this.identityEditBuffer = '';
+      this.identityEditingFile = null;
       this.configEditing = false;
       this.identityLogs = null;
       this.identityLearnings = null;

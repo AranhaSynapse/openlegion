@@ -169,6 +169,14 @@
         <div class="text-xs text-gray-400 hidden sm:block cursor-pointer hover:text-gray-200 transition-colors" x-show="fleetTotalCost > 0" @click="switchTab('system')">
           Today: <span class="text-gray-200 font-medium" x-text="formatCost(fleetTotalCost)"></span>
         </div>
+        <!-- Command palette trigger -->
+        <button @click="cmdPaletteOpen = true; cmdPaletteQuery = ''; cmdPaletteResults = []; $nextTick(() => { const el = document.getElementById('cmd-palette-input'); if (el) el.focus(); })"
+          class="hidden sm:flex items-center gap-2 text-xs text-gray-500 hover:text-gray-300 bg-gray-800/50 hover:bg-gray-800 px-2.5 py-1.5 rounded-lg border border-gray-700/50 transition-colors cursor-pointer"
+          title="Search (Cmd+K)">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <span>Search</span>
+          <kbd class="text-[10px] text-gray-600 bg-gray-900 px-1 py-0.5 rounded border border-gray-700 ml-1">&#8984;K</kbd>
+        </button>
         <!-- Connection indicator -->
         <div class="flex items-center gap-1.5 text-xs">
           <span class="relative flex h-2 w-2">
@@ -181,7 +189,7 @@
     </nav>
 
     <!-- Main content -->
-    <main class="flex-1 overflow-auto p-4 lg:p-6 transition-[margin] duration-200" :class="openChats.length > 0 && !chatPanelMinimized && 'mr-[380px]'">
+    <main class="flex-1 overflow-auto p-4 lg:p-6 transition-[margin] duration-200" :class="openChats.length > 0 && !chatPanelMinimized && 'sm:mr-[380px]'">
 
       <!-- Fleet Overview (merged: Fleet + Agents + Queues) -->
       <div x-show="activeTab === 'fleet' && !detailAgent" x-cloak>
@@ -413,8 +421,8 @@
         </div>
         <!-- Loading state -->
         <div x-show="agents.length === 0 && loading" x-cloak>
-          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-            <template x-for="i in 3" :key="i">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            <template x-for="i in 4" :key="i">
               <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 animate-pulse">
                 <div class="flex items-start gap-3 mb-3">
                   <div class="w-9 h-9 rounded-full bg-gray-800"></div>
@@ -514,7 +522,7 @@
         x-transition:leave="transition ease-in duration-150"
         x-transition:leave-start="translate-x-0"
         x-transition:leave-end="translate-x-full"
-        class="fixed top-0 right-0 z-40 w-[380px] h-full bg-gray-900 border-l border-gray-700 shadow-2xl flex flex-col"
+        class="fixed top-[52px] right-0 z-40 w-full sm:w-[380px] h-[calc(100%-52px)] bg-gray-900 border-l border-gray-700 shadow-2xl flex flex-col"
         style="box-shadow: -8px 0 32px -4px rgba(0,0,0,0.5);">
         <!-- Tab bar -->
         <div class="flex items-center justify-between px-3 py-2 border-b border-gray-800 shrink-0">
