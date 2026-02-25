@@ -131,6 +131,7 @@ function dashboard() {
 
     // Identity panel
     identityTabs: _IDENTITY_TABS,
+    identityFileMap: _IDENTITY_FILE_MAP,
     identityTab: 'identity',
     identityFiles: [],
     identityLoading: false,

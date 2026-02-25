@@ -974,7 +974,7 @@
                   <!-- ═══ Identity / Memory file cards (shared template) ═══ -->
                   <div x-show="(identityTab === 'identity' || identityTab === 'memory') && identityFiles.length > 0 && !identityContentLoading && !identityLoading"
                     class="space-y-4">
-                    <template x-for="section in (_IDENTITY_FILE_MAP[identityTab] || [])" :key="section.file">
+                    <template x-for="section in (identityFileMap[identityTab] || [])" :key="section.file">
                       <div class="border border-gray-800 rounded-lg p-3">
                         <div class="flex items-center justify-between mb-2">
                           <div class="flex items-center gap-2">
