@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import subprocess
 from pathlib import Path
 
 from src.agent.skills import skill
@@ -128,7 +129,6 @@ def _ensure_xvfb():
     Camoufox's built-in ``headless="virtual"`` hangs in Docker containers.
     Starting Xvfb ourselves and setting DISPLAY is the proven approach.
     """
-    import subprocess
     if os.environ.get("DISPLAY"):
         return
     try:
@@ -257,6 +257,65 @@ if (navigator.connection) {
 """
 
 
+def _cleanup_stale_profile():
+    """Kill orphaned Chrome processes and remove stale lock files.
+
+    After a crash, Chrome leaves SingletonLock/SingletonSocket/SingletonCookie
+    in the profile directory.  A new Chrome instance works fine, but subsequent
+    relaunches (e.g. browser_reset) fail with "Failed to create a
+    ProcessSingleton".  This helper cleans up before each launch.
+    """
+    profile_dir = Path("/data/browser_profile")
+    if not profile_dir.exists():
+        return
+
+    # Kill any orphaned Chrome processes using this profile
+    try:
+        subprocess.run(
+            ["pkill", "-f", "browser_profile"],
+            capture_output=True, timeout=5,
+        )
+    except Exception:
+        pass  # pkill may not exist or no matching processes
+
+    # Remove stale lock files
+    lock_files = ["SingletonLock", "SingletonSocket", "SingletonCookie"]
+    for name in lock_files:
+        lock_path = profile_dir / name
+        if lock_path.exists() or lock_path.is_symlink():
+            try:
+                lock_path.unlink()
+                logger.info("Removed stale lock file: %s", lock_path)
+            except OSError as e:
+                logger.debug("Failed to remove %s: %s", lock_path, e)
+
+
+async def _verify_dns(context) -> bool:
+    """Verify DNS works after browser launch.
+
+    Chrome's built-in DNS resolver caches negative results — if it launches
+    before Docker Desktop's DNS forwarder is ready, it gets NXDOMAIN and
+    caches it indefinitely.  We detect this by navigating to a fast URL
+    and checking for ERR_NAME_NOT_RESOLVED.
+
+    Returns True if DNS works, False if DNS is broken.
+    """
+    page = context.pages[0] if context.pages else await context.new_page()
+    try:
+        await page.goto(
+            "https://www.google.com/generate_204",
+            timeout=10_000,
+            wait_until="commit",
+        )
+        return True
+    except Exception as e:
+        if "ERR_NAME_NOT_RESOLVED" not in str(e):
+            # Non-DNS error (e.g. timeout) — DNS itself may be fine
+            return True
+        logger.warning("DNS not ready after browser launch: %s", str(e)[:120])
+        return False
+
+
 async def _launch_persistent():
     """Launch Patchright Chromium with a persistent profile.
 
@@ -281,23 +340,42 @@ async def _launch_persistent():
             "patchright and chromium. See Dockerfile.agent."
         )
     _ensure_xvfb()
+    _cleanup_stale_profile()
     _pw = await async_playwright().start()
     profile_dir = "/data/browser_profile"
     Path(profile_dir).mkdir(parents=True, exist_ok=True)
-    context = await _pw.chromium.launch_persistent_context(
-        user_data_dir=profile_dir,
-        headless=False,
-        no_viewport=True,  # let browser use Xvnc's native resolution
-        args=[
-            "--disable-dev-shm-usage",
-            "--no-first-run",
-            "--disable-infobars",
-        ],
-        # Do NOT set custom user_agent — Patchright docs warn against it.
-        # A mismatched UA is a detection vector.  The browser's real UA
-        # matches its actual version and capabilities.
-    )
-    await context.add_init_script(_STEALTH_INIT_SCRIPT)
+
+    for dns_attempt in range(3):
+        context = await _pw.chromium.launch_persistent_context(
+            user_data_dir=profile_dir,
+            headless=False,
+            no_viewport=True,  # let browser use Xvnc's native resolution
+            args=[
+                "--disable-dev-shm-usage",
+                "--no-first-run",
+                "--disable-infobars",
+            ],
+            # Do NOT set custom user_agent — Patchright docs warn against it.
+            # A mismatched UA is a detection vector.  The browser's real UA
+            # matches its actual version and capabilities.
+        )
+        await context.add_init_script(_STEALTH_INIT_SCRIPT)
+
+        if await _verify_dns(context):
+            break
+
+        # DNS failed — tear down and retry after a short wait
+        if dns_attempt < 2:
+            logger.warning(
+                "Restarting browser for DNS retry (%d/2)", dns_attempt + 1
+            )
+            try:
+                await context.close()
+            except Exception:
+                pass
+            _cleanup_stale_profile()
+            await asyncio.sleep(2)
+
     page = context.pages[0] if context.pages else await context.new_page()
     logger.info("Browser backend: persistent (Patchright Chromium + KasmVNC)")
     return None, context, page
@@ -308,6 +386,8 @@ async def _browser_cleanup_soft():
 
     Used by ``browser_reset`` in persistent mode to restart the browser
     while keeping the VNC session and profile directory intact.
+    Also kills orphaned Chrome processes and removes stale lock files
+    so the next launch doesn't hit "Failed to create a ProcessSingleton".
     """
     global _pw, _browser, _context, _page
     try:
@@ -333,6 +413,7 @@ async def _browser_cleanup_soft():
     _pw = _browser = _context = _page = None
     _page_refs.clear()
     _credential_filled_refs.clear()
+    _cleanup_stale_profile()
 
 
 async def start_persistent_browser():
@@ -349,7 +430,6 @@ async def start_persistent_browser():
     when multiple persistent agents share the host network namespace).
     """
     global _vnc_proc
-    import subprocess
 
     listen_port = os.environ.get("VNC_PORT", "6080")
 
@@ -428,6 +508,7 @@ async def browser_cleanup():
 _CDP_DEAD_SESSION_PATTERNS = (
     "Page.navigate limit reached",
     "ERR_TUNNEL_CONNECTION_FAILED",
+    "ERR_NAME_NOT_RESOLVED",
     "Target closed",
     "Session closed",
     "Browser has been closed",
