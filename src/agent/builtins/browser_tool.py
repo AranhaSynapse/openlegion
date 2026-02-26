@@ -261,9 +261,9 @@ def _cleanup_stale_profile():
     """Kill orphaned Chrome processes and remove stale lock files.
 
     After a crash, Chrome leaves SingletonLock/SingletonSocket/SingletonCookie
-    in the profile directory.  A new Chrome instance works fine, but subsequent
-    relaunches (e.g. browser_reset) fail with "Failed to create a
-    ProcessSingleton".  This helper cleans up before each launch.
+    in the profile directory.  A new Chrome instance refuses to start with
+    "The profile appears to be in use by another Chromium process".
+    This helper cleans up before each launch.
     """
     profile_dir = Path("/data/browser_profile")
     if not profile_dir.exists():
@@ -279,8 +279,7 @@ def _cleanup_stale_profile():
         pass  # pkill may not exist or no matching processes
 
     # Remove stale lock files
-    lock_files = ["SingletonLock", "SingletonSocket", "SingletonCookie"]
-    for name in lock_files:
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
         lock_path = profile_dir / name
         if lock_path.exists() or lock_path.is_symlink():
             try:
@@ -342,8 +341,6 @@ async def _browser_cleanup_soft():
 
     Used by ``browser_reset`` in persistent mode to restart the browser
     while keeping the VNC session and profile directory intact.
-    Also kills orphaned Chrome processes and removes stale lock files
-    so the next launch doesn't hit "Failed to create a ProcessSingleton".
     """
     global _pw, _browser, _context, _page
     try:
@@ -464,7 +461,6 @@ async def browser_cleanup():
 _CDP_DEAD_SESSION_PATTERNS = (
     "Page.navigate limit reached",
     "ERR_TUNNEL_CONNECTION_FAILED",
-    "ERR_NAME_NOT_RESOLVED",
     "Target closed",
     "Session closed",
     "Browser has been closed",

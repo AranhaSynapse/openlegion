@@ -1384,12 +1384,6 @@ class TestIsDeadSessionError:
 
         assert not _is_dead_session_error("Protocol error (Page.navigate): Cannot navigate to invalid URL")
 
-    def test_detects_dns_resolution_failure(self):
-        from src.agent.builtins.browser_tool import _is_dead_session_error
-
-        assert _is_dead_session_error("net::ERR_NAME_NOT_RESOLVED")
-
-
 class TestCleanupStaleProfile:
     def test_removes_singleton_lock_files(self, tmp_path):
         """_cleanup_stale_profile removes SingletonLock/Socket/Cookie."""
@@ -1440,44 +1434,6 @@ class TestCleanupStaleProfile:
 
         # Lock file should still be removed even if pkill fails
         assert not (profile_dir / "SingletonLock").exists()
-
-
-class TestBrowserNavigateDnsRecovery:
-    @pytest.mark.asyncio
-    async def test_navigate_auto_recovers_from_dns_failure(self):
-        """browser_navigate resets and retries on ERR_NAME_NOT_RESOLVED."""
-        import src.agent.builtins.browser_tool as bt
-
-        dead_page = AsyncMock()
-        dead_page.goto = AsyncMock(
-            side_effect=Exception("net::ERR_NAME_NOT_RESOLVED")
-        )
-
-        fresh_page = AsyncMock()
-        fresh_page.url = "https://example.com"
-        fresh_page.title = AsyncMock(return_value="Example")
-        fresh_response = AsyncMock()
-        fresh_response.status = 200
-        fresh_page.goto = AsyncMock(return_value=fresh_response)
-        fresh_page.inner_text = AsyncMock(return_value="DNS works now")
-
-        call_count = 0
-
-        async def mock_get_page(*, mesh_client=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return dead_page
-            return fresh_page
-
-        with patch.dict(os.environ, {"BROWSER_BACKEND": "persistent"}):
-            with patch.object(bt, "_get_page", side_effect=mock_get_page), \
-                 patch.object(bt, "_browser_cleanup_soft", new_callable=AsyncMock) as mock_soft:
-                result = await bt.browser_navigate(url="https://example.com")
-
-        mock_soft.assert_awaited_once()
-        assert result["status"] == 200
-        assert result["content"] == "DNS works now"
 
 
 class TestBrowserCleanupSoftCallsStaleCleanup:
