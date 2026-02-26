@@ -81,13 +81,18 @@ function dashboard() {
     bbWriterFilter: '',
     bbExpanded: {},
 
-    // PROJECT.md (fleet-wide)
+    // PROJECT.md (fleet-wide or per-project)
     projectContent: '',
     projectExists: false,
     projectLoading: false,
     projectEditing: false,
     projectEditBuffer: '',
     projectSaving: false,
+
+    // Multi-project support
+    projects: [],
+    activeProject: null,
+    projectsLoaded: false,
 
     // Costs
     costData: {},
@@ -342,6 +347,22 @@ function dashboard() {
       return this.agents.reduce((sum, a) => sum + (a.daily_tokens || 0), 0);
     },
 
+    get filteredAgents() {
+      if (!this.activeProject) return this.agents;
+      const proj = this.projects.find(p => p.name === this.activeProject);
+      if (!proj) return this.agents;
+      const members = new Set(proj.members || []);
+      return this.agents.filter(a => members.has(a.id));
+    },
+
+    get filteredFleetCost() {
+      return this.filteredAgents.reduce((sum, a) => sum + (a.daily_cost || 0), 0);
+    },
+
+    get filteredFleetTokens() {
+      return this.filteredAgents.reduce((sum, a) => sum + (a.daily_tokens || 0), 0);
+    },
+
     get fleetHealthCounts() {
       const counts = { healthy: 0, unhealthy: 0, failed: 0, unknown: 0 };
       for (const a of this.agents) {
@@ -412,6 +433,7 @@ function dashboard() {
       this.fetchAgents();
       this.fetchSettings();
       this.fetchProject();
+      this.fetchProjects();
       this._refreshInterval = setInterval(() => this.fetchAgents(), 15000);
 
       // Command palette: Cmd+K / Ctrl+K + tab shortcuts 1/2/3
@@ -558,6 +580,7 @@ function dashboard() {
         this.fetchQueues();
         this.fetchSettings();
         this.fetchProject();
+        this.fetchProjects();
         this._queueInterval = setInterval(() => this.fetchQueues(), 5000);
       }
       if (tab === 'system') {
@@ -898,7 +921,8 @@ function dashboard() {
     async fetchProject() {
       this.projectLoading = true;
       try {
-        const resp = await fetch(`${window.__config.apiBase}/project`);
+        const qs = this.activeProject ? `?project=${encodeURIComponent(this.activeProject)}` : '';
+        const resp = await fetch(`${window.__config.apiBase}/project${qs}`);
         if (resp.ok) {
           const data = await resp.json();
           this.projectContent = data.content || '';
@@ -911,7 +935,8 @@ function dashboard() {
     async saveProject() {
       this.projectSaving = true;
       try {
-        const resp = await fetch(`${window.__config.apiBase}/project`, {
+        const qs = this.activeProject ? `?project=${encodeURIComponent(this.activeProject)}` : '';
+        const resp = await fetch(`${window.__config.apiBase}/project${qs}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content: this.projectEditBuffer }),
@@ -943,6 +968,24 @@ function dashboard() {
     cancelProjectEdit() {
       this.projectEditing = false;
       this.projectEditBuffer = '';
+    },
+
+    async fetchProjects() {
+      try {
+        const resp = await fetch(`${window.__config.apiBase}/projects`);
+        if (resp.ok) {
+          const data = await resp.json();
+          this.projects = data.projects || [];
+        }
+      } catch (e) { console.warn('fetchProjects failed:', e); }
+      this.projectsLoaded = true;
+    },
+
+    switchProject(name) {
+      this.activeProject = name;
+      this.projectEditing = false;
+      this.projectEditBuffer = '';
+      this.fetchProject();
     },
 
     async fetchBlackboard() {
@@ -1687,9 +1730,11 @@ function dashboard() {
       this._broadcastAbort = controller;
 
       try {
+        const broadcastBody = { message: msg };
+        if (this.activeProject) broadcastBody.project = this.activeProject;
         const resp = await fetch(`${window.__config.apiBase}/broadcast/stream`, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ message: msg }),
+          body: JSON.stringify(broadcastBody),
           signal: controller.signal,
         });
         if (!resp.ok) {
@@ -1792,7 +1837,7 @@ function dashboard() {
       const actions = [
         { label: 'Add Agent', desc: 'Open add agent form', keywords: ['add', 'agent', 'new', 'create'], action: () => { this.switchTab('fleet'); this.addAgentMode = true; this.fetchSettings(); } },
         { label: 'Broadcast', desc: 'Send message to all agents', keywords: ['broadcast', 'send', 'all', 'message'], action: () => { this.switchTab('fleet'); this.$nextTick(() => { const el = document.querySelector('[x-model="broadcastMessage"]'); if (el) el.focus(); }); } },
-        { label: 'Edit PROJECT.md', desc: 'Edit fleet-wide project context', keywords: ['project', 'edit', 'context'], action: () => { this.switchTab('fleet'); this.projectBannerExpanded = true; this.startProjectEdit(); } },
+        { label: 'Edit PROJECT.md', desc: this.activeProject ? `Edit ${this.activeProject} project context` : 'Edit fleet-wide project context', keywords: ['project', 'edit', 'context'], action: () => { this.switchTab('fleet'); this.projectBannerExpanded = true; this.startProjectEdit(); } },
       ];
       for (const act of actions) {
         if (act.keywords.some(kw => kw.includes(q)) || act.label.toLowerCase().includes(q)) {

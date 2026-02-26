@@ -1452,3 +1452,124 @@ class TestDashboardProjectAPI:
         data = resp.json()
         assert data["project"] == "alpha"
         assert "Alpha Project" in data["content"]
+
+
+class TestDashboardAgentProjectField:
+    """Tests for project field in /api/agents response."""
+
+    def setup_method(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.components = _make_components(self._tmpdir)
+        self.client = _make_client(self.components)
+
+    def teardown_method(self):
+        _teardown(self.components)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_agents_include_project_field(self):
+        """Agent entries include a project field (None when no project assigned)."""
+        with patch("src.cli.config._load_config", return_value={
+            "agents": {"alpha": {"role": "coder"}, "beta": {"role": "writer"}},
+            "llm": {"default_model": "openai/gpt-4o-mini"},
+            "_agent_projects": {"alpha": "myproject"},
+        }):
+            resp = self.client.get("/dashboard/api/agents")
+        assert resp.status_code == 200
+        data = resp.json()
+        alpha = next(a for a in data["agents"] if a["id"] == "alpha")
+        beta = next(a for a in data["agents"] if a["id"] == "beta")
+        assert alpha["project"] == "myproject"
+        assert beta["project"] is None
+
+    def test_agents_project_field_absent_when_no_projects(self):
+        """When no projects configured, project field is None for all agents."""
+        with patch("src.cli.config._load_config", return_value={
+            "agents": {"alpha": {}, "beta": {}},
+            "llm": {"default_model": "openai/gpt-4o-mini"},
+            "_agent_projects": {},
+        }):
+            resp = self.client.get("/dashboard/api/agents")
+        assert resp.status_code == 200
+        data = resp.json()
+        for agent in data["agents"]:
+            assert agent["project"] is None
+
+
+class TestDashboardBroadcastProjectScoping:
+    """Tests for project-scoped broadcast endpoints."""
+
+    def setup_method(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.components = _make_components(self._tmpdir, include_v2=True)
+        # Add a third agent for richer filtering tests
+        self.components["agent_registry"]["gamma"] = "http://localhost:8403"
+        self.client = _make_client(self.components)
+
+    def teardown_method(self):
+        _teardown(self.components)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_broadcast_stream_scoped_to_project(self):
+        """When project is set, only project members receive the broadcast."""
+        streamed_agents = []
+
+        async def _mock_stream(aid, method, path, **kwargs):
+            streamed_agents.append(aid)
+            yield {"type": "text_delta", "content": f"Hello from {aid}"}
+
+        self.components["transport"].stream_request = _mock_stream
+
+        with patch("src.cli.config._load_projects", return_value={
+            "myproject": {"members": ["alpha", "gamma"]},
+        }):
+            resp = self.client.post(
+                "/dashboard/api/broadcast/stream",
+                json={"message": "Hello project", "project": "myproject"},
+            )
+        assert resp.status_code == 200
+        events = _parse_sse(resp.text)
+
+        # Only alpha and gamma should be streamed (beta excluded)
+        agent_starts = [e["agent"] for e in events if e["type"] == "agent_start"]
+        assert set(agent_starts) == {"alpha", "gamma"}
+        assert "beta" not in streamed_agents
+
+    def test_broadcast_stream_without_project_sends_to_all(self):
+        """Without project field, broadcast goes to all agents."""
+        async def _mock_stream(aid, method, path, **kwargs):
+            yield {"type": "text_delta", "content": "ok"}
+
+        self.components["transport"].stream_request = _mock_stream
+
+        resp = self.client.post(
+            "/dashboard/api/broadcast/stream",
+            json={"message": "Hello all"},
+        )
+        assert resp.status_code == 200
+        events = _parse_sse(resp.text)
+
+        agent_starts = [e["agent"] for e in events if e["type"] == "agent_start"]
+        assert set(agent_starts) == {"alpha", "beta", "gamma"}
+
+    def test_broadcast_non_stream_scoped_to_project(self):
+        """Non-streaming broadcast with project only sends to members."""
+        sent_to = []
+
+        async def _mock_request(aid, method, path, **kwargs):
+            sent_to.append(aid)
+            return {"response": f"Reply from {aid}"}
+
+        self.components["transport"].request = AsyncMock(side_effect=_mock_request)
+
+        with patch("src.cli.config._load_projects", return_value={
+            "proj1": {"members": ["beta"]},
+        }):
+            resp = self.client.post(
+                "/dashboard/api/broadcast",
+                json={"message": "Hello project", "project": "proj1"},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "beta" in data["responses"]
+        assert "alpha" not in data["responses"]
+        assert "gamma" not in data["responses"]
