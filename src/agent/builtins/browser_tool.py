@@ -292,12 +292,19 @@ async def _launch_persistent():
         user_data_dir=profile_dir,
         channel="chrome",
         headless=False,
-        no_viewport=True,  # let browser use Xvnc's native resolution
+        no_viewport=True,  # don't override via CDP (detectable)
         args=[
             "--disable-dev-shm-usage",
             "--no-first-run",
             "--disable-infobars",
             "--disable-blink-features=AutomationControlled",
+            # Match KasmVNC geometry — without a window manager, Chrome
+            # has no notion of "maximized" and may open at an arbitrary
+            # size.  Arkose Labs calculates challenge stage dimensions
+            # from window.innerWidth/innerHeight; mismatched or zero
+            # values crash it with "INVALID STAGE MAX > MIN".
+            "--window-size=1280,720",
+            "--window-position=0,0",
         ],
         # Strip defaults that are detection vectors (Patchright handles some
         # of these automatically, but explicit is defense-in-depth):
