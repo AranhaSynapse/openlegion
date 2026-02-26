@@ -23,11 +23,17 @@ class MeshClient:
     Uses a shared httpx.AsyncClient for connection pooling.
     """
 
-    def __init__(self, mesh_url: str, agent_id: str):
+    def __init__(self, mesh_url: str, agent_id: str, project_name: str | None = None):
         self.mesh_url = mesh_url
         self.agent_id = agent_id
+        self.project_name = project_name
         self._client: httpx.AsyncClient | None = None
         self._auth_token: str = os.environ.get("MESH_AUTH_TOKEN", "")
+
+    @property
+    def is_standalone(self) -> bool:
+        """True when this agent is not assigned to any project."""
+        return self.project_name is None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:

@@ -218,12 +218,21 @@ class DockerBackend(RuntimeBackend):
             volumes[str(Path(skills_dir).as_posix() if platform.system() == "Windows" else skills_dir)] = {
                 "bind": "/app/skills", "mode": "ro",
             }
-        project_md = self.project_root / "PROJECT.md"
-        if project_md.exists():
-            host_path = str(project_md)
+        # Mount project-specific or global PROJECT.md
+        project_md_path = self.extra_env.get("PROJECT_MD_PATH", "")
+        if project_md_path and Path(project_md_path).exists():
+            host_path = project_md_path
             if platform.system() == "Windows":
-                host_path = project_md.as_posix()
+                host_path = Path(project_md_path).as_posix()
             volumes[host_path] = {"bind": "/app/PROJECT.md", "mode": "ro"}
+        else:
+            # Legacy fallback: mount global PROJECT.md if no projects exist
+            project_md = self.project_root / "PROJECT.md"
+            if project_md.exists():
+                host_path = str(project_md)
+                if platform.system() == "Windows":
+                    host_path = project_md.as_posix()
+                volumes[host_path] = {"bind": "/app/PROJECT.md", "mode": "ro"}
 
         marketplace_dir = self.project_root / "skills" / "_marketplace"
         if marketplace_dir.is_dir():
@@ -421,10 +430,14 @@ class SandboxBackend(RuntimeBackend):
         ws.mkdir(parents=True, exist_ok=True)
         (ws / "data" / "workspace").mkdir(parents=True, exist_ok=True)
 
-        # Copy PROJECT.md
-        project_md = self.project_root / "PROJECT.md"
-        if project_md.exists():
-            shutil.copy2(project_md, ws / "PROJECT.md")
+        # Copy project-specific or global PROJECT.md
+        project_md_path = self.extra_env.get("PROJECT_MD_PATH", "")
+        if project_md_path and Path(project_md_path).exists():
+            shutil.copy2(project_md_path, ws / "PROJECT.md")
+        else:
+            project_md = self.project_root / "PROJECT.md"
+            if project_md.exists():
+                shutil.copy2(project_md, ws / "PROJECT.md")
 
         # Copy skills
         skills_dest = ws / "skills"

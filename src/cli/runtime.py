@@ -14,7 +14,7 @@ from pathlib import Path
 import click
 
 from src.cli.channels import ChannelManager
-from src.cli.config import PROJECT_ROOT, _check_docker_running, _ensure_docker_image, _load_config
+from src.cli.config import PROJECT_ROOT, PROJECTS_DIR, _check_docker_running, _ensure_docker_image, _load_config
 from src.cli.formatting import echo_fail, echo_header, echo_ok
 
 logger = logging.getLogger("cli")
@@ -242,6 +242,12 @@ class RuntimeContext:
             trace_store=self.trace_store,
         )
 
+        # Load project-scoped workflows
+        for pname in self.cfg.get("projects", {}):
+            wf_dir = PROJECTS_DIR / pname / "workflows"
+            if wf_dir.exists():
+                self.orchestrator.load_project_workflows(pname, str(wf_dir))
+
         # Create HealthMonitor early so the dashboard router can reference it.
         # Only register() is called here; start() happens in _start_background().
         from src.host.health import HealthMonitor
@@ -261,6 +267,7 @@ class RuntimeContext:
             "embedding_model", _default_embedding_model(default_model),
         )
         mesh_port = self.cfg["mesh"]["port"]
+        agent_projects = self.cfg.get("_agent_projects", {})
 
         self.runtime.extra_env["EMBEDDING_MODEL"] = embedding_model
 
@@ -282,6 +289,16 @@ class RuntimeContext:
             initial_instructions = agent_cfg.get("initial_instructions", "")
             if initial_instructions:
                 self.runtime.extra_env["INITIAL_INSTRUCTIONS"] = initial_instructions
+
+            # Set project-specific env vars for this agent
+            project_name = agent_projects.get(agent_id)
+            if project_name:
+                project_md = PROJECTS_DIR / project_name / "project.md"
+                self.runtime.extra_env["PROJECT_MD_PATH"] = str(project_md)
+                self.runtime.extra_env["PROJECT_NAME"] = project_name
+            else:
+                self.runtime.extra_env.pop("PROJECT_MD_PATH", None)
+                self.runtime.extra_env.pop("PROJECT_NAME", None)
 
             try:
                 url = self.runtime.start_agent(
@@ -325,8 +342,10 @@ class RuntimeContext:
                 else:
                     raise
             finally:
-                # Clean up per-agent env var so it doesn't leak to the next agent
+                # Clean up per-agent env vars so they don't leak to the next agent
                 self.runtime.extra_env.pop("INITIAL_INSTRUCTIONS", None)
+                self.runtime.extra_env.pop("PROJECT_MD_PATH", None)
+                self.runtime.extra_env.pop("PROJECT_NAME", None)
             self.router.register_agent(agent_id, url, role=agent_cfg.get("role", ""))
             if isinstance(self.transport, HttpTransport):
                 self.transport.register(agent_id, url)
@@ -674,6 +693,8 @@ class RuntimeContext:
     def _print_ready(self) -> None:
         agents_cfg = self.cfg.get("agents", {})
         active_agents = list(agents_cfg.keys())
+        agent_projects = self.cfg.get("_agent_projects", {})
+        projects = self.cfg.get("projects", {})
 
         # Show channel status
         if self.channel_manager and self.channel_manager.active:
@@ -683,6 +704,19 @@ class RuntimeContext:
                     echo_ok(f"{label} (paired)")
             for instruction in self.channel_manager.pairing_instructions:
                 click.echo(click.style("  \u26a0 ", fg="yellow") + instruction.strip())
+
+        # Show project groupings if projects exist
+        if projects:
+            assigned = set(agent_projects.keys())
+            standalone = [a for a in active_agents if a not in assigned]
+
+            for pname in sorted(projects.keys()):
+                members = [a for a in active_agents if agent_projects.get(a) == pname]
+                if members:
+                    click.echo(f"\n  Project [{pname}]: {', '.join(members)}")
+
+            if standalone:
+                click.echo(f"\n  Standalone: {', '.join(standalone)}")
 
         if active_agents:
             active_agent = active_agents[0]

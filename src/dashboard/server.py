@@ -741,21 +741,42 @@ def create_dashboard_router(
             budgets[item["agent"]] = cost_tracker.check_budget(item["agent"])
         return {"period": period, "agents": agents_spend, "budgets": budgets}
 
+    # ── Projects ──────────────────────────────────────────────
+
+    @api_router.get("/api/projects")
+    async def api_projects_list() -> dict:
+        """List all projects with members."""
+        from src.cli.config import _load_projects
+        projects = _load_projects()
+        result = []
+        for pname, pdata in projects.items():
+            result.append({
+                "name": pname,
+                "description": pdata.get("description", ""),
+                "members": pdata.get("members", []),
+                "created_at": pdata.get("created_at", ""),
+            })
+        return {"projects": result}
+
     # ── Fleet-wide PROJECT.md ───────────────────────────────
 
     @api_router.get("/api/project")
-    async def api_project_read() -> dict:
-        """Read the fleet-wide PROJECT.md from the project root."""
+    async def api_project_read(project: str = "") -> dict:
+        """Read a project's project.md, or the global PROJECT.md."""
         if runtime is None:
             raise HTTPException(status_code=503, detail="Runtime not available")
-        project_path = runtime.project_root / "PROJECT.md"
+        if project:
+            from src.cli.config import PROJECTS_DIR
+            project_path = PROJECTS_DIR / project / "project.md"
+        else:
+            project_path = runtime.project_root / "PROJECT.md"
         exists = project_path.exists()
         content = project_path.read_text(errors="replace")[:200_000] if exists else ""
-        return {"content": content, "exists": exists}
+        return {"content": content, "exists": exists, "project": project or None}
 
     @api_router.put("/api/project")
-    async def api_project_write(request: Request) -> dict:
-        """Write PROJECT.md to host and push to all running agents."""
+    async def api_project_write(request: Request, project: str = "") -> dict:
+        """Write project.md to host and push to running agents."""
         if runtime is None:
             raise HTTPException(status_code=503, detail="Runtime not available")
         body = await request.json()
@@ -764,8 +785,13 @@ def create_dashboard_router(
             raise HTTPException(status_code=400, detail="content must be a string")
         content = sanitize_for_prompt(content)
 
-        # Write to host project root
-        project_path = runtime.project_root / "PROJECT.md"
+        if project:
+            from src.cli.config import PROJECTS_DIR
+            project_path = PROJECTS_DIR / project / "project.md"
+            if not project_path.parent.exists():
+                raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+        else:
+            project_path = runtime.project_root / "PROJECT.md"
         project_path.write_text(content)
 
         # Push to all running agents

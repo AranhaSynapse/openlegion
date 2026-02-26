@@ -22,6 +22,7 @@ CONFIG_FILE = PROJECT_ROOT / "config" / "mesh.yaml"
 AGENTS_FILE = PROJECT_ROOT / "config" / "agents.yaml"
 PERMISSIONS_FILE = PROJECT_ROOT / "config" / "permissions.json"
 PROJECT_FILE = PROJECT_ROOT / "PROJECT.md"
+PROJECTS_DIR = PROJECT_ROOT / "config" / "projects"
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 DOCKER_IMAGE = "openlegion-agent:latest"
 
@@ -130,7 +131,7 @@ CHANNEL_TYPES = {
 
 
 def _load_config(mesh_path: Path | None = None) -> dict:
-    """Load mesh config and merge agent definitions from agents.yaml."""
+    """Load mesh config, agent definitions, and project metadata."""
     path = mesh_path or CONFIG_FILE
     cfg: dict = {
         "mesh": {"host": "0.0.0.0", "port": 8420},
@@ -145,6 +146,15 @@ def _load_config(mesh_path: Path | None = None) -> dict:
         with open(AGENTS_FILE) as f:
             agents_data = yaml.safe_load(f) or {}
             cfg.setdefault("agents", {}).update(agents_data.get("agents", {}))
+
+    # Load projects and build reverse map (agent → project)
+    projects = _load_projects()
+    cfg["projects"] = projects
+    agent_projects: dict[str, str] = {}
+    for pname, pdata in projects.items():
+        for member in pdata.get("members", []):
+            agent_projects[member] = pname
+    cfg["_agent_projects"] = agent_projects
     return cfg
 
 
@@ -419,6 +429,202 @@ def _ensure_pairing_code(pairing_path: Path) -> str | None:
 def _get_default_model() -> str:
     cfg = _load_config()
     return cfg.get("llm", {}).get("default_model", "openai/gpt-4o-mini")
+
+
+# ── Project management ──────────────────────────────────────
+
+
+def _validate_project_name(name: str) -> str:
+    """Validate and return a safe project name (same rules as agent names)."""
+    import re
+
+    if not name or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}", name):
+        raise ValueError(
+            f"Invalid project name '{name}': must be 1–64 alphanumeric chars, "
+            "hyphens, or underscores (must start with a letter or digit)."
+        )
+    return name
+
+
+def _load_projects() -> dict[str, dict]:
+    """Scan config/projects/*/metadata.yaml and return {name: metadata}."""
+    projects: dict[str, dict] = {}
+    if not PROJECTS_DIR.exists():
+        return projects
+    for meta_file in sorted(PROJECTS_DIR.glob("*/metadata.yaml")):
+        try:
+            with open(meta_file) as f:
+                data = yaml.safe_load(f) or {}
+            name = data.get("name", meta_file.parent.name)
+            projects[name] = data
+        except Exception as e:
+            logger.warning("Failed to load project %s: %s", meta_file, e)
+    return projects
+
+
+def _get_agent_project(agent_name: str) -> str | None:
+    """Return the project name an agent belongs to, or None if standalone."""
+    projects = _load_projects()
+    for pname, pdata in projects.items():
+        if agent_name in pdata.get("members", []):
+            return pname
+    return None
+
+
+def _create_project(
+    name: str, description: str = "", members: list[str] | None = None,
+) -> None:
+    """Create a new project: directory, metadata.yaml, scaffold project.md."""
+    name = _validate_project_name(name)
+    project_dir = PROJECTS_DIR / name
+    if project_dir.exists():
+        raise ValueError(f"Project '{name}' already exists")
+
+    project_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / "workflows").mkdir(exist_ok=True)
+
+    from datetime import UTC, datetime
+
+    metadata = {
+        "name": name,
+        "description": description,
+        "created_at": datetime.now(UTC).isoformat(),
+        "members": list(members or []),
+        "settings": {},
+    }
+    with open(project_dir / "metadata.yaml", "w") as f:
+        yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
+
+    # Scaffold project.md
+    (project_dir / "project.md").write_text(
+        f"# {name}\n\n{description}\n\n"
+        "<!-- Shared context for all agents in this project -->\n"
+    )
+
+    # Wire up permissions for initial members
+    for agent in (members or []):
+        _add_project_blackboard_permissions(agent, name)
+
+
+def _delete_project(name: str) -> None:
+    """Delete a project directory and clean up agent permissions."""
+    import shutil
+
+    project_dir = PROJECTS_DIR / name
+    if not project_dir.exists():
+        raise ValueError(f"Project '{name}' not found")
+
+    # Read members before deleting
+    meta_file = project_dir / "metadata.yaml"
+    members: list[str] = []
+    if meta_file.exists():
+        with open(meta_file) as f:
+            data = yaml.safe_load(f) or {}
+        members = data.get("members", [])
+
+    # Remove project blackboard permissions from all members
+    for agent in members:
+        _remove_project_blackboard_permissions(agent, name)
+
+    shutil.rmtree(project_dir)
+
+
+def _add_agent_to_project(project: str, agent: str) -> None:
+    """Assign an agent to a project. Removes from old project if any."""
+    project_dir = PROJECTS_DIR / project
+    meta_file = project_dir / "metadata.yaml"
+    if not meta_file.exists():
+        raise ValueError(f"Project '{project}' not found")
+
+    # Remove from old project first
+    old_project = _get_agent_project(agent)
+    if old_project and old_project != project:
+        _remove_agent_from_project(old_project, agent)
+
+    # Add to new project
+    with open(meta_file) as f:
+        data = yaml.safe_load(f) or {}
+    members = data.get("members", [])
+    if agent not in members:
+        members.append(agent)
+        data["members"] = members
+        with open(meta_file, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+    _add_project_blackboard_permissions(agent, project)
+
+
+def _remove_agent_from_project(project: str, agent: str) -> None:
+    """Remove an agent from a project (becomes standalone)."""
+    project_dir = PROJECTS_DIR / project
+    meta_file = project_dir / "metadata.yaml"
+    if not meta_file.exists():
+        raise ValueError(f"Project '{project}' not found")
+
+    with open(meta_file) as f:
+        data = yaml.safe_load(f) or {}
+    members = data.get("members", [])
+    if agent in members:
+        members.remove(agent)
+        data["members"] = members
+        with open(meta_file, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+    _remove_project_blackboard_permissions(agent, project)
+
+
+def _add_project_blackboard_permissions(agent: str, project: str) -> None:
+    """Add projects/<name>/* patterns to agent's blackboard permissions."""
+    perms = _load_permissions()
+    agent_perms = perms.get("permissions", {}).get(agent)
+    if agent_perms is None:
+        return
+    pattern = f"projects/{project}/*"
+    for field in ("blackboard_read", "blackboard_write"):
+        patterns = agent_perms.get(field, [])
+        if pattern not in patterns:
+            patterns.append(pattern)
+            agent_perms[field] = patterns
+    _save_permissions(perms)
+
+
+def _remove_project_blackboard_permissions(agent: str, project: str) -> None:
+    """Remove projects/<name>/* patterns from agent's blackboard permissions."""
+    perms = _load_permissions()
+    agent_perms = perms.get("permissions", {}).get(agent)
+    if agent_perms is None:
+        return
+    pattern = f"projects/{project}/*"
+    for field in ("blackboard_read", "blackboard_write"):
+        patterns = agent_perms.get(field, [])
+        if pattern in patterns:
+            patterns.remove(pattern)
+            agent_perms[field] = patterns
+    _save_permissions(perms)
+
+
+def _remove_agent(name: str) -> None:
+    """Remove an agent from config, permissions, and any project membership."""
+    # Remove from project if member
+    project = _get_agent_project(name)
+    if project:
+        try:
+            _remove_agent_from_project(project, name)
+        except ValueError:
+            pass
+
+    # Remove from agents.yaml
+    if AGENTS_FILE.exists():
+        with open(AGENTS_FILE) as f:
+            agents_cfg = yaml.safe_load(f) or {}
+        agents_cfg.get("agents", {}).pop(name, None)
+        with open(AGENTS_FILE, "w") as f:
+            yaml.dump(agents_cfg, f, default_flow_style=False, sort_keys=False)
+
+    # Remove from permissions
+    perms = _load_permissions()
+    perms.get("permissions", {}).pop(name, None)
+    _save_permissions(perms)
 
 
 # ── Browser backend data ────────────────────────────────────

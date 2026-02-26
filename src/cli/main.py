@@ -32,9 +32,8 @@ from src.cli.config import (
     _default_description,
     _get_default_model,
     _load_config,
-    _load_permissions,
     _prompt_brightdata_key,
-    _save_permissions,
+    _remove_agent,
     _set_env_key,
     _suppress_host_logs,
     _update_agent_field,
@@ -274,17 +273,7 @@ def agent_remove(name: str | None, yes: bool):
     if not yes:
         click.confirm(f"Remove agent '{name}'? This deletes its config and permissions.", abort=True)
 
-    if cli_config.AGENTS_FILE.exists():
-        with open(cli_config.AGENTS_FILE) as f:
-            agents_cfg = yaml.safe_load(f) or {}
-        agents_cfg.get("agents", {}).pop(name, None)
-        with open(cli_config.AGENTS_FILE, "w") as f:
-            yaml.dump(agents_cfg, f, default_flow_style=False, sort_keys=False)
-
-    perms = _load_permissions()
-    perms.get("permissions", {}).pop(name, None)
-    _save_permissions(perms)
-
+    _remove_agent(name)
     click.echo(f"Removed agent '{name}'.")
 
 
@@ -523,6 +512,339 @@ def skill_remove(name: str, yes: bool):
         return
     click.echo(f"Removed skill '{name}'.")
     click.echo("Restart agents for changes to take effect.")
+
+
+# ── project subgroup ─────────────────────────────────────────
+
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def project(ctx):
+    """Manage projects (create, list, delete, add-agent, remove-agent)."""
+    if ctx.invoked_subcommand is None:
+        commands = [
+            ("list", "List all projects"),
+            ("create", "Create a new project"),
+            ("delete", "Delete a project"),
+            ("add-agent", "Add an agent to a project"),
+            ("remove-agent", "Remove an agent from a project"),
+        ]
+        click.echo("Project management:\n")
+        for i, (name, desc) in enumerate(commands, 1):
+            click.echo(f"  {i}. {name:<16} {desc}")
+        choice = click.prompt(
+            "\nSelect action",
+            type=click.IntRange(1, len(commands)),
+            default=1,
+        )
+        ctx.invoke(project.commands[commands[choice - 1][0]])
+
+
+@project.command("create")
+@click.argument("name", required=False, default=None)
+@click.option("--description", "-d", "desc", default="", help="Project description")
+@click.option("--agents", "-a", "agents_str", default="", help="Comma-separated agent names")
+def project_create(name: str | None, desc: str, agents_str: str):
+    """Create a new project.
+
+    \b
+    Examples:
+      openlegion project create my-project
+      openlegion project create my-project -d "Marketing automation" -a agent1,agent2
+      openlegion project create           # interactive
+    """
+    from src.cli.config import _create_project, _load_projects, _validate_project_name
+
+    if name is None:
+        name = click.prompt("Project name")
+
+    try:
+        _validate_project_name(name)
+    except ValueError as e:
+        click.echo(str(e), err=True)
+        return
+
+    existing = _load_projects()
+    if name in existing:
+        click.echo(f"Project '{name}' already exists.")
+        return
+
+    if not desc:
+        desc = click.prompt("Description", default="")
+
+    members: list[str] = []
+    if agents_str:
+        members = [a.strip() for a in agents_str.split(",") if a.strip()]
+    else:
+        cfg = _load_config()
+        available = sorted(cfg.get("agents", {}).keys())
+        if available:
+            click.echo(f"\nAvailable agents: {', '.join(available)}")
+            agents_input = click.prompt(
+                "Add agents (comma-separated, or empty to skip)", default="",
+            )
+            if agents_input.strip():
+                members = [a.strip() for a in agents_input.split(",") if a.strip()]
+
+    # Validate agent names exist
+    cfg = _load_config()
+    all_agents = set(cfg.get("agents", {}))
+    invalid = [a for a in members if a not in all_agents]
+    if invalid:
+        click.echo(f"Unknown agent(s): {', '.join(invalid)}", err=True)
+        return
+
+    try:
+        _create_project(name, description=desc, members=members)
+    except ValueError as e:
+        click.echo(str(e), err=True)
+        return
+
+    click.echo(f"\nProject '{name}' created.")
+    if members:
+        click.echo(f"  Members: {', '.join(members)}")
+    click.echo("  Restart to apply: openlegion start")
+
+
+@project.command("list")
+def project_list():
+    """List all projects and their members."""
+    from src.cli.config import _load_projects
+
+    cfg = _load_config()
+    projects = _load_projects()
+    all_agents = set(cfg.get("agents", {}))
+    assigned = set()
+    for pdata in projects.values():
+        assigned.update(pdata.get("members", []))
+    standalone = sorted(all_agents - assigned)
+
+    if not projects and not standalone:
+        click.echo("No projects or agents configured.")
+        return
+
+    if projects:
+        click.echo(f"{'Project':<20} {'Members':<40} {'Description'}")
+        click.echo("-" * 80)
+        for pname, pdata in sorted(projects.items()):
+            members = ", ".join(pdata.get("members", [])) or "(none)"
+            desc = pdata.get("description", "")
+            if len(desc) > 30:
+                desc = desc[:27] + "..."
+            click.echo(f"{pname:<20} {members:<40} {desc}")
+
+    if standalone:
+        click.echo(f"\nStandalone agents: {', '.join(standalone)}")
+
+
+@project.command("delete")
+@click.argument("name", required=False, default=None)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def project_delete(name: str | None, yes: bool):
+    """Delete a project. Agents become standalone.
+
+    \b
+    Examples:
+      openlegion project delete my-project
+      openlegion project delete my-project -y
+    """
+    from src.cli.config import _delete_project, _load_projects
+
+    projects = _load_projects()
+    if not projects:
+        click.echo("No projects configured.")
+        return
+
+    if name is None:
+        names = sorted(projects.keys())
+        for i, n in enumerate(names, 1):
+            click.echo(f"  {i}. {n}")
+        choice = click.prompt("Select project", type=click.IntRange(1, len(names)), default=1)
+        name = names[choice - 1]
+
+    if name not in projects:
+        click.echo(f"Project '{name}' not found.")
+        return
+
+    if not yes:
+        members = projects[name].get("members", [])
+        msg = f"Delete project '{name}'?"
+        if members:
+            msg += f" Agents ({', '.join(members)}) will become standalone."
+        click.confirm(msg, abort=True)
+
+    try:
+        _delete_project(name)
+    except ValueError as e:
+        click.echo(str(e), err=True)
+        return
+
+    click.echo(f"Deleted project '{name}'.")
+
+
+@project.command("add-agent")
+@click.argument("project_name", required=False, default=None)
+@click.argument("agent_name", required=False, default=None)
+def project_add_agent(project_name: str | None, agent_name: str | None):
+    """Add an agent to a project.
+
+    \b
+    Examples:
+      openlegion project add-agent my-project my-agent
+      openlegion project add-agent   # interactive
+    """
+    from src.cli.config import _add_agent_to_project, _load_projects
+
+    projects = _load_projects()
+    if not projects:
+        click.echo("No projects configured. Create one first: openlegion project create")
+        return
+
+    if project_name is None:
+        names = sorted(projects.keys())
+        if len(names) == 1:
+            project_name = names[0]
+        else:
+            for i, n in enumerate(names, 1):
+                click.echo(f"  {i}. {n}")
+            choice = click.prompt("Select project", type=click.IntRange(1, len(names)), default=1)
+            project_name = names[choice - 1]
+
+    if project_name not in projects:
+        click.echo(f"Project '{project_name}' not found.")
+        return
+
+    cfg = _load_config()
+    if agent_name is None:
+        agent_name = _resolve_agent_name(cfg, None)
+    if agent_name is None:
+        return
+    if agent_name not in cfg.get("agents", {}):
+        click.echo(f"Agent '{agent_name}' not found.")
+        return
+
+    try:
+        _add_agent_to_project(project_name, agent_name)
+    except ValueError as e:
+        click.echo(str(e), err=True)
+        return
+
+    click.echo(f"Added '{agent_name}' to project '{project_name}'.")
+    click.echo("  Restart to apply: openlegion start")
+
+
+@project.command("remove-agent")
+@click.argument("project_name", required=False, default=None)
+@click.argument("agent_name", required=False, default=None)
+def project_remove_agent(project_name: str | None, agent_name: str | None):
+    """Remove an agent from a project (becomes standalone).
+
+    \b
+    Examples:
+      openlegion project remove-agent my-project my-agent
+    """
+    from src.cli.config import _load_projects, _remove_agent_from_project
+
+    projects = _load_projects()
+    if not projects:
+        click.echo("No projects configured.")
+        return
+
+    if project_name is None:
+        names = sorted(projects.keys())
+        if len(names) == 1:
+            project_name = names[0]
+        else:
+            for i, n in enumerate(names, 1):
+                click.echo(f"  {i}. {n}")
+            choice = click.prompt("Select project", type=click.IntRange(1, len(names)), default=1)
+            project_name = names[choice - 1]
+
+    if project_name not in projects:
+        click.echo(f"Project '{project_name}' not found.")
+        return
+
+    members = projects[project_name].get("members", [])
+    if not members:
+        click.echo(f"Project '{project_name}' has no members.")
+        return
+
+    if agent_name is None:
+        if len(members) == 1:
+            agent_name = members[0]
+        else:
+            for i, m in enumerate(members, 1):
+                click.echo(f"  {i}. {m}")
+            choice = click.prompt("Select agent", type=click.IntRange(1, len(members)), default=1)
+            agent_name = members[choice - 1]
+
+    if agent_name not in members:
+        click.echo(f"Agent '{agent_name}' is not in project '{project_name}'.")
+        return
+
+    try:
+        _remove_agent_from_project(project_name, agent_name)
+    except ValueError as e:
+        click.echo(str(e), err=True)
+        return
+
+    click.echo(f"Removed '{agent_name}' from project '{project_name}' (now standalone).")
+    click.echo("  Restart to apply: openlegion start")
+
+
+@project.command("edit")
+@click.argument("name", required=False, default=None)
+def project_edit(name: str | None):
+    """Edit a project's description or open project.md in $EDITOR.
+
+    \b
+    Examples:
+      openlegion project edit my-project
+    """
+    from src.cli.config import PROJECTS_DIR, _load_projects
+
+    projects = _load_projects()
+    if not projects:
+        click.echo("No projects configured.")
+        return
+
+    if name is None:
+        names = sorted(projects.keys())
+        if len(names) == 1:
+            name = names[0]
+        else:
+            for i, n in enumerate(names, 1):
+                click.echo(f"  {i}. {n}")
+            choice = click.prompt("Select project", type=click.IntRange(1, len(names)), default=1)
+            name = names[choice - 1]
+
+    if name not in projects:
+        click.echo(f"Project '{name}' not found.")
+        return
+
+    click.echo(f"\nProject: {name}")
+    click.echo(f"  Description: {projects[name].get('description', '(none)')}")
+    click.echo(f"  Members: {', '.join(projects[name].get('members', [])) or '(none)'}\n")
+
+    options = [
+        ("Edit description", "desc"),
+        ("Open project.md in editor", "editor"),
+    ]
+    for i, (label, _) in enumerate(options, 1):
+        click.echo(f"  {i}. {label}")
+    choice = click.prompt("\nSelect", type=click.IntRange(1, len(options)), default=1)
+
+    if options[choice - 1][1] == "desc":
+        new_desc = click.prompt("Description", default=projects[name].get("description", ""))
+        meta_file = PROJECTS_DIR / name / "metadata.yaml"
+        with open(meta_file) as f:
+            data = yaml.safe_load(f) or {}
+        data["description"] = new_desc
+        with open(meta_file, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+        click.echo("Description updated.")
+    else:
+        project_md = PROJECTS_DIR / name / "project.md"
+        click.edit(filename=str(project_md))
 
 
 # ── start ────────────────────────────────────────────────────

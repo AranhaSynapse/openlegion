@@ -167,6 +167,19 @@ class AgentPermissions(BaseModel):
     allowed_credentials: list[str] = []
 
 
+# === Projects ===
+
+
+class ProjectMetadata(BaseModel):
+    """Project definition loaded from config/projects/<name>/metadata.yaml."""
+
+    name: str
+    description: str = ""
+    members: list[str] = []
+    created_at: Optional[str] = None
+    settings: dict[str, Any] = {}
+
+
 # === Memory (inside agent container) ===
 
 

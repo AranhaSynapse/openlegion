@@ -196,6 +196,23 @@ class Orchestrator:
             except Exception as e:
                 logger.error(f"Failed to load workflow {yaml_file}: {e}")
 
+    def load_project_workflows(self, project_name: str, workflows_dir: str) -> None:
+        """Load workflows from a project directory, namespacing as project/workflow."""
+        wf_path = Path(workflows_dir)
+        if not wf_path.exists():
+            return
+        for yaml_file in wf_path.glob("*.yaml"):
+            try:
+                with open(yaml_file) as f:
+                    data = yaml.safe_load(f)
+                wf = WorkflowDefinition(**data)
+                namespaced = f"{project_name}/{wf.name}"
+                wf.name = namespaced
+                self.workflows[namespaced] = wf
+                logger.info(f"Loaded project workflow: {namespaced}")
+            except Exception as e:
+                logger.error(f"Failed to load project workflow {yaml_file}: {e}")
+
     @staticmethod
     def _detect_cycle(steps: list[WorkflowStep]) -> list[str] | None:
         """Return a list of step IDs forming a cycle, or None if acyclic.
@@ -400,7 +417,14 @@ class Orchestrator:
 
         context = {}
         if self.blackboard:
-            entries = self.blackboard.list_by_prefix("context/")
+            # Scope context reads: project workflows only see their own namespace
+            wf_name = execution.workflow.name
+            if "/" in wf_name:
+                project_prefix = wf_name.split("/", 1)[0]
+                context_prefix = f"projects/{project_prefix}/context/"
+            else:
+                context_prefix = "context/"
+            entries = self.blackboard.list_by_prefix(context_prefix)
             for entry in entries:
                 context[entry.key] = entry.value
 

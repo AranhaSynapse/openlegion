@@ -320,3 +320,42 @@ async def test_execute_step_timeout():
 
     result = await orch._execute_step(execution, wf.steps[0])
     assert result.status == "timeout"
+
+
+# === Project Workflow Loading ===
+
+
+def test_load_project_workflows(tmp_path):
+    """Project workflows are namespaced as project/workflow."""
+    wf_dir = tmp_path / "wf"
+    wf_dir.mkdir()
+    (wf_dir / "pipeline.yaml").write_text(
+        "name: pipeline\ntrigger: webhook\nsteps:\n  - id: s1\n    task_type: t1\n"
+    )
+    orch = Orchestrator(mesh_url="http://localhost:8420", workflows_dir="/nonexistent")
+    orch.load_project_workflows("marketing", str(wf_dir))
+
+    assert "marketing/pipeline" in orch.workflows
+    assert orch.workflows["marketing/pipeline"].name == "marketing/pipeline"
+
+
+def test_load_project_workflows_nonexistent_dir():
+    """Loading from a nonexistent directory is a no-op."""
+    orch = Orchestrator(mesh_url="http://localhost:8420", workflows_dir="/nonexistent")
+    orch.load_project_workflows("ghost", "/does/not/exist")
+    assert len(orch.workflows) == 0
+
+
+def test_load_project_workflows_multiple(tmp_path):
+    """Multiple project workflow files are all loaded with correct namespace."""
+    wf_dir = tmp_path / "wf"
+    wf_dir.mkdir()
+    for name in ("build", "deploy"):
+        (wf_dir / f"{name}.yaml").write_text(
+            f"name: {name}\ntrigger: webhook\nsteps:\n  - id: s1\n    task_type: t1\n"
+        )
+    orch = Orchestrator(mesh_url="http://localhost:8420", workflows_dir="/nonexistent")
+    orch.load_project_workflows("devops", str(wf_dir))
+
+    assert "devops/build" in orch.workflows
+    assert "devops/deploy" in orch.workflows
