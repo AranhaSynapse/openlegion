@@ -375,7 +375,10 @@ def _launch_chrome_subprocess():
             # Required for Docker — Chrome's sandbox needs kernel capabilities
             # that aren't available in containers with no-new-privileges.
             "--no-sandbox",
-            "--disable-setuid-sandbox",
+            # Disable Chrome's built-in async DNS client — it bypasses Docker
+            # Desktop's DNS forwarder, causing 10-30s timeouts on every request.
+            # Belt-and-suspenders with the enterprise policy in the Dockerfile.
+            "--disable-features=AsyncDns",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-infobars",
