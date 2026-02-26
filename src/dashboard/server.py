@@ -785,7 +785,7 @@ def create_dashboard_router(
         from src.cli.config import _create_project, _load_config
         body = await request.json()
         name = body.get("name", "").strip()
-        description = body.get("description", "")
+        description = sanitize_for_prompt(body.get("description", "")).strip()
         members = body.get("members", [])
         if not name:
             raise HTTPException(status_code=400, detail="name is required")
@@ -826,12 +826,14 @@ def create_dashboard_router(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         # Auto-restart the agent so new scope takes effect
+        restarted = False
         if transport is not None and agent in agent_registry:
             try:
                 await transport.request(agent, "POST", "/restart", timeout=10)
+                restarted = True
             except Exception as e:
                 logger.warning("Failed to restart agent %s after project change: %s", agent, e)
-        return {"added": True, "project": name, "agent": agent}
+        return {"added": True, "project": name, "agent": agent, "restarted": restarted}
 
     @api_router.delete("/api/projects/{name}/members/{agent}")
     async def api_projects_remove_member(name: str, agent: str) -> dict:
@@ -842,12 +844,14 @@ def create_dashboard_router(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         # Auto-restart the agent so new scope takes effect
+        restarted = False
         if transport is not None and agent in agent_registry:
             try:
                 await transport.request(agent, "POST", "/restart", timeout=10)
+                restarted = True
             except Exception as e:
                 logger.warning("Failed to restart agent %s after project change: %s", agent, e)
-        return {"removed": True, "project": name, "agent": agent}
+        return {"removed": True, "project": name, "agent": agent, "restarted": restarted}
 
     # ── Project PROJECT.md ─────────────────────────────────
 

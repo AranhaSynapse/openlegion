@@ -958,8 +958,7 @@ function dashboard() {
           this.projectEditBuffer = '';
           const pushed = Object.values(data.pushed || {}).filter(Boolean).length;
           const total = Object.keys(data.pushed || {}).length;
-          const scope = this.activeProject ? `${this.activeProject} ` : '';
-          this.showToast(`${scope}PROJECT.md saved${total > 0 ? ` (pushed to ${pushed}/${total} agents)` : ''}`);
+          this.showToast(`${this.activeProject} PROJECT.md saved${total > 0 ? ` (pushed to ${pushed}/${total} agents)` : ''}`);
         } else {
           try {
             const err = await resp.json();
@@ -1037,7 +1036,6 @@ function dashboard() {
           await this.fetchProjects();
           if (this.activeProject === name) this.switchProject(null);
           this.showToast(`Project "${name}" deleted`);
-          this.fetchAgents();
         } else {
           const err = await resp.json().catch(() => ({}));
           this.showToast(`Delete failed: ${err.detail || 'Unknown error'}`);

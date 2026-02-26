@@ -505,30 +505,31 @@ def create_mesh_app(
         - agent_id set (standalone): return only that agent
         - neither (dashboard/internal): return all
         """
+        def _agent_entry(aid: str, url: str) -> dict:
+            return {"url": url, "role": router.agent_roles.get(aid, "")}
+
         if project:
             from src.cli.config import _load_projects
             projects = _load_projects()
-            members = set(projects.get(project, {}).get("members", []))
-            agents = {}
-            for aid, url in router.agent_registry.items():
-                if aid in members:
-                    agents[aid] = {
-                        "url": url,
-                        "role": router.agent_roles.get(aid, ""),
-                    }
-            return agents
+            pdata = projects.get(project)
+            if pdata is None:
+                _server_logger.warning("list_agents: unknown project %r", project)
+                return {}
+            members = set(pdata.get("members", []))
+            return {
+                aid: _agent_entry(aid, url)
+                for aid, url in router.agent_registry.items()
+                if aid in members
+            }
         if agent_id:
             url = router.agent_registry.get(agent_id)
             if url:
-                return {agent_id: {"url": url, "role": router.agent_roles.get(agent_id, "")}}
+                return {agent_id: _agent_entry(agent_id, url)}
             return {}
-        agents = {}
-        for aid, url in router.agent_registry.items():
-            agents[aid] = {
-                "url": url,
-                "role": router.agent_roles.get(aid, ""),
-            }
-        return agents
+        return {
+            aid: _agent_entry(aid, url)
+            for aid, url in router.agent_registry.items()
+        }
 
     # === Agent Introspection ===
 

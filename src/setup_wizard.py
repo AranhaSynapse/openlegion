@@ -98,7 +98,7 @@ class SetupWizard:
                 click.echo("Setup cancelled. Existing config kept.")
                 return
 
-        total_steps = 4
+        total_steps = 3
         # State accumulated across steps
         state: dict = {}
 
@@ -113,13 +113,6 @@ class SetupWizard:
                 step = 2
 
             elif step == 2:
-                result = self._step_project(total_steps)
-                if result is None:
-                    step = 1
-                    continue
-                step = 3
-
-            elif step == 3:
                 result = self._step_agents(
                     total_steps,
                     state["selected_model"],
@@ -129,17 +122,17 @@ class SetupWizard:
                     _setup_agent_wizard,
                 )
                 if result is None:
-                    step = 2
+                    step = 1
                     continue
                 state["created_agents"] = result["created_agents"]
-                step = 4
+                step = 3
 
-            elif step == 4:
+            elif step == 3:
                 result = self._step_collaboration(total_steps, _set_collaborative_permissions)
                 if result is None:
-                    step = 3
+                    step = 2
                     continue
-                step = 5
+                step = 4
 
         # Summary
         self._print_summary(state["provider"], state["selected_model"], state.get("created_agents", []))
@@ -237,18 +230,12 @@ class SetupWizard:
 
         return {"provider": provider, "selected_model": selected_model, "choice": choice}
 
-    def _step_project(self, total_steps) -> dict | None:
-        """Step 2: Project definition (skipped — projects are created from dashboard)."""
-        # Projects are created later from the dashboard or CLI, not during initial setup.
-        # This step is kept as a pass-through to preserve the step numbering flow.
-        return {}
-
     def _step_agents(
         self, total_steps, selected_model, _load_config, _load_templates,
         _apply_template, _setup_agent_wizard,
     ) -> dict | None:
-        """Step 3: Agent setup. Returns None for 'back'."""
-        self._print_step_header(3, total_steps, "Your Agents")
+        """Step 2: Agent setup. Returns None for 'back'."""
+        self._print_step_header(2, total_steps, "Your Agents")
 
         cfg = _load_config()
         existing_agents = list(cfg.get("agents", {}).keys())
@@ -305,8 +292,8 @@ class SetupWizard:
         return {"created_agents": created_agents}
 
     def _step_collaboration(self, total_steps, _set_collaborative_permissions) -> dict | None:
-        """Step 4: Collaboration (auto-completes, no user prompt)."""
-        self._print_step_header(4, total_steps, "Collaboration")
+        """Step 3: Collaboration (auto-completes, no user prompt)."""
+        self._print_step_header(3, total_steps, "Collaboration")
 
         mesh_cfg = {}
         if self.config_file.exists():
