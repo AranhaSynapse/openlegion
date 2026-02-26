@@ -314,9 +314,22 @@ def _cleanup_stale_profile():
 
 
 def _find_chromium_binary() -> str:
-    """Find the Chromium binary installed by Playwright."""
+    """Find Chrome/Chromium binary, preferring Google Chrome for TLS authenticity."""
     import glob as globmod
 
+    # Prefer Google Chrome — authentic TLS fingerprint that matches UA string.
+    # Chrome for Testing (Playwright's bundled Chromium) has a different JA3/JA4
+    # fingerprint that anti-bot systems detect and block.
+    for name in ["google-chrome-stable", "google-chrome"]:
+        try:
+            result = subprocess.run(
+                ["which", name], capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:
+            pass
+    # Fallback to Playwright's bundled Chromium
     for pattern in [
         "/opt/pw-browsers/chromium-*/chrome-linux64/chrome",
         "/opt/pw-browsers/chromium-*/chrome-linux/chrome",
@@ -326,8 +339,7 @@ def _find_chromium_binary() -> str:
         matches = sorted(globmod.glob(pattern))
         if matches:
             return matches[-1]
-    # Fallback to system-installed browsers
-    for name in ["chromium-browser", "chromium", "google-chrome"]:
+    for name in ["chromium-browser", "chromium"]:
         try:
             result = subprocess.run(
                 ["which", name], capture_output=True, text=True, timeout=5,
