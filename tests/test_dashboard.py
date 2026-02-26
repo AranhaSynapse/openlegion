@@ -1834,3 +1834,38 @@ class TestDashboardBroadcastProjectScoping:
         )
         assert resp.status_code == 400
         assert "string" in resp.json()["detail"]
+
+    def test_broadcast_stream_standalone_only(self):
+        """Streaming broadcast with standalone=true targets only unassigned agents."""
+        with patch("src.cli.config._load_projects", return_value={
+            "proj1": {"members": ["alpha", "beta"]},
+        }):
+            resp = self.client.post(
+                "/dashboard/api/broadcast/stream",
+                json={"message": "Hello standalone", "standalone": True},
+            )
+        assert resp.status_code == 200
+        lines = resp.text.strip().split("\n")
+        agent_starts = [l for l in lines if "agent_start" in l]
+        # Only gamma is unassigned
+        assert len(agent_starts) == 1
+        assert "gamma" in agent_starts[0]
+
+    def test_broadcast_non_stream_standalone_only(self):
+        """Non-streaming broadcast with standalone=true targets only unassigned agents."""
+        async def _mock_request(aid, method, path, **kwargs):
+            return {"response": f"Reply from {aid}"}
+
+        self.components["transport"].request = AsyncMock(side_effect=_mock_request)
+
+        with patch("src.cli.config._load_projects", return_value={
+            "proj1": {"members": ["alpha", "beta"]},
+        }):
+            resp = self.client.post(
+                "/dashboard/api/broadcast",
+                json={"message": "Hello standalone", "standalone": True},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        # Only gamma is unassigned
+        assert set(data["responses"].keys()) == {"gamma"}

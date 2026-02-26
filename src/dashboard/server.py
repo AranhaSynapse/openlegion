@@ -593,6 +593,12 @@ def create_dashboard_router(
             from src.cli.config import _load_projects
             members = set(_load_projects().get(project, {}).get("members", []))
             targets = [a for a in targets if a in members]
+        elif body.get("standalone"):
+            from src.cli.config import _load_projects
+            assigned = set()
+            for pdata in _load_projects().values():
+                assigned.update(pdata.get("members", []))
+            targets = [a for a in targets if a not in assigned]
         if not targets:
             return {"responses": {}, "message": "No matching agents"}
 
@@ -633,6 +639,12 @@ def create_dashboard_router(
             from src.cli.config import _load_projects
             members = set(_load_projects().get(project, {}).get("members", []))
             agents = [a for a in agents if a in members]
+        elif body.get("standalone"):
+            from src.cli.config import _load_projects
+            assigned = set()
+            for pdata in _load_projects().values():
+                assigned.update(pdata.get("members", []))
+            agents = [a for a in agents if a not in assigned]
         if not agents:
             return {"responses": {}, "message": "No agents registered"}
 

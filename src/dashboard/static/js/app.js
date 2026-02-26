@@ -355,8 +355,11 @@ function dashboard() {
     },
 
     get filteredAgents() {
-      if (!this.activeProject) return this.agents;
-      return this.agents.filter(a => a.project === this.activeProject);
+      if (this.activeProject) {
+        return this.agents.filter(a => a.project === this.activeProject);
+      }
+      // When projects exist, show only standalone (unassigned) agents
+      return this.projects.length > 0 ? this.unassignedAgents : this.agents;
     },
 
     get filteredFleetCost() {
@@ -368,9 +371,8 @@ function dashboard() {
     },
 
     get fleetHealthCounts() {
-      const source = this.activeProject ? this.filteredAgents : this.agents;
       const counts = { healthy: 0, unhealthy: 0, failed: 0, unknown: 0 };
-      for (const a of source) {
+      for (const a of this.filteredAgents) {
         const s = a.health_status || 'unknown';
         if (s === 'healthy') counts.healthy++;
         else if (s === 'unhealthy' || s === 'restarting') counts.unhealthy++;
@@ -1871,6 +1873,7 @@ function dashboard() {
       try {
         const broadcastBody = { message: msg };
         if (this.activeProject) broadcastBody.project = this.activeProject;
+        else if (this.projects.length > 0) broadcastBody.standalone = true;
         const resp = await fetch(`${window.__config.apiBase}/broadcast/stream`, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(broadcastBody),
@@ -1975,7 +1978,7 @@ function dashboard() {
       // Quick actions
       const actions = [
         { label: 'Add Agent', desc: 'Open add agent form', keywords: ['add', 'agent', 'new', 'create'], action: () => { this.switchTab('fleet'); this.openAddAgentModal(); } },
-        { label: 'Broadcast', desc: this.activeProject ? `Broadcast to ${this.activeProject} agents` : 'Send message to all agents', keywords: ['broadcast', 'send', 'all', 'message'], action: () => { this.switchTab('fleet'); this.openBroadcastModal(); } },
+        { label: 'Broadcast', desc: this.activeProject ? `Broadcast to ${this.activeProject} agents` : (this.projects.length > 0 ? 'Broadcast to standalone agents' : 'Send message to all agents'), keywords: ['broadcast', 'send', 'all', 'message'], action: () => { this.switchTab('fleet'); this.openBroadcastModal(); } },
         ...(this.activeProject ? [{ label: 'Edit PROJECT.md', desc: `Edit ${this.activeProject} project context`, keywords: ['project', 'edit', 'context'], action: () => { this.switchTab('fleet'); this.projectBannerExpanded = true; this.startProjectEdit(); } }] : []),
       ];
       for (const act of actions) {
@@ -1985,8 +1988,8 @@ function dashboard() {
       }
       // Match projects
       if (this.projects.length > 0) {
-        if ('all agents'.startsWith(q) || 'all'.startsWith(q)) {
-          results.push({ type: 'action', label: 'All agents', desc: 'Clear project filter', action: () => { this.switchTab('fleet'); this.switchProject(null); } });
+        if ('standalone'.startsWith(q) || 'unassigned'.startsWith(q)) {
+          results.push({ type: 'action', label: 'Standalone agents', desc: 'Show agents not in any project', action: () => { this.switchTab('fleet'); this.switchProject(null); } });
         }
         for (const proj of this.projects) {
           const pname = (proj.name || '').toLowerCase();
