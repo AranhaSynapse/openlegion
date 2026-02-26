@@ -232,10 +232,12 @@ class DockerBackend(RuntimeBackend):
                 mp_path = marketplace_dir.as_posix()
             volumes[mp_path] = {"bind": "/app/marketplace_skills", "mode": "ro"}
 
-        # Persistent browser (visible Chromium + VNC stack) needs more resources
+        # Persistent browser (visible Chromium + VNC stack) needs more resources:
+        # Chrome spawns multiple processes (browser, renderer, GPU, network)
+        # that all need CPU time.  1 core is not enough for JS-heavy sites.
         is_persistent = browser_backend == "persistent"
-        mem_limit = "1g" if is_persistent else "512m"
-        cpu_quota = 100000 if is_persistent else 50000
+        mem_limit = "2g" if is_persistent else "512m"
+        cpu_quota = 200000 if is_persistent else 50000
 
         run_kwargs: dict[str, Any] = {
             "detach": True,
