@@ -180,21 +180,28 @@ class Orchestrator:
         self._cancelled.add(execution_id)
         return True
 
-    def _load_workflows(self, workflows_dir: str) -> None:
-        """Load all workflow YAML files."""
+    def _load_workflows(self, workflows_dir: str, *, namespace: str = "") -> None:
+        """Load workflow YAML files, optionally namespacing as namespace/name."""
         wf_path = Path(workflows_dir)
         if not wf_path.exists():
-            logger.debug("No workflows directory at %s — skipping", workflows_dir)
+            if not namespace:
+                logger.debug("No workflows directory at %s — skipping", workflows_dir)
             return
         for yaml_file in wf_path.glob("*.yaml"):
             try:
                 with open(yaml_file) as f:
                     data = yaml.safe_load(f)
                 wf = WorkflowDefinition(**data)
+                if namespace:
+                    wf.name = f"{namespace}/{wf.name}"
                 self.workflows[wf.name] = wf
                 logger.info(f"Loaded workflow: {wf.name}")
             except Exception as e:
                 logger.error(f"Failed to load workflow {yaml_file}: {e}")
+
+    def load_project_workflows(self, project_name: str, workflows_dir: str) -> None:
+        """Load workflows from a project directory, namespacing as project/workflow."""
+        self._load_workflows(workflows_dir, namespace=project_name)
 
     @staticmethod
     def _detect_cycle(steps: list[WorkflowStep]) -> list[str] | None:
@@ -400,7 +407,14 @@ class Orchestrator:
 
         context = {}
         if self.blackboard:
-            entries = self.blackboard.list_by_prefix("context/")
+            # Scope context reads: project workflows only see their own namespace
+            wf_name = execution.workflow.name
+            if "/" in wf_name:
+                project_prefix = wf_name.split("/", 1)[0]
+                context_prefix = f"projects/{project_prefix}/context/"
+            else:
+                context_prefix = "context/"
+            entries = self.blackboard.list_by_prefix(context_prefix)
             for entry in entries:
                 context[entry.key] = entry.value
 
@@ -537,6 +551,11 @@ class Orchestrator:
             key = step.input_from.replace("blackboard://", "")
             for var_name, var_value in execution.trigger_payload.items():
                 key = key.replace(f"{{{var_name}}}", str(var_value))
+            # Scope blackboard reads for project workflows
+            wf_name = execution.workflow.name
+            if "/" in wf_name and not key.startswith("projects/"):
+                project_prefix = wf_name.split("/", 1)[0]
+                key = f"projects/{project_prefix}/{key}"
             if self.blackboard:
                 entry = self.blackboard.read(key)
                 return entry.value if entry else {}

@@ -66,6 +66,12 @@ async def list_agents(*, mesh_client=None) -> dict:
         return {"error": f"Failed to list agents: {e}"}
 
 
+_STANDALONE_ERROR = (
+    "Blackboard is not available — this agent is not assigned to any project. "
+    "Use memory_save/memory_search for private storage."
+)
+
+
 @skill(
     name="read_shared_state",
     description=(
@@ -84,6 +90,8 @@ async def list_agents(*, mesh_client=None) -> dict:
 async def read_shared_state(key: str, *, mesh_client=None) -> dict:
     if mesh_client is None:
         return {"error": "No mesh_client available"}
+    if mesh_client.is_standalone:
+        return {"error": _STANDALONE_ERROR}
     try:
         entry = await mesh_client.read_blackboard(key)
         if entry is None:
@@ -118,6 +126,8 @@ async def read_shared_state(key: str, *, mesh_client=None) -> dict:
 async def write_shared_state(key: str, value: str, *, mesh_client=None) -> dict:
     if mesh_client is None:
         return {"error": "No mesh_client available"}
+    if mesh_client.is_standalone:
+        return {"error": _STANDALONE_ERROR}
     try:
         parsed = json.loads(value) if isinstance(value, str) else value
     except json.JSONDecodeError:
@@ -147,6 +157,8 @@ async def write_shared_state(key: str, value: str, *, mesh_client=None) -> dict:
 async def list_shared_state(prefix: str, *, mesh_client=None) -> dict:
     if mesh_client is None:
         return {"error": "No mesh_client available"}
+    if mesh_client.is_standalone:
+        return {"error": _STANDALONE_ERROR}
     try:
         entries = await mesh_client.list_blackboard(prefix)
         items = []
@@ -230,7 +242,8 @@ async def save_artifact(
         filepath.parent.mkdir(parents=True, exist_ok=True)
         filepath.write_text(content)
 
-        if mesh_client:
+        # Register on blackboard (skip for standalone agents — no project blackboard)
+        if mesh_client and not mesh_client.is_standalone:
             agent_id = mesh_client.agent_id
             key = f"artifacts/{agent_id}/{name}"
             await mesh_client.write_blackboard(key, {

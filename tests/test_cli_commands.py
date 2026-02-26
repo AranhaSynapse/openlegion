@@ -1,4 +1,4 @@
-"""Tests for CLI commands: agent add/list/edit/remove, setup helpers."""
+"""Tests for CLI commands: agent add/list/edit/remove, project CRUD, setup helpers."""
 
 import json
 import os
@@ -1079,3 +1079,321 @@ class TestAddAgentToConfigInitialInstructions:
 
         data = yaml.safe_load(agents_file.read_text())
         assert "initial_instructions" not in data["agents"]["helper"]
+
+
+# ── Project CLI commands ─────────────────────────────────────
+
+
+class TestProjectCreate:
+    def test_create_project_with_flags(self, tmp_path):
+        projects_dir = tmp_path / "projects"
+        config_file = tmp_path / "mesh.yaml"
+        agents_file = tmp_path / "agents.yaml"
+        perms_file = tmp_path / "permissions.json"
+
+        config_file.write_text(yaml.dump({"mesh": {"port": 8420}}))
+        agents_file.write_text(yaml.dump({
+            "agents": {"bot1": {"role": "test"}, "bot2": {"role": "test2"}},
+        }))
+        perms_file.write_text(json.dumps({
+            "permissions": {
+                "bot1": {"blackboard_read": ["context/*"], "blackboard_write": ["context/*"]},
+                "bot2": {"blackboard_read": ["context/*"], "blackboard_write": ["context/*"]},
+            }
+        }))
+
+        with (
+            patch("src.cli.config.PROJECTS_DIR", projects_dir),
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+            patch("src.cli.config.PERMISSIONS_FILE", perms_file),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                ["project", "create", "test-proj", "-d", "Test project", "-a", "bot1,bot2"],
+            )
+            assert result.exit_code == 0
+            assert "test-proj" in result.output
+            assert "bot1" in result.output
+
+            meta_file = projects_dir / "test-proj" / "metadata.yaml"
+            assert meta_file.exists()
+            data = yaml.safe_load(meta_file.read_text())
+            assert data["name"] == "test-proj"
+            assert "bot1" in data["members"]
+            assert "bot2" in data["members"]
+
+    def test_create_project_rejects_invalid_name(self, tmp_path):
+        projects_dir = tmp_path / "projects"
+        config_file = tmp_path / "mesh.yaml"
+        agents_file = tmp_path / "agents.yaml"
+
+        config_file.write_text(yaml.dump({"mesh": {"port": 8420}}))
+        agents_file.write_text(yaml.dump({"agents": {}}))
+
+        with (
+            patch("src.cli.config.PROJECTS_DIR", projects_dir),
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["project", "create", "../escape", "-d", "bad"])
+            assert result.exit_code == 0  # Click catches the error
+            assert "Invalid project name" in result.output
+
+    def test_create_project_unknown_agents(self, tmp_path):
+        projects_dir = tmp_path / "projects"
+        config_file = tmp_path / "mesh.yaml"
+        agents_file = tmp_path / "agents.yaml"
+        perms_file = tmp_path / "permissions.json"
+
+        config_file.write_text(yaml.dump({"mesh": {"port": 8420}}))
+        agents_file.write_text(yaml.dump({"agents": {"bot1": {"role": "test"}}}))
+        perms_file.write_text(json.dumps({"permissions": {}}))
+
+        with (
+            patch("src.cli.config.PROJECTS_DIR", projects_dir),
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+            patch("src.cli.config.PERMISSIONS_FILE", perms_file),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                ["project", "create", "proj", "-d", "x", "-a", "nonexistent"],
+            )
+            assert "Unknown agent" in result.output
+
+
+class TestProjectList:
+    def test_list_with_projects(self, tmp_path):
+        projects_dir = tmp_path / "projects"
+        config_file = tmp_path / "mesh.yaml"
+        agents_file = tmp_path / "agents.yaml"
+
+        config_file.write_text(yaml.dump({"mesh": {"port": 8420}}))
+        agents_file.write_text(yaml.dump({
+            "agents": {"bot1": {"role": "test"}, "bot2": {"role": "test2"}},
+        }))
+
+        d = projects_dir / "my-proj"
+        d.mkdir(parents=True)
+        (d / "metadata.yaml").write_text(yaml.dump({
+            "name": "my-proj", "description": "Desc", "members": ["bot1"],
+        }))
+
+        with (
+            patch("src.cli.config.PROJECTS_DIR", projects_dir),
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["project", "list"])
+            assert result.exit_code == 0
+            assert "my-proj" in result.output
+            assert "bot1" in result.output
+            # bot2 is standalone
+            assert "bot2" in result.output
+
+    def test_list_empty(self, tmp_path):
+        config_file = tmp_path / "mesh.yaml"
+        agents_file = tmp_path / "agents.yaml"
+
+        config_file.write_text(yaml.dump({"mesh": {"port": 8420}}))
+        agents_file.write_text(yaml.dump({"agents": {}}))
+
+        with (
+            patch("src.cli.config.PROJECTS_DIR", tmp_path / "nonexistent"),
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["project", "list"])
+            assert "No projects" in result.output
+
+
+class TestProjectDelete:
+    def test_delete_project(self, tmp_path):
+        projects_dir = tmp_path / "projects"
+        perms_file = tmp_path / "permissions.json"
+        config_file = tmp_path / "mesh.yaml"
+        agents_file = tmp_path / "agents.yaml"
+
+        d = projects_dir / "doomed"
+        d.mkdir(parents=True)
+        (d / "metadata.yaml").write_text(yaml.dump({
+            "name": "doomed", "members": ["bot1"],
+        }))
+        (d / "project.md").write_text("# doomed")
+
+        config_file.write_text(yaml.dump({"mesh": {"port": 8420}}))
+        agents_file.write_text(yaml.dump({"agents": {"bot1": {"role": "test"}}}))
+        perms_file.write_text(json.dumps({
+            "permissions": {
+                "bot1": {
+                    "blackboard_read": ["context/*", "projects/doomed/*"],
+                    "blackboard_write": ["context/*", "projects/doomed/*"],
+                },
+            }
+        }))
+
+        with (
+            patch("src.cli.config.PROJECTS_DIR", projects_dir),
+            patch("src.cli.config.PERMISSIONS_FILE", perms_file),
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["project", "delete", "doomed", "--yes"])
+            assert result.exit_code == 0
+            assert "Deleted" in result.output
+            assert not d.exists()
+
+
+# ── REPL project commands ────────────────────────────────────
+
+
+class TestREPLProjectCommand:
+    def _make_repl(self, tmp_path):
+        from src.cli.repl import REPLSession
+
+        projects_dir = tmp_path / "projects"
+        d = projects_dir / "alpha"
+        d.mkdir(parents=True)
+        (d / "metadata.yaml").write_text(yaml.dump({
+            "name": "alpha", "description": "Alpha project",
+            "members": ["bot1"], "settings": {},
+        }))
+
+        ctx = _MockCtx(agent_urls={"bot1": "http://bot1:8400", "bot2": "http://bot2:8400"})
+        ctx.cfg["agents"] = {"bot1": {"role": "a"}, "bot2": {"role": "b"}}
+        ctx.cfg["_agent_projects"] = {"bot1": "alpha"}
+
+        with patch("src.cli.config.PROJECTS_DIR", projects_dir):
+            repl = REPLSession(ctx)
+        return repl, projects_dir
+
+    def test_project_list(self, tmp_path, capsys):
+        repl, projects_dir = self._make_repl(tmp_path)
+        with patch("src.cli.config.PROJECTS_DIR", projects_dir):
+            repl._cmd_project("list")
+        out = capsys.readouterr().out
+        assert "alpha" in out
+        assert "bot1" in out
+        assert "bot2" in out  # standalone
+
+    def test_project_use_and_clear(self, tmp_path, capsys):
+        repl, projects_dir = self._make_repl(tmp_path)
+        with patch("src.cli.config.PROJECTS_DIR", projects_dir):
+            repl._cmd_project("use alpha")
+        assert repl._active_project == "alpha"
+
+        repl._cmd_project("use none")
+        assert repl._active_project is None
+
+    def test_project_use_unknown(self, tmp_path, capsys):
+        repl, projects_dir = self._make_repl(tmp_path)
+        with patch("src.cli.config.PROJECTS_DIR", projects_dir):
+            repl._cmd_project("use nonexistent")
+        out = capsys.readouterr().out
+        assert "Unknown project" in out
+        assert repl._active_project is None
+
+    def test_project_info(self, tmp_path, capsys):
+        repl, projects_dir = self._make_repl(tmp_path)
+        with patch("src.cli.config.PROJECTS_DIR", projects_dir):
+            repl._cmd_project("info alpha")
+        out = capsys.readouterr().out
+        assert "alpha" in out
+        assert "Alpha project" in out
+
+
+class TestREPLBlackboardProjectScoping:
+    """Blackboard commands are scoped to active project."""
+
+    def _make_repl_with_bb(self, tmp_path):
+        from src.cli.repl import REPLSession
+        from src.host.mesh import Blackboard
+
+        bb = Blackboard(db_path=str(tmp_path / "bb.db"))
+        ctx = _MockCtx(agent_urls={"bot1": "http://bot1:8400"}, blackboard=bb)
+        ctx.cfg["_agent_projects"] = {"bot1": "alpha"}
+        repl = REPLSession(ctx)
+        return repl, bb
+
+    def test_set_and_get_with_project(self, tmp_path, capsys):
+        repl, bb = self._make_repl_with_bb(tmp_path)
+        repl._active_project = "alpha"
+
+        repl._cmd_blackboard('set mykey {"val": 1}')
+        out = capsys.readouterr().out
+        assert "projects/alpha/mykey" in out
+
+        repl._cmd_blackboard("get mykey")
+        out = capsys.readouterr().out
+        assert "projects/alpha/mykey" in out
+        bb.close()
+
+    def test_list_with_project_scoping(self, tmp_path, capsys):
+        repl, bb = self._make_repl_with_bb(tmp_path)
+        bb.write("projects/alpha/ctx", {"v": 1}, written_by="test")
+        bb.write("global/other", {"v": 2}, written_by="test")
+
+        repl._active_project = "alpha"
+        repl._cmd_blackboard("list")
+        out = capsys.readouterr().out
+        assert "projects/alpha/ctx" in out
+        assert "global/other" not in out
+        bb.close()
+
+    def test_list_bypass_with_all_flag(self, tmp_path, capsys):
+        repl, bb = self._make_repl_with_bb(tmp_path)
+        bb.write("projects/alpha/ctx", {"v": 1}, written_by="test")
+        bb.write("global/other", {"v": 2}, written_by="test")
+
+        repl._active_project = "alpha"
+        repl._cmd_blackboard("list --all")
+        out = capsys.readouterr().out
+        assert "projects/alpha/ctx" in out
+        assert "global/other" in out
+        bb.close()
+
+
+class TestREPLWorkflowProjectScoping:
+    """Workflow commands filter by active project."""
+
+    def _make_repl_with_orch(self):
+        from unittest.mock import MagicMock
+
+        from src.cli.repl import REPLSession
+        from src.shared.types import WorkflowDefinition
+
+        orch = MagicMock()
+        orch.workflows = {
+            "alpha/build": WorkflowDefinition(name="alpha/build", trigger="webhook", steps=[]),
+            "alpha/deploy": WorkflowDefinition(name="alpha/deploy", trigger="webhook", steps=[]),
+            "global-wf": WorkflowDefinition(name="global-wf", trigger="webhook", steps=[]),
+        }
+        orch.active_executions = {}
+
+        ctx = _MockCtx(agent_urls={"bot1": "http://bot1:8400"}, orchestrator=orch)
+        ctx.cfg["_agent_projects"] = {"bot1": "alpha"}
+        repl = REPLSession(ctx)
+        return repl
+
+    def test_workflow_list_filtered(self, capsys):
+        repl = self._make_repl_with_orch()
+        repl._active_project = "alpha"
+        repl._cmd_workflow("list")
+        out = capsys.readouterr().out
+        assert "alpha/build" in out
+        assert "alpha/deploy" in out
+        assert "global-wf" not in out
+
+    def test_workflow_list_unfiltered(self, capsys):
+        repl = self._make_repl_with_orch()
+        repl._cmd_workflow("list")
+        out = capsys.readouterr().out
+        assert "alpha/build" in out
+        assert "global-wf" in out

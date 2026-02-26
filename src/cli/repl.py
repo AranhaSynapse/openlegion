@@ -16,11 +16,9 @@ from src.cli.config import (
     _edit_agent_interactive,
     _get_default_model,
     _load_config,
-    _load_permissions,
     _pick_browser_interactive,
     _pick_model_interactive,
     _prompt_brightdata_key,
-    _save_permissions,
 )
 from src.cli.formatting import (
     agent_prompt,
@@ -51,6 +49,9 @@ class REPLSession:
             ("/edit [name]",      "Change agent settings"),
             ("/remove [name]",    "Remove an agent"),
         ]),
+        ("Projects", [
+            ("/project [list|use|info]",       "Manage project context"),
+        ]),
         ("System", [
             ("/blackboard [list|get|set|del]", "View/edit blackboard entries"),
             ("/queue",                         "Show agent queue status"),
@@ -68,6 +69,7 @@ class REPLSession:
     def __init__(self, ctx: RuntimeContext):
         self.ctx = ctx
         self.current = list(ctx.agents.keys())[0] if ctx.agents else None
+        self._active_project: str | None = None
         self._commands = {
             "/quit":       (self._cmd_quit,       "Exit and stop runtime"),
             "/exit":       (self._cmd_quit,       "Exit and stop runtime"),
@@ -88,6 +90,7 @@ class REPLSession:
             "/addkey":     (self._cmd_addkey,     "Store a credential"),
             "/removekey":  (self._cmd_removekey,  "Remove a credential"),
             "/reset":      (self._cmd_reset,      "Clear conversation history"),
+            "/project":    (self._cmd_project,    "Manage project context"),
             "/help":       (self._cmd_help,       "Show this help"),
         }
 
@@ -161,9 +164,11 @@ class REPLSession:
                     self.current = next(iter(self.ctx.agents))
                     click.echo(f"Now chatting with '{self.current}'.")
                 if self.current:
-                    user_input = input(user_prompt(self.current)).strip()
+                    prompt_prefix = f"[{self._active_project}] " if self._active_project else ""
+                    user_input = input(prompt_prefix + user_prompt(self.current)).strip()
                 else:
-                    user_input = input("openlegion> ").strip()
+                    prompt_prefix = f"[{self._active_project}] " if self._active_project else ""
+                    user_input = input(prompt_prefix + "openlegion> ").strip()
             except EOFError:
                 break
 
@@ -291,35 +296,124 @@ class REPLSession:
                 self.ctx.event_bus.emit("agent_state", agent=new_name,
                     data={"state": "added", "ready": False})
 
+    def _cmd_project(self, arg: str) -> None:
+        from src.cli.config import _load_projects
+
+        parts = arg.strip().split(None, 1)
+        sub = parts[0] if parts else "list"
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        if sub in ("list", "ls", ""):
+            projects = _load_projects()
+            all_agents = set(self.ctx.agents.keys())
+            assigned = {m for pdata in projects.values() for m in pdata.get("members", [])} & all_agents
+
+            if not projects:
+                click.echo("  No projects configured. Create with: openlegion project create")
+                return
+
+            for pname, pdata in sorted(projects.items()):
+                members = [m for m in pdata.get("members", []) if m in all_agents]
+                active = " (active)" if pname == self._active_project else ""
+                click.echo(f"\n  [{pname}]{active}")
+                click.echo(f"    {pdata.get('description', '')}")
+                if members:
+                    click.echo(f"    Members: {', '.join(members)}")
+                else:
+                    click.echo("    Members: (none running)")
+
+            standalone = sorted(all_agents - assigned)
+            if standalone:
+                click.echo(f"\n  Standalone: {', '.join(standalone)}")
+            click.echo()
+
+        elif sub == "use":
+            if not rest or rest.lower() == "none":
+                self._active_project = None
+                click.echo("Project context cleared (global view).")
+                return
+            projects = _load_projects()
+            if rest not in projects:
+                click.echo(f"Unknown project: '{rest}'. Available: {', '.join(projects)}")
+                return
+            self._active_project = rest
+            click.echo(f"Project context set to '{rest}'.")
+
+        elif sub == "info":
+            name = rest or self._active_project
+            if not name:
+                click.echo("Usage: /project info <name>")
+                return
+            projects = _load_projects()
+            if name not in projects:
+                click.echo(f"Project '{name}' not found.")
+                return
+            pdata = projects[name]
+            click.echo(f"\n  Project: {name}")
+            click.echo(f"  Description: {pdata.get('description', '(none)')}")
+            click.echo(f"  Created: {pdata.get('created_at', '?')}")
+            click.echo(f"  Members: {', '.join(pdata.get('members', [])) or '(none)'}")
+            click.echo(f"  Settings: {pdata.get('settings', {})}")
+            click.echo()
+
+        else:
+            click.echo("Usage: /project [list|use <name>|use none|info [name]]")
+
     def _cmd_status(self, arg: str) -> None:
         if not self.ctx.agents:
             click.echo("  No agents running. Use /add to create one.")
             return
         agents_cfg = self.ctx.cfg.get("agents", {})
         default_model = self.ctx.cfg.get("llm", {}).get("default_model", "openai/gpt-4o-mini")
+        agent_projects = self.ctx.cfg.get("_agent_projects", {})
+
         for name in self.ctx.agents:
             agent_cfg = agents_cfg.get(name, {})
             model = agent_cfg.get("model", default_model)
             browser = agent_cfg.get("browser_backend", "basic") or "basic"
+            project = agent_projects.get(name, "")
+            proj_label = f"  [{project}]" if project else ""
             try:
                 data = self.ctx.transport.request_sync(name, "GET", "/status", timeout=3)
                 state = data.get("state", "unknown")
                 tasks = data.get("tasks_completed", 0)
-                click.echo(f"  {name:<20} {state:<12} {tasks} tasks    model: {model:<20} browser: {browser}")
+                line = f"  {name:<20} {state:<12} {tasks} tasks    model: {model:<20} browser: {browser}"
+                click.echo(line + proj_label)
             except Exception:
-                click.echo(f"  {name:<20} unreachable")
+                click.echo(f"  {name:<20} unreachable{proj_label}")
 
     def _cmd_broadcast(self, arg: str) -> None:
         if not self.ctx.agents:
             click.echo("No agents to broadcast to. Use /add to create one.")
             return
         if not arg.strip():
-            click.echo("Usage: /broadcast <message>")
+            click.echo("Usage: /broadcast <message>  (or /broadcast --all <message>)")
             return
         from src.shared.trace import TRACE_HEADER, new_trace_id
 
         bc_msg = arg.strip()
-        click.echo(f"Broadcasting to {len(self.ctx.agents)} agent(s)...\n")
+        broadcast_all = bc_msg == "--all" or bc_msg.startswith("--all ")
+        if broadcast_all:
+            bc_msg = bc_msg[5:].strip()
+        if not bc_msg:
+            click.echo("Usage: /broadcast <message>  (or /broadcast --all <message>)")
+            return
+
+        # Determine target agents
+        if self._active_project and not broadcast_all:
+            from src.cli.config import _load_projects
+            projects = _load_projects()
+            project_members = set(projects.get(self._active_project, {}).get("members", []))
+            targets = [a for a in self.ctx.agents if a in project_members]
+            if not targets:
+                click.echo(f"No agents in project '{self._active_project}'. Use --all to broadcast to everyone.")
+                return
+            scope = f"project '{self._active_project}'"
+        else:
+            targets = list(self.ctx.agents.keys())
+            scope = "all"
+
+        click.echo(f"Broadcasting to {len(targets)} agent(s) ({scope})...\n")
 
         def _send(aid: str) -> tuple[str, str]:
             try:
@@ -333,8 +427,8 @@ class REPLSession:
             except Exception as e:
                 return aid, f"(error: {e})"
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(self.ctx.agents)) as pool:
-            futures = {pool.submit(_send, aid): aid for aid in self.ctx.agents}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(targets)) as pool:
+            futures = {pool.submit(_send, aid): aid for aid in targets}
             for future in concurrent.futures.as_completed(futures):
                 aid, response = future.result()
                 click.echo(f"[{aid}] {response}\n")
@@ -532,10 +626,20 @@ class REPLSession:
             rest = arg.strip()
             sub = "list"
 
+        def _project_key(key: str) -> str:
+            """Prefix key with project namespace when active."""
+            if self._active_project and not key.startswith("projects/"):
+                return f"projects/{self._active_project}/{key}"
+            return key
+
         if sub in ("list", "ls"):
-            entries = self.ctx.blackboard.list_by_prefix(rest)
+            bypass_all = rest == "--all" or rest.startswith("--all ")
+            if bypass_all:
+                rest = rest[5:].strip()
+            prefix = rest if bypass_all else _project_key(rest)
+            entries = self.ctx.blackboard.list_by_prefix(prefix)
             if not entries:
-                click.echo("  No entries" + (f" matching '{rest}'" if rest else "") + ".")
+                click.echo("  No entries" + (f" matching '{prefix}'" if prefix else "") + ".")
                 return
             click.echo()
             for entry in entries:
@@ -548,9 +652,10 @@ class REPLSession:
             if not rest:
                 click.echo("Usage: /blackboard get <key>")
                 return
-            entry = self.ctx.blackboard.read(rest)
+            key = _project_key(rest)
+            entry = self.ctx.blackboard.read(key)
             if not entry:
-                click.echo(f"  Key not found: {rest}")
+                click.echo(f"  Key not found: {key}")
                 return
             click.echo(f"\n  Key:        {entry.key}")
             click.echo(f"  Written by: {entry.written_by}")
@@ -569,6 +674,7 @@ class REPLSession:
                 click.echo("Usage: /blackboard set <key> <json>")
                 return
             key, val_str = key_and_val
+            key = _project_key(key)
             try:
                 value = json.loads(val_str)
             except json.JSONDecodeError:
@@ -582,9 +688,10 @@ class REPLSession:
             if not rest:
                 click.echo("Usage: /blackboard del <key>")
                 return
+            key = _project_key(rest)
             try:
-                self.ctx.blackboard.delete(rest, deleted_by="cli")
-                click.echo(f"  Deleted: {rest}")
+                self.ctx.blackboard.delete(key, deleted_by="cli")
+                click.echo(f"  Deleted: {key}")
             except ValueError as e:
                 click.echo(f"  Error: {e}")
 
@@ -612,11 +719,17 @@ class REPLSession:
 
         if sub in ("list", "ls", ""):
             workflows = self.ctx.orchestrator.workflows
-            if not workflows:
-                click.echo("  No workflows loaded.")
+            if self._active_project:
+                prefix = f"{self._active_project}/"
+                filtered = {n: w for n, w in workflows.items() if n.startswith(prefix)}
+            else:
+                filtered = workflows
+            if not filtered:
+                label = f" for project '{self._active_project}'" if self._active_project else ""
+                click.echo(f"  No workflows loaded{label}.")
             else:
                 click.echo("\n  Workflows:")
-                for name, wf in workflows.items():
+                for name, wf in filtered.items():
                     steps = len(wf.steps) if hasattr(wf, "steps") else "?"
                     click.echo(f"    {name:<24} {steps} steps")
 
@@ -633,6 +746,9 @@ class REPLSession:
             if not wf_name:
                 click.echo("Usage: /workflow run <name>")
                 return
+            # Prepend project prefix if active and not already namespaced
+            if self._active_project and "/" not in wf_name:
+                wf_name = f"{self._active_project}/{wf_name}"
             try:
                 future = asyncio.run_coroutine_threadsafe(
                     self.ctx.orchestrator.trigger_workflow(wf_name, {}),
@@ -844,21 +960,10 @@ class REPLSession:
         if self.ctx.lane_manager:
             self.ctx.lane_manager.remove_lane(name)
 
-        # Remove from config and permissions
-        import yaml
+        # Remove from config, permissions, and any project membership
+        from src.cli.config import _remove_agent
 
-        from src.cli.config import AGENTS_FILE
-
-        if AGENTS_FILE.exists():
-            with open(AGENTS_FILE) as f:
-                agents_cfg = yaml.safe_load(f) or {}
-            agents_cfg.get("agents", {}).pop(name, None)
-            with open(AGENTS_FILE, "w") as f:
-                yaml.dump(agents_cfg, f, default_flow_style=False, sort_keys=False)
-
-        perms = _load_permissions()
-        perms.get("permissions", {}).pop(name, None)
-        _save_permissions(perms)
+        _remove_agent(name)
 
         click.echo(f"Removed agent '{name}'.")
         if self.ctx.event_bus:

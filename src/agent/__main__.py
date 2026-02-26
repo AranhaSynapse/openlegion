@@ -53,7 +53,10 @@ def main() -> None:
         default_model=llm_model, embedding_model=embedding_model,
         thinking=thinking,
     )
-    mesh_client = MeshClient(mesh_url=mesh_url, agent_id=agent_id)
+    project_name = os.environ.get("PROJECT_NAME", "")
+    mesh_client = MeshClient(
+        mesh_url=mesh_url, agent_id=agent_id, project_name=project_name or None,
+    )
     embed_fn = llm.embed if embedding_model and embedding_model.lower() != "none" else None
     memory = MemoryStore(db_path=f"/data/{agent_id}.db", embed_fn=embed_fn)
 

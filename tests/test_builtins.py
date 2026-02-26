@@ -2069,6 +2069,94 @@ class TestArtifactPathTraversal:
             shutil.rmtree(ws.root, ignore_errors=True)
 
 
+# ── Standalone agent blackboard guards ───────────────────────────
+
+
+class TestStandaloneBlackboardGuards:
+    """Standalone agents (no project) get clear errors from blackboard tools."""
+
+    def _standalone_client(self):
+        from src.agent.mesh_client import MeshClient
+        mc = MagicMock(spec=MeshClient)
+        mc.is_standalone = True
+        return mc
+
+    def _project_client(self):
+        from src.agent.mesh_client import MeshClient
+        mc = MagicMock(spec=MeshClient)
+        mc.is_standalone = False
+        return mc
+
+    @pytest.mark.asyncio
+    async def test_read_shared_state_blocked_for_standalone(self):
+        from src.agent.builtins.mesh_tool import read_shared_state
+        result = await read_shared_state(key="foo", mesh_client=self._standalone_client())
+        assert "error" in result
+        assert "not assigned to any project" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_write_shared_state_blocked_for_standalone(self):
+        from src.agent.builtins.mesh_tool import write_shared_state
+        result = await write_shared_state(
+            key="foo", value="bar", mesh_client=self._standalone_client(),
+        )
+        assert "error" in result
+        assert "not assigned to any project" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_list_shared_state_blocked_for_standalone(self):
+        from src.agent.builtins.mesh_tool import list_shared_state
+        result = await list_shared_state(prefix="", mesh_client=self._standalone_client())
+        assert "error" in result
+        assert "not assigned to any project" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_save_artifact_skips_blackboard_for_standalone(self, tmp_path):
+        """Standalone agents can save artifacts locally but skip blackboard."""
+        from src.agent.builtins.mesh_tool import save_artifact
+        ws = MagicMock()
+        ws.root = str(tmp_path)
+        mc = self._standalone_client()
+        mc.write_blackboard = AsyncMock()
+        result = await save_artifact(
+            name="report.txt", content="hello",
+            workspace_manager=ws, mesh_client=mc,
+        )
+        assert result.get("saved") is True
+        assert (tmp_path / "artifacts" / "report.txt").read_text() == "hello"
+        mc.write_blackboard.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_read_shared_state_allowed_for_project_agent(self):
+        """Project agents are NOT blocked by the standalone guard."""
+        from src.agent.builtins.mesh_tool import read_shared_state
+        mc = self._project_client()
+        mc.read_blackboard = AsyncMock(return_value={"key": "foo", "value": "bar"})
+        result = await read_shared_state(key="foo", mesh_client=mc)
+        assert "not assigned" not in result.get("error", "")
+        mc.read_blackboard.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_write_shared_state_allowed_for_project_agent(self):
+        """Project agents can write to blackboard."""
+        from src.agent.builtins.mesh_tool import write_shared_state
+        mc = self._project_client()
+        mc.write_blackboard = AsyncMock(return_value=True)
+        result = await write_shared_state(key="k", value="v", mesh_client=mc)
+        assert "not assigned" not in result.get("error", "")
+        mc.write_blackboard.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_list_shared_state_allowed_for_project_agent(self):
+        """Project agents can list blackboard entries."""
+        from src.agent.builtins.mesh_tool import list_shared_state
+        mc = self._project_client()
+        mc.list_blackboard = AsyncMock(return_value=[])
+        result = await list_shared_state(prefix="", mesh_client=mc)
+        assert "not assigned" not in result.get("error", "")
+        mc.list_blackboard.assert_awaited_once()
+
+
 # ── Introspect Tool ─────────────────────────────────────────────
 
 
