@@ -448,6 +448,8 @@ def _validate_project_name(name: str) -> str:
 
 def _load_projects() -> dict[str, dict]:
     """Scan config/projects/*/metadata.yaml and return {name: metadata}."""
+    from src.shared.types import ProjectMetadata
+
     projects: dict[str, dict] = {}
     if not PROJECTS_DIR.exists():
         return projects
@@ -455,8 +457,8 @@ def _load_projects() -> dict[str, dict]:
         try:
             with open(meta_file) as f:
                 data = yaml.safe_load(f) or {}
-            name = data.get("name", meta_file.parent.name)
-            projects[name] = data
+            pm = ProjectMetadata(**data)
+            projects[pm.name] = pm.model_dump()
         except Exception as e:
             logger.warning("Failed to load project %s: %s", meta_file, e)
     return projects
@@ -485,15 +487,16 @@ def _create_project(
 
     from datetime import UTC, datetime
 
-    metadata = {
-        "name": name,
-        "description": description,
-        "created_at": datetime.now(UTC).isoformat(),
-        "members": list(members or []),
-        "settings": {},
-    }
+    from src.shared.types import ProjectMetadata
+
+    pm = ProjectMetadata(
+        name=name,
+        description=description,
+        created_at=datetime.now(UTC).isoformat(),
+        members=list(members or []),
+    )
     with open(project_dir / "metadata.yaml", "w") as f:
-        yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
+        yaml.dump(pm.model_dump(), f, default_flow_style=False, sort_keys=False)
 
     # Scaffold project.md
     (project_dir / "project.md").write_text(

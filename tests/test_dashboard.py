@@ -1390,3 +1390,65 @@ class TestDashboardSPACatchall:
         assert resp.status_code == 200
         data = resp.json()
         assert "agents" in data
+
+
+class TestDashboardProjectAPI:
+    """Tests for /api/projects and /api/project endpoints."""
+
+    def setup_method(self):
+        import yaml
+        self._tmpdir = tempfile.mkdtemp()
+        self.components = _make_components(self._tmpdir, include_v2=True)
+        # Set up runtime mock with project_root
+        self.components["runtime"].project_root = MagicMock()
+        self.components["runtime"].project_root.__truediv__ = MagicMock(
+            return_value=MagicMock(exists=MagicMock(return_value=False))
+        )
+        self.client = _make_client(self.components)
+
+        # Create a project directory for tests
+        self._projects_dir = os.path.join(self._tmpdir, "projects")
+        proj_dir = os.path.join(self._projects_dir, "alpha")
+        os.makedirs(proj_dir)
+        with open(os.path.join(proj_dir, "metadata.yaml"), "w") as f:
+            yaml.dump({"name": "alpha", "description": "Test", "members": ["bot1"]}, f)
+        with open(os.path.join(proj_dir, "project.md"), "w") as f:
+            f.write("# Alpha Project\nShared context here.")
+
+    def teardown_method(self):
+        _teardown(self.components)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_list_projects(self):
+        with patch("src.cli.config.PROJECTS_DIR", MagicMock(exists=MagicMock(return_value=True),
+                    glob=MagicMock(return_value=[]))):
+            resp = self.client.get("/dashboard/api/projects")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "projects" in data
+
+    def test_project_read_path_traversal_blocked(self):
+        """Path traversal in project name is rejected."""
+        resp = self.client.get("/dashboard/api/project", params={"project": "../../etc"})
+        assert resp.status_code == 400
+        assert "Invalid project name" in resp.json()["detail"]
+
+    def test_project_write_path_traversal_blocked(self):
+        """Path traversal in project name is rejected for writes."""
+        resp = self.client.put(
+            "/dashboard/api/project",
+            params={"project": "../../../tmp"},
+            json={"content": "pwned"},
+        )
+        assert resp.status_code == 400
+        assert "Invalid project name" in resp.json()["detail"]
+
+    def test_project_read_valid_name(self):
+        """Valid project name is accepted and reads project.md."""
+        from pathlib import Path
+        with patch("src.cli.config.PROJECTS_DIR", Path(self._projects_dir)):
+            resp = self.client.get("/dashboard/api/project", params={"project": "alpha"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["project"] == "alpha"
+        assert "Alpha Project" in data["content"]

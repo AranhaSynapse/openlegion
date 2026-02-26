@@ -766,7 +766,11 @@ def create_dashboard_router(
         if runtime is None:
             raise HTTPException(status_code=503, detail="Runtime not available")
         if project:
-            from src.cli.config import PROJECTS_DIR
+            from src.cli.config import PROJECTS_DIR, _validate_project_name
+            try:
+                _validate_project_name(project)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid project name")
             project_path = PROJECTS_DIR / project / "project.md"
         else:
             project_path = runtime.project_root / "PROJECT.md"
@@ -786,7 +790,11 @@ def create_dashboard_router(
         content = sanitize_for_prompt(content)
 
         if project:
-            from src.cli.config import PROJECTS_DIR
+            from src.cli.config import PROJECTS_DIR, _validate_project_name
+            try:
+                _validate_project_name(project)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid project name")
             project_path = PROJECTS_DIR / project / "project.md"
             if not project_path.parent.exists():
                 raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
@@ -794,9 +802,17 @@ def create_dashboard_router(
             project_path = runtime.project_root / "PROJECT.md"
         project_path.write_text(content)
 
-        # Push to all running agents
+        # Push to relevant agents only (project members or all for global)
+        push_targets = list(agent_registry.keys())
+        if project:
+            from src.cli.config import _load_projects
+            projects_data = _load_projects()
+            pdata = projects_data.get(project, {})
+            members = set(pdata.get("members", []))
+            push_targets = [a for a in push_targets if a in members]
+
         push_results = {}
-        if transport is not None:
+        if transport is not None and push_targets:
             import asyncio as _asyncio
 
             async def _push(aid: str) -> tuple[str, bool]:
@@ -810,7 +826,7 @@ def create_dashboard_router(
                     logger.warning(f"Failed to push PROJECT.md to {aid}: {e}")
                     return aid, False
 
-            tasks = [_push(aid) for aid in agent_registry]
+            tasks = [_push(aid) for aid in push_targets]
             for coro in _asyncio.as_completed(tasks):
                 aid, ok = await coro
                 push_results[aid] = ok

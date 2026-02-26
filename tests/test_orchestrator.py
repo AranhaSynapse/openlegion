@@ -359,3 +359,124 @@ def test_load_project_workflows_multiple(tmp_path):
 
     assert "devops/build" in orch.workflows
     assert "devops/deploy" in orch.workflows
+
+
+# === Scoped Context Reads in _execute_step ===
+
+
+@pytest.mark.asyncio
+async def test_execute_step_scoped_context_for_project_workflow():
+    """Project workflows only read blackboard entries under projects/<name>/context/."""
+    import tempfile
+    from unittest.mock import AsyncMock, MagicMock
+
+    from src.host.mesh import Blackboard
+
+    db_path = tempfile.mktemp(suffix=".db")
+    bb = Blackboard(db_path=db_path)
+    bb.write("context/global_info", {"v": "global"}, written_by="test")
+    bb.write("projects/marketing/context/leads", {"v": "project"}, written_by="test")
+
+    orch = Orchestrator(
+        mesh_url="http://localhost:8420",
+        workflows_dir="/nonexistent",
+        blackboard=bb,
+    )
+    orch.container_manager = MagicMock()
+    orch.container_manager.get_agent_url = MagicMock(return_value="http://localhost:8401")
+
+    mock_client = AsyncMock()
+    mock_client.is_closed = False
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"accepted": True}
+    mock_client.post = AsyncMock(return_value=mock_response)
+    orch._client = mock_client
+
+    # Project-namespaced workflow
+    wf = WorkflowDefinition(
+        name="marketing/pipeline", trigger="test",
+        steps=[WorkflowStep(id="s1", task_type="research", agent="alpha")],
+    )
+    execution = WorkflowExecution(wf, {"query": "test"})
+
+    import asyncio
+    step_task = asyncio.create_task(orch._execute_step(execution, wf.steps[0]))
+    await asyncio.sleep(0.05)
+
+    # Resolve the pending future
+    task_id = next(iter(orch._pending_results))
+    push_result = TaskResult(task_id=task_id, status="complete", result={"done": True})
+    orch.resolve_task_result(task_id, push_result)
+
+    await step_task
+
+    # Verify the task was sent with scoped context
+    call_args = mock_client.post.call_args
+    sent_data = call_args[1].get("json") or call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("json")
+    context = sent_data.get("context", {})
+
+    # Should have project-scoped context, NOT global context
+    assert "projects/marketing/context/leads" in context
+    assert "context/global_info" not in context
+
+    bb.close()
+    import os
+    os.unlink(db_path)
+
+
+@pytest.mark.asyncio
+async def test_execute_step_global_context_for_global_workflow():
+    """Global workflows read from the global context/ prefix."""
+    import tempfile
+    from unittest.mock import AsyncMock, MagicMock
+
+    from src.host.mesh import Blackboard
+
+    db_path = tempfile.mktemp(suffix=".db")
+    bb = Blackboard(db_path=db_path)
+    bb.write("context/global_info", {"v": "global"}, written_by="test")
+    bb.write("projects/marketing/context/leads", {"v": "project"}, written_by="test")
+
+    orch = Orchestrator(
+        mesh_url="http://localhost:8420",
+        workflows_dir="/nonexistent",
+        blackboard=bb,
+    )
+    orch.container_manager = MagicMock()
+    orch.container_manager.get_agent_url = MagicMock(return_value="http://localhost:8401")
+
+    mock_client = AsyncMock()
+    mock_client.is_closed = False
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"accepted": True}
+    mock_client.post = AsyncMock(return_value=mock_response)
+    orch._client = mock_client
+
+    # Global workflow (no project prefix)
+    wf = WorkflowDefinition(
+        name="global-pipeline", trigger="test",
+        steps=[WorkflowStep(id="s1", task_type="research", agent="alpha")],
+    )
+    execution = WorkflowExecution(wf, {"query": "test"})
+
+    import asyncio
+    step_task = asyncio.create_task(orch._execute_step(execution, wf.steps[0]))
+    await asyncio.sleep(0.05)
+
+    task_id = next(iter(orch._pending_results))
+    push_result = TaskResult(task_id=task_id, status="complete", result={"done": True})
+    orch.resolve_task_result(task_id, push_result)
+
+    await step_task
+
+    call_args = mock_client.post.call_args
+    sent_data = call_args[1].get("json") or call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("json")
+    context = sent_data.get("context", {})
+
+    # Should have global context, NOT project-scoped context
+    assert "context/global_info" in context
+    assert "projects/marketing/context/leads" not in context
+
+    bb.close()
+    import os
+    os.unlink(db_path)
