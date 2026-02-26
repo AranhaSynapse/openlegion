@@ -318,7 +318,9 @@ def _find_chromium_binary() -> str:
     import glob as globmod
 
     for pattern in [
+        "/opt/pw-browsers/chromium-*/chrome-linux64/chrome",
         "/opt/pw-browsers/chromium-*/chrome-linux/chrome",
+        "/opt/pw-browsers/chrome-*/chrome-linux64/chrome",
         "/opt/pw-browsers/chrome-*/chrome-linux/chrome",
     ]:
         matches = sorted(globmod.glob(pattern))
