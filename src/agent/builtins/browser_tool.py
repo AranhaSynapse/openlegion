@@ -364,7 +364,6 @@ def _launch_chrome_subprocess():
             # that aren't available in containers with no-new-privileges.
             "--no-sandbox",
             "--disable-setuid-sandbox",
-            "--disable-gpu",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-infobars",

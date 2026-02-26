@@ -365,11 +365,11 @@ class TestDockerBackendVNCPort:
         assert "6080/tcp" in ports
         assert ports["6080/tcp"] == agent_info["vnc_port"]
 
-        # Memory should be 1g for persistent
-        assert run_call.kwargs.get("mem_limit") == "1g"
+        # Memory should be 2g for persistent (Chrome + VNC + JS-heavy sites)
+        assert run_call.kwargs.get("mem_limit") == "2g"
 
-        # CPU quota should be 100000 for persistent
-        assert run_call.kwargs.get("cpu_quota") == 100000
+        # CPU quota should be 200000 for persistent (2 cores)
+        assert run_call.kwargs.get("cpu_quota") == 200000
 
     def test_basic_backend_no_vnc_port(self):
         """Non-persistent backends do not allocate VNC port."""
