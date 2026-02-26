@@ -45,6 +45,18 @@ RUN playwright install chromium --with-deps \
     && python -m camoufox fetch \
     && (chmod -R o+rx /root/.camoufox 2>/dev/null || true)
 
+# Force Chrome/Chromium to use the system DNS resolver (glibc getaddrinfo).
+# Chrome's built-in async DNS client sends queries directly to upstream
+# nameservers, bypassing Docker Desktop's DNS forwarder (192.168.65.7).
+# This causes ERR_NAME_NOT_RESOLVED / "This site can't be reached" in
+# containers.  The enterprise policy works for both google-chrome-stable
+# (/etc/opt/chrome/) and Playwright's Chromium (/etc/chromium/).
+RUN mkdir -p /etc/chromium/policies/managed /etc/opt/chrome/policies/managed \
+    && echo '{"BuiltInDnsClientEnabled": false}' \
+       | tee /etc/chromium/policies/managed/dns_policy.json \
+             /etc/opt/chrome/policies/managed/dns_policy.json \
+       > /dev/null
+
 # Application code
 COPY src/agent/ /app/src/agent/
 COPY src/shared/ /app/src/shared/
