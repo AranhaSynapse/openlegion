@@ -1292,7 +1292,7 @@ def _single_agent_repl(agent_name: str, agent_url: str) -> None:
         # Try streaming first, fall back to sync
         try:
             _stream_detached_chat(agent_name, agent_url, user_input)
-        except Exception:
+        except (httpx.HTTPError, httpx.StreamError, OSError):
             _sync_detached_chat(agent_name, agent_url, user_input)
 
 
@@ -1513,7 +1513,6 @@ def completion(shell: str):
 # ── logs ─────────────────────────────────────────────────────
 
 @cli.command("logs")
-@click.argument("agent", required=False)
 @click.option("--lines", "-n", default=50, type=int, help="Number of lines to show")
 @click.option("--follow", "-f", is_flag=True, help="Follow log output")
 @click.option(
@@ -1521,7 +1520,7 @@ def completion(shell: str):
     type=click.Choice(["debug", "info", "warning", "error"]),
     default=None,
 )
-def logs(agent: str | None, lines: int, follow: bool, level: str | None):
+def logs(lines: int, follow: bool, level: str | None):
     """View runtime and agent logs.
 
     \b
@@ -1539,9 +1538,13 @@ def logs(agent: str | None, lines: int, follow: bool, level: str | None):
     all_lines = content.splitlines()
 
     # Filter by level if specified
+    level_pat = None
     if level:
+        import re
+
         level_upper = level.upper()
-        all_lines = [line for line in all_lines if level_upper in line.upper()]
+        level_pat = re.compile(r"\b" + re.escape(level_upper) + r"\b")
+        all_lines = [line for line in all_lines if level_pat.search(line.upper())]
 
     # Show last N lines
     for line in all_lines[-lines:]:
@@ -1558,7 +1561,7 @@ def logs(agent: str | None, lines: int, follow: bool, level: str | None):
                 if len(new_content) > seen:
                     new_lines = new_content[seen:].splitlines()
                     for line in new_lines:
-                        if level and level.upper() not in line.upper():
+                        if level_pat and not level_pat.search(line.upper()):
                             continue
                         click.echo(line)
                     seen = len(new_content)
