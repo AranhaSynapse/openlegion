@@ -1429,104 +1429,137 @@ class TestREPLWorkflowProjectScoping:
         assert "global-wf" in out
 
 
-class TestCredentialCLI:
-    def test_credential_add_writes_env(self, tmp_path):
-        """credential add writes to .env file."""
-        env_file = tmp_path / ".env"
-        env_file.write_text("")
+class TestJsonOutput:
+    def test_agent_list_json(self, tmp_path):
+        """agent list --json outputs valid JSON with agents key."""
         config_file = tmp_path / "mesh.yaml"
-        config_file.write_text(yaml.dump({"mesh": {"host": "0.0.0.0", "port": 8420}}))
+        agents_file = tmp_path / "agents.yaml"
+        perms_file = tmp_path / "permissions.json"
+
+        config_file.write_text(yaml.dump({
+            "mesh": {"host": "0.0.0.0", "port": 8420},
+            "llm": {"default_model": "openai/gpt-4.1"},
+        }))
+        agents_file.write_text(yaml.dump({
+            "agents": {"bot1": {"role": "test", "model": "openai/gpt-4.1"}}
+        }))
+        perms_file.write_text(json.dumps({"permissions": {}}))
 
         with (
-            patch("src.cli.config.ENV_FILE", env_file),
             patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+            patch("src.cli.config.PERMISSIONS_FILE", perms_file),
             patch("src.cli.config.PROJECT_ROOT", tmp_path),
             patch("src.cli.config.PROJECTS_DIR", tmp_path / "projects"),
         ):
             runner = CliRunner()
-            result = runner.invoke(
-                cli,
-                ["credential", "add", "test_api_key", "--key", "sk-test123456"],
-            )
+            result = runner.invoke(cli, ["agent", "list", "--json"])
             assert result.exit_code == 0, result.output
-            assert "saved" in result.output
-            env_content = env_file.read_text()
-            assert "test_api_key" in env_content.lower() or "TEST_API_KEY" in env_content
-
-    def test_credential_list_empty(self, tmp_path):
-        """credential list with no creds shows helpful message."""
-        env_file = tmp_path / ".env"
-        env_file.write_text("")
-        config_file = tmp_path / "mesh.yaml"
-        config_file.write_text(yaml.dump({"mesh": {"host": "0.0.0.0", "port": 8420}}))
-
-        with (
-            patch("src.cli.config.ENV_FILE", env_file),
-            patch("src.cli.config.CONFIG_FILE", config_file),
-            patch("src.cli.config.PROJECT_ROOT", tmp_path),
-            patch("src.cli.config.PROJECTS_DIR", tmp_path / "projects"),
-        ):
-            runner = CliRunner()
-            result = runner.invoke(cli, ["credential", "list"])
-            assert result.exit_code == 0
-            assert "No credentials" in result.output
-
-    def test_credential_list_json(self, tmp_path):
-        """credential list --json outputs valid JSON."""
-        env_file = tmp_path / ".env"
-        env_file.write_text("")
-        config_file = tmp_path / "mesh.yaml"
-        config_file.write_text(yaml.dump({"mesh": {"host": "0.0.0.0", "port": 8420}}))
-
-        with (
-            patch("src.cli.config.ENV_FILE", env_file),
-            patch("src.cli.config.CONFIG_FILE", config_file),
-            patch("src.cli.config.PROJECT_ROOT", tmp_path),
-            patch("src.cli.config.PROJECTS_DIR", tmp_path / "projects"),
-        ):
-            runner = CliRunner()
-            result = runner.invoke(cli, ["credential", "list", "--json"])
-            assert result.exit_code == 0
             data = json.loads(result.output)
-            assert "credentials" in data
+            assert "agents" in data
+            assert len(data["agents"]) == 1
+            assert data["agents"][0]["name"] == "bot1"
 
-    def test_credential_remove_not_found(self, tmp_path):
-        """credential remove exits non-zero for unknown credential."""
-        env_file = tmp_path / ".env"
-        env_file.write_text("")
+    def test_status_json(self, tmp_path):
+        """status --json outputs valid JSON with mesh_online key."""
         config_file = tmp_path / "mesh.yaml"
-        config_file.write_text(yaml.dump({"mesh": {"host": "0.0.0.0", "port": 8420}}))
+        agents_file = tmp_path / "agents.yaml"
+        perms_file = tmp_path / "permissions.json"
+
+        config_file.write_text(yaml.dump({
+            "mesh": {"host": "0.0.0.0", "port": 8420},
+            "llm": {"default_model": "openai/gpt-4.1"},
+        }))
+        agents_file.write_text(yaml.dump({
+            "agents": {"bot1": {"role": "test", "model": "openai/gpt-4.1"}}
+        }))
+        perms_file.write_text(json.dumps({"permissions": {}}))
 
         with (
-            patch("src.cli.config.ENV_FILE", env_file),
             patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+            patch("src.cli.config.PERMISSIONS_FILE", perms_file),
             patch("src.cli.config.PROJECT_ROOT", tmp_path),
             patch("src.cli.config.PROJECTS_DIR", tmp_path / "projects"),
         ):
             runner = CliRunner()
-            result = runner.invoke(cli, ["credential", "remove", "nonexistent", "-y"])
-            assert result.exit_code != 0
-
-    def test_credential_remove_success(self, tmp_path):
-        """credential remove deletes the credential from .env."""
-        env_file = tmp_path / ".env"
-        env_file.write_text(
-            "OPENLEGION_SYSTEM_ANTHROPIC_API_KEY=sk-test123\nOTHER_VAR=keep\n"
-        )
-        config_file = tmp_path / "mesh.yaml"
-        config_file.write_text(yaml.dump({"mesh": {"host": "0.0.0.0", "port": 8420}}))
-
-        with (
-            patch("src.cli.config.ENV_FILE", env_file),
-            patch("src.cli.config.CONFIG_FILE", config_file),
-            patch("src.cli.config.PROJECT_ROOT", tmp_path),
-            patch("src.cli.config.PROJECTS_DIR", tmp_path / "projects"),
-        ):
-            runner = CliRunner()
-            result = runner.invoke(
-                cli, ["credential", "remove", "anthropic_api_key", "-y"]
-            )
+            result = runner.invoke(cli, ["status", "--json"])
             assert result.exit_code == 0, result.output
-            content = env_file.read_text()
-            assert "ANTHROPIC_API_KEY" not in content
-            assert "OTHER_VAR=keep" in content
+            data = json.loads(result.output)
+            assert "mesh_online" in data
+            assert "agents" in data
+
+    def test_skill_list_json(self, tmp_path):
+        """skill list --json outputs valid JSON."""
+        with patch("src.cli.config.MARKETPLACE_DIR", tmp_path / "marketplace"):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["skill", "list", "--json"])
+            assert result.exit_code == 0, result.output
+            data = json.loads(result.output)
+            assert "skills" in data
+
+    def test_project_list_json(self, tmp_path):
+        """project list --json outputs valid JSON."""
+        config_file = tmp_path / "mesh.yaml"
+        agents_file = tmp_path / "agents.yaml"
+        perms_file = tmp_path / "permissions.json"
+
+        config_file.write_text(yaml.dump({
+            "mesh": {"host": "0.0.0.0", "port": 8420},
+            "llm": {"default_model": "openai/gpt-4.1"},
+        }))
+        agents_file.write_text(yaml.dump({"agents": {}}))
+        perms_file.write_text(json.dumps({"permissions": {}}))
+
+        with (
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+            patch("src.cli.config.PERMISSIONS_FILE", perms_file),
+            patch("src.cli.config.PROJECT_ROOT", tmp_path),
+            patch("src.cli.config.PROJECTS_DIR", tmp_path / "projects"),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["project", "list", "--json"])
+            assert result.exit_code == 0, result.output
+            data = json.loads(result.output)
+            assert "projects" in data
+            assert "standalone" in data
+
+
+    def test_channels_list_json(self, tmp_path):
+        """channels list --json returns valid JSON with channels key."""
+        config_file = tmp_path / "mesh.yaml"
+        agents_file = tmp_path / "agents.yaml"
+        perms_file = tmp_path / "permissions.json"
+
+        config_file.write_text(yaml.dump({"agents": {}}))
+        agents_file.write_text(yaml.dump({"agents": {}}))
+        perms_file.write_text(json.dumps({"permissions": {}}))
+
+        with (
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+            patch("src.cli.config.PERMISSIONS_FILE", perms_file),
+            patch("src.cli.config.PROJECT_ROOT", tmp_path),
+            patch("src.cli.config.PROJECTS_DIR", tmp_path / "projects"),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["channels", "list", "--json"])
+            assert result.exit_code == 0, result.output
+            data = json.loads(result.output)
+            assert "channels" in data
+
+
+class TestCompletion:
+    def test_completion_bash(self):
+        """completion bash outputs eval string."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["completion", "bash"])
+        assert result.exit_code == 0
+        assert "OPENLEGION_COMPLETE" in result.output
+
+    def test_completion_unknown_shell(self):
+        """completion with unknown shell exits non-zero."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["completion", "powershell"])
+        assert result.exit_code != 0

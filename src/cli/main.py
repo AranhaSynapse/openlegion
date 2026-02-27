@@ -16,6 +16,7 @@ Agent management:
 
 from __future__ import annotations
 
+import json as _json
 import logging
 import os
 import subprocess
@@ -210,17 +211,22 @@ def _resolve_agent_name(cfg: dict, name: str | None) -> str | None:
 
 
 @agent.command("list")
-def agent_list():
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def agent_list(as_json: bool):
     """List all configured agents and their status."""
     cfg = _load_config()
     agents = cfg.get("agents", {})
     if not agents:
+        if as_json:
+            click.echo(_json.dumps({"agents": []}))
+            return
         click.echo("No agents configured. Add one: openlegion agent add")
         return
 
     running = set()
     try:
         import docker
+
         client = docker.from_env()
         containers = client.containers.list(filters={"name": "openlegion_"})
         for c in containers:
@@ -230,6 +236,16 @@ def agent_list():
         logger.debug("Docker container list failed: %s", e)
 
     default_model = _get_default_model()
+
+    if as_json:
+        agents_data = []
+        for name, info in agents.items():
+            status = "running" if name in running else "stopped"
+            model = info.get("model", default_model)
+            agents_data.append({"name": name, "model": model, "status": status})
+        click.echo(_json.dumps({"agents": agents_data}))
+        return
+
     click.echo(f"{'Name':<16} {'Model':<40} {'Status':<10}")
     click.echo("-" * 69)
     for name, info in agents.items():
@@ -343,7 +359,8 @@ def channels_add(channel_type: str | None):
 
 
 @channels.command("list")
-def channels_list():
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def channels_list(as_json: bool):
     """Show configured channels and their status."""
     mesh_cfg = {}
     if cli_config.CONFIG_FILE.exists():
@@ -352,7 +369,25 @@ def channels_list():
 
     channel_cfg = mesh_cfg.get("channels", {})
     if not channel_cfg:
+        if as_json:
+            click.echo(_json.dumps({"channels": []}))
+            return
         click.echo("No channels configured. Add one: openlegion channels add")
+        return
+
+    if as_json:
+        channels_data = []
+        for key, info in CHANNEL_TYPES.items():
+            section = channel_cfg.get(info["config_section"], {})
+            sys_key = f"OPENLEGION_SYSTEM_{info['env_key'].upper()}"
+            cred_key = f"OPENLEGION_CRED_{info['env_key'].upper()}"
+            has_token = bool(os.environ.get(sys_key) or os.environ.get(cred_key))
+            if section.get("enabled"):
+                ch_status = "ready" if has_token else "no token"
+                channels_data.append(
+                    {"type": key, "label": info["label"], "status": ch_status}
+                )
+        click.echo(_json.dumps({"channels": channels_data}))
         return
 
     click.echo(f"{'Channel':<16} {'Status':<12}")
@@ -363,8 +398,8 @@ def channels_list():
         cred_key = f"OPENLEGION_CRED_{info['env_key'].upper()}"
         has_token = bool(os.environ.get(sys_key) or os.environ.get(cred_key))
         if section.get("enabled"):
-            status = "ready" if has_token else "no token"
-            click.echo(f"{info['label']:<16} {status:<12}")
+            ch_status = "ready" if has_token else "no token"
+            click.echo(f"{info['label']:<16} {ch_status:<12}")
 
 
 @channels.command("remove")
@@ -447,11 +482,16 @@ def skill_install(repo_url: str, ref: str):
 
 
 @skill.command("list")
-def skill_list():
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def skill_list(as_json: bool):
     """List installed marketplace skills."""
     from src.marketplace import list_skills
 
     skills = list_skills(cli_config.MARKETPLACE_DIR)
+    if as_json:
+        click.echo(_json.dumps({"skills": skills}))
+        return
+
     if not skills:
         click.echo("No marketplace skills installed.")
         click.echo("Install one: openlegion skill install <repo_url>")
@@ -748,7 +788,8 @@ def project_create(name: str | None, desc: str, agents_str: str):
 
 
 @project.command("list")
-def project_list():
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def project_list(as_json: bool):
     """List all projects and their members."""
     from src.cli.config import _load_projects
 
@@ -759,6 +800,12 @@ def project_list():
     for pdata in projects.values():
         assigned.update(pdata.get("members", []))
     standalone = sorted(all_agents - assigned)
+
+    if as_json:
+        click.echo(
+            _json.dumps({"projects": projects, "standalone": standalone})
+        )
+        return
 
     if not projects and not standalone:
         click.echo("No projects or agents configured.")
@@ -1257,7 +1304,8 @@ def _single_agent_repl(agent_name: str, agent_url: str) -> None:
 
 @cli.command("status")
 @click.option("--port", default=8420, type=int, help="Mesh host port")
-def status(port: int):
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def status(port: int, as_json: bool):
     """Show status of all agents."""
     import httpx
 
@@ -1276,18 +1324,18 @@ def status(port: int):
         logger.debug("Error checking mesh: %s", e)
 
     if not configured and not mesh_agents:
+        if as_json:
+            click.echo(_json.dumps({"agents": [], "mesh_online": mesh_online}))
+            return
         click.echo("No agents configured. Run: openlegion start")
         return
 
     all_names = sorted(set(list(configured.keys()) + list(mesh_agents.keys())))
 
-    click.echo(f"{'Agent':<16} {'Role':<20} {'Status':<12}")
-    click.echo("-" * 48)
+    # Collect agent data for both JSON and table output
+    agents_data = []
     for name in all_names:
         role = configured.get(name, {}).get("role", "n/a")
-        # Truncate long role names to keep columns aligned
-        if len(role) > 20:
-            role = role[:17] + "..."
 
         if name in mesh_agents:
             agent_url = mesh_agents[name]
@@ -1302,7 +1350,22 @@ def status(port: int):
         else:
             state = "stopped"
 
-        click.echo(f"{name:<16} {role:<20} {state:<12}")
+        agents_data.append({"name": name, "role": role, "status": state})
+
+    if as_json:
+        click.echo(
+            _json.dumps({"agents": agents_data, "mesh_online": mesh_online})
+        )
+        return
+
+    click.echo(f"{'Agent':<16} {'Role':<20} {'Status':<12}")
+    click.echo("-" * 48)
+    for entry in agents_data:
+        role = entry["role"]
+        # Truncate long role names to keep columns aligned
+        if len(role) > 20:
+            role = role[:17] + "..."
+        click.echo(f"{entry['name']:<16} {role:<20} {entry['status']:<12}")
 
     if not mesh_online:
         click.echo("\nMesh is not running. Start with: openlegion start")
@@ -1360,6 +1423,27 @@ def stop():
         except docker.errors.NotFound:
             pass  # already removed
     click.echo(f"Stopped {len(containers)} remaining container(s).")
+
+
+@cli.command("completion", hidden=True)
+@click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]))
+def completion(shell: str):
+    """Generate shell completion script.
+
+    \b
+    Usage:
+      eval "$(openlegion completion bash)"
+      eval "$(openlegion completion zsh)"
+      openlegion completion fish | source
+    """
+    # Click uses an env var to generate completion scripts.
+    # The var name is derived from the CLI group name.
+    env_var = "_OPENLEGION_COMPLETE"
+    source_type = f"{shell}_source"
+    if shell == "fish":
+        click.echo(f"set -x {env_var} {source_type}; openlegion; set -e {env_var}")
+    else:
+        click.echo(f'eval "$({env_var}={source_type} openlegion)"')
 
 
 if __name__ == "__main__":
