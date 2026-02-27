@@ -574,28 +574,22 @@ def _remove_agent_from_project(project: str, agent: str) -> None:
 def _add_project_blackboard_permissions(agent: str, project: str) -> None:
     """Grant blackboard access for a project member.
 
-    Adds the project-specific pattern plus shared collaboration patterns.
-    Standalone agents have no blackboard permissions; joining a project
-    is what grants access.
+    Only grants ``projects/{project}/*``.  The MeshClient auto-prefixes
+    all blackboard keys with the project namespace, so agents use natural
+    keys (``context/market``) which are transparently stored as
+    ``projects/{project}/context/market``.  This prevents cross-project
+    leakage — each project's data lives under its own namespace.
     """
-    _SHARED_READ = ["context/*", "tasks/*", "goals/*", "signals/*", "artifacts/*"]
-    _SHARED_WRITE = ["context/*", "goals/*", "signals/*", "artifacts/*"]
-
     perms = _load_permissions()
     agent_perms = perms.get("permissions", {}).get(agent)
     if agent_perms is None:
         return
     project_pattern = f"projects/{project}/*"
-    read_patterns = agent_perms.get("blackboard_read", [])
-    for p in [project_pattern, *_SHARED_READ]:
-        if p not in read_patterns:
-            read_patterns.append(p)
-    agent_perms["blackboard_read"] = read_patterns
-    write_patterns = agent_perms.get("blackboard_write", [])
-    for p in [project_pattern, *_SHARED_WRITE]:
-        if p not in write_patterns:
-            write_patterns.append(p)
-    agent_perms["blackboard_write"] = write_patterns
+    for field in ("blackboard_read", "blackboard_write"):
+        patterns = agent_perms.get(field, [])
+        if project_pattern not in patterns:
+            patterns.append(project_pattern)
+        agent_perms[field] = patterns
     _save_permissions(perms)
 
 

@@ -1166,8 +1166,8 @@ class TestProjectDelete:
         perms_file.write_text(json.dumps({
             "permissions": {
                 "bot1": {
-                    "blackboard_read": ["projects/doomed/*", "context/*", "tasks/*", "goals/*", "signals/*", "artifacts/*"],
-                    "blackboard_write": ["projects/doomed/*", "context/*", "goals/*", "signals/*", "artifacts/*"],
+                    "blackboard_read": ["projects/doomed/*"],
+                    "blackboard_write": ["projects/doomed/*"],
                 },
             }
         }))
