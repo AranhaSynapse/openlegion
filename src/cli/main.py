@@ -1155,10 +1155,13 @@ def config_import(archive: str, yes: bool):
         click.confirm("Import will overwrite existing configuration. Continue?", abort=True)
 
     with tarfile.open(archive, "r:gz") as tar:
-        # Security: validate member names
+        # Security: validate member names and reject symlinks/hardlinks
         for member in tar.getmembers():
             if member.name.startswith("/") or ".." in member.name:
                 click.echo(f"Unsafe path in archive: {member.name}", err=True)
+                raise SystemExit(1)
+            if member.issym() or member.islnk():
+                click.echo(f"Unsafe link in archive: {member.name}", err=True)
                 raise SystemExit(1)
 
         config_dir = cli_config.CONFIG_FILE.parent

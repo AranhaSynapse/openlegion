@@ -395,6 +395,12 @@ class TestCostsBarChart:
 
         assert len(_bar(5, 10, width=10)) == 10
 
+    def test_bar_negative_value(self):
+        """_bar handles negative values by returning empty bar."""
+        from src.cli.repl import _bar
+
+        assert _bar(-5, 10) == "\u2591" * 20
+
 
 class TestConfigExportImport:
     def test_config_export_creates_file(self, tmp_path):
@@ -479,6 +485,34 @@ class TestConfigExportImport:
             runner = CliRunner()
             result = runner.invoke(cli, ["config", "import", str(archive), "--yes"])
             assert result.exit_code != 0
+
+    def test_config_import_rejects_symlinks(self, tmp_path):
+        """config import rejects archives containing symlinks."""
+        import io
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name="evil_link")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "/etc/passwd"
+            tar.addfile(info)
+        buf.seek(0)
+
+        archive = tmp_path / "evil.tar.gz"
+        archive.write_bytes(buf.read())
+
+        config_file = tmp_path / "mesh.yaml"
+        projects_dir = tmp_path / "projects"
+
+        with (
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.PROJECTS_DIR", projects_dir),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["config", "import", str(archive), "--yes"])
+            assert result.exit_code == 1
+            assert "Unsafe link" in result.output
 
 
 class TestREPLZeroAgents:

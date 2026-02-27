@@ -97,10 +97,10 @@ class _REPLCompleter:
 
 def _bar(value: float, max_val: float, width: int = 20) -> str:
     """Render a simple ASCII bar chart segment."""
-    if max_val <= 0:
+    if max_val <= 0 or value < 0:
         return "\u2591" * width
     filled = int((value / max_val) * width)
-    filled = min(filled, width)
+    filled = max(0, min(filled, width))
     return "\u2588" * filled + "\u2591" * (width - filled)
 
 
