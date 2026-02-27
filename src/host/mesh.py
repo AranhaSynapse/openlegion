@@ -177,12 +177,13 @@ class Blackboard:
 
     def gc_expired(self) -> int:
         """Garbage-collect entries that have exceeded their TTL. Returns count deleted."""
-        cursor = self.db.execute(
-            "DELETE FROM entries WHERE ttl IS NOT NULL AND "
-            "datetime(updated_at, '+' || ttl || ' seconds') < datetime('now') "
-            "AND key NOT LIKE 'history/%'"
-        )
-        self.db.commit()
+        with self._write_lock:
+            cursor = self.db.execute(
+                "DELETE FROM entries WHERE ttl IS NOT NULL AND "
+                "datetime(updated_at, '+' || ttl || ' seconds') < datetime('now') "
+                "AND key NOT LIKE 'history/%'"
+            )
+            self.db.commit()
         return cursor.rowcount
 
     _EVENT_LOG_GC_THRESHOLD = 10_000
@@ -201,14 +202,15 @@ class Blackboard:
         Must be called AFTER the caller's commit() so the GC DELETE
         doesn't accidentally commit unrelated pending writes.
         """
-        count = self.db.execute("SELECT COUNT(*) FROM event_log").fetchone()[0]
-        if count > self._EVENT_LOG_GC_THRESHOLD:
-            self.db.execute(
-                "DELETE FROM event_log WHERE id NOT IN "
-                "(SELECT id FROM event_log ORDER BY id DESC LIMIT ?)",
-                (self._EVENT_LOG_GC_KEEP,),
-            )
-            self.db.commit()
+        with self._write_lock:
+            count = self.db.execute("SELECT COUNT(*) FROM event_log").fetchone()[0]
+            if count > self._EVENT_LOG_GC_THRESHOLD:
+                self.db.execute(
+                    "DELETE FROM event_log WHERE id NOT IN "
+                    "(SELECT id FROM event_log ORDER BY id DESC LIMIT ?)",
+                    (self._EVENT_LOG_GC_KEEP,),
+                )
+                self.db.commit()
 
     def _maybe_gc_ttl(self) -> None:
         """Garbage-collect TTL-expired entries, throttled to once per 60s.
@@ -333,18 +335,23 @@ class PubSub:
 
     def publish(self, topic: str, event: Any) -> list[str]:
         """Record an event and return the list of subscribers for it."""
-        self.event_log.append({"topic": topic, "event": event})
-        if self._db is not None:
-            self._db.execute(
-                "INSERT INTO events (topic, data) VALUES (?, ?)",
-                (topic, json.dumps(event, default=str)),
-            )
-            self._db.commit()
-            self._maybe_gc_events()
-        return self.get_subscribers(topic)
+        with self._lock:
+            self.event_log.append({"topic": topic, "event": event})
+            if self._db is not None:
+                self._db.execute(
+                    "INSERT INTO events (topic, data) VALUES (?, ?)",
+                    (topic, json.dumps(event, default=str)),
+                )
+                self._db.commit()
+                self._maybe_gc_events()
+            subscribers = list(self.subscriptions.get(topic, []))
+        return subscribers
 
     def _maybe_gc_events(self) -> None:
-        """Garbage-collect old events when the table exceeds the threshold."""
+        """Garbage-collect old events when the table exceeds the threshold.
+
+        Caller must hold ``self._lock``.
+        """
         if self._db is None:
             return
         count = self._db.execute("SELECT COUNT(*) FROM events").fetchone()[0]

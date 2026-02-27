@@ -26,6 +26,21 @@ _client: httpx.AsyncClient | None = None
 _client_lock = asyncio.Lock()
 
 
+async def _check_redirect_ssrf(request: httpx.Request) -> None:
+    """Event hook: validate every redirect target against SSRF rules.
+
+    httpx AsyncClient calls this *before* following each redirect, so an
+    attacker cannot bounce through a public URL into a private network.
+    Runs DNS check in executor to avoid blocking the event loop.
+    """
+    loop = asyncio.get_running_loop()
+    if await loop.run_in_executor(None, _is_private_url, str(request.url)):
+        raise httpx.TooManyRedirects(
+            "SSRF protection: redirect to private/internal address blocked",
+            request=request,
+        )
+
+
 async def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is not None and not _client.is_closed:
@@ -36,6 +51,7 @@ async def _get_client() -> httpx.AsyncClient:
                 follow_redirects=True,
                 max_redirects=5,
                 limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+                event_hooks={"request": [_check_redirect_ssrf]},
             )
         return _client
 
@@ -43,9 +59,10 @@ async def _get_client() -> httpx.AsyncClient:
 async def close_client() -> None:
     """Close the shared HTTP client. Called during agent shutdown."""
     global _client
-    if _client and not _client.is_closed:
-        await _client.aclose()
-    _client = None
+    async with _client_lock:
+        if _client and not _client.is_closed:
+            await _client.aclose()
+        _client = None
 
 
 def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -78,7 +95,7 @@ def _is_private_url(url: str) -> bool:
                 if _is_blocked_ip(ip):
                     return True
         except (socket.gaierror, OSError):
-            pass  # DNS resolution failed — allow (will fail at request time)
+            return True  # DNS resolution failed — fail closed (block)
         return False
 
 
