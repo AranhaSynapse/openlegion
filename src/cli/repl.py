@@ -60,6 +60,7 @@ class REPLSession:
             ("/costs",                         "Show spend, context, and model health"),
             ("/cron [list|del|pause|resume|run]", "Manage cron jobs"),
             ("/debug [trace]",                 "Show recent request traces"),
+            ("/credential [add|list|remove]",  "Manage credentials"),
             ("/addkey [service]",              "Store a credential"),
             ("/removekey [name]",             "Remove a credential"),
             ("/help",                          "Show this help"),
@@ -88,6 +89,7 @@ class REPLSession:
             "/costs":      (self._cmd_costs,      "Show spend, context, and model health"),
             "/debug":      (self._cmd_debug,      "Show recent request traces"),
             "/cron":       (self._cmd_cron,       "Manage cron jobs"),
+            "/credential": (self._cmd_credential, "Manage credentials (add/list/remove)"),
             "/addkey":     (self._cmd_addkey,     "Store a credential"),
             "/removekey":  (self._cmd_removekey,  "Remove a credential"),
             "/reset":      (self._cmd_reset,      "Clear conversation history"),
@@ -756,6 +758,39 @@ class REPLSession:
                 click.echo(f"  Error: {e}")
         else:
             click.echo("Usage: /workflow [list|run] ...")
+
+    def _cmd_credential(self, arg: str) -> None:
+        """Manage credentials (add/list/remove)."""
+        parts = arg.strip().split(None, 1)
+        sub = parts[0].lower() if parts else ""
+
+        if sub == "add" or not sub:
+            # Delegate to /addkey
+            service = parts[1] if len(parts) > 1 else ""
+            self._cmd_addkey(service)
+        elif sub == "list":
+            # Show from vault if available
+            if self.ctx.credential_vault:
+                creds = []
+                for name, _val in self.ctx.credential_vault.system_credentials.items():
+                    creds.append((name, "system"))
+                for name, _val in self.ctx.credential_vault.credentials.items():
+                    creds.append((name, "agent"))
+                if not creds:
+                    click.echo("No credentials stored. Use /credential add or /addkey.")
+                    return
+                click.echo(f"\n  {'Name':<30} {'Tier':<10}")
+                click.echo(f"  {'-' * 40}")
+                for name, tier in creds:
+                    click.echo(f"  {name:<30} {tier:<10}")
+                click.echo()
+            else:
+                click.echo("Credential vault not available.")
+        elif sub == "remove":
+            name = parts[1] if len(parts) > 1 else ""
+            self._cmd_removekey(name)
+        else:
+            click.echo("Usage: /credential [add|list|remove]")
 
     def _cmd_addkey(self, arg: str) -> None:
         if not arg.strip():

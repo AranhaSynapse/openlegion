@@ -1335,3 +1335,106 @@ class TestREPLWorkflowProjectScoping:
         out = capsys.readouterr().out
         assert "alpha/build" in out
         assert "global-wf" in out
+
+
+class TestCredentialCLI:
+    def test_credential_add_writes_env(self, tmp_path):
+        """credential add writes to .env file."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("")
+        config_file = tmp_path / "mesh.yaml"
+        config_file.write_text(yaml.dump({"mesh": {"host": "0.0.0.0", "port": 8420}}))
+
+        with (
+            patch("src.cli.config.ENV_FILE", env_file),
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.PROJECT_ROOT", tmp_path),
+            patch("src.cli.config.PROJECTS_DIR", tmp_path / "projects"),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                ["credential", "add", "test_api_key", "--key", "sk-test123456"],
+            )
+            assert result.exit_code == 0, result.output
+            assert "saved" in result.output
+            env_content = env_file.read_text()
+            assert "test_api_key" in env_content.lower() or "TEST_API_KEY" in env_content
+
+    def test_credential_list_empty(self, tmp_path):
+        """credential list with no creds shows helpful message."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("")
+        config_file = tmp_path / "mesh.yaml"
+        config_file.write_text(yaml.dump({"mesh": {"host": "0.0.0.0", "port": 8420}}))
+
+        with (
+            patch("src.cli.config.ENV_FILE", env_file),
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.PROJECT_ROOT", tmp_path),
+            patch("src.cli.config.PROJECTS_DIR", tmp_path / "projects"),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["credential", "list"])
+            assert result.exit_code == 0
+            assert "No credentials" in result.output
+
+    def test_credential_list_json(self, tmp_path):
+        """credential list --json outputs valid JSON."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("")
+        config_file = tmp_path / "mesh.yaml"
+        config_file.write_text(yaml.dump({"mesh": {"host": "0.0.0.0", "port": 8420}}))
+
+        with (
+            patch("src.cli.config.ENV_FILE", env_file),
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.PROJECT_ROOT", tmp_path),
+            patch("src.cli.config.PROJECTS_DIR", tmp_path / "projects"),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["credential", "list", "--json"])
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            assert "credentials" in data
+
+    def test_credential_remove_not_found(self, tmp_path):
+        """credential remove exits non-zero for unknown credential."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("")
+        config_file = tmp_path / "mesh.yaml"
+        config_file.write_text(yaml.dump({"mesh": {"host": "0.0.0.0", "port": 8420}}))
+
+        with (
+            patch("src.cli.config.ENV_FILE", env_file),
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.PROJECT_ROOT", tmp_path),
+            patch("src.cli.config.PROJECTS_DIR", tmp_path / "projects"),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["credential", "remove", "nonexistent", "-y"])
+            assert result.exit_code != 0
+
+    def test_credential_remove_success(self, tmp_path):
+        """credential remove deletes the credential from .env."""
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "OPENLEGION_SYSTEM_ANTHROPIC_API_KEY=sk-test123\nOTHER_VAR=keep\n"
+        )
+        config_file = tmp_path / "mesh.yaml"
+        config_file.write_text(yaml.dump({"mesh": {"host": "0.0.0.0", "port": 8420}}))
+
+        with (
+            patch("src.cli.config.ENV_FILE", env_file),
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.PROJECT_ROOT", tmp_path),
+            patch("src.cli.config.PROJECTS_DIR", tmp_path / "projects"),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli, ["credential", "remove", "anthropic_api_key", "-y"]
+            )
+            assert result.exit_code == 0, result.output
+            content = env_file.read_text()
+            assert "ANTHROPIC_API_KEY" not in content
+            assert "OTHER_VAR=keep" in content
