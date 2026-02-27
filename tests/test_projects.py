@@ -168,10 +168,11 @@ class TestCreateProject:
     def test_create_with_members(self, tmp_path):
         projects_dir = tmp_path / "projects"
         perms_file = tmp_path / "permissions.json"
+        # Agents start with empty blackboard (standalone)
         perms_file.write_text(json.dumps({
             "permissions": {
-                "agent1": {"blackboard_read": ["context/*"], "blackboard_write": ["context/*"]},
-                "agent2": {"blackboard_read": ["context/*"], "blackboard_write": ["context/*"]},
+                "agent1": {"blackboard_read": [], "blackboard_write": []},
+                "agent2": {"blackboard_read": [], "blackboard_write": []},
             }
         }))
 
@@ -184,10 +185,12 @@ class TestCreateProject:
         meta = yaml.safe_load((projects_dir / "my-proj" / "metadata.yaml").read_text())
         assert meta["members"] == ["agent1", "agent2"]
 
-        # Check permissions were updated
+        # Check permissions were updated with project + shared patterns
         perms = json.loads(perms_file.read_text())
         assert "projects/my-proj/*" in perms["permissions"]["agent1"]["blackboard_read"]
         assert "projects/my-proj/*" in perms["permissions"]["agent1"]["blackboard_write"]
+        assert "context/*" in perms["permissions"]["agent1"]["blackboard_read"]
+        assert "artifacts/*" in perms["permissions"]["agent1"]["blackboard_read"]
         assert "projects/my-proj/*" in perms["permissions"]["agent2"]["blackboard_read"]
 
     def test_create_moves_agent_from_existing_project(self, tmp_path):
@@ -204,8 +207,8 @@ class TestCreateProject:
         perms_file.write_text(json.dumps({
             "permissions": {
                 "agent1": {
-                    "blackboard_read": ["context/*", "projects/old-proj/*"],
-                    "blackboard_write": ["context/*", "projects/old-proj/*"],
+                    "blackboard_read": ["projects/old-proj/*", "context/*", "tasks/*", "goals/*", "signals/*", "artifacts/*"],
+                    "blackboard_write": ["projects/old-proj/*", "context/*", "goals/*", "signals/*", "artifacts/*"],
                 },
             }
         }))
@@ -224,7 +227,7 @@ class TestCreateProject:
         old_meta = yaml.safe_load((old_dir / "metadata.yaml").read_text())
         assert "agent1" not in old_meta["members"]
 
-        # Permissions updated
+        # Permissions updated: new project pattern present, old one gone
         perms = json.loads(perms_file.read_text())
         assert "projects/new-proj/*" in perms["permissions"]["agent1"]["blackboard_read"]
         assert "projects/old-proj/*" not in perms["permissions"]["agent1"]["blackboard_read"]
@@ -257,8 +260,8 @@ class TestDeleteProject:
         perms_file.write_text(json.dumps({
             "permissions": {
                 "agent1": {
-                    "blackboard_read": ["context/*", "projects/doomed/*"],
-                    "blackboard_write": ["context/*", "projects/doomed/*"],
+                    "blackboard_read": ["projects/doomed/*", "context/*", "tasks/*", "goals/*", "signals/*", "artifacts/*"],
+                    "blackboard_write": ["projects/doomed/*", "context/*", "goals/*", "signals/*", "artifacts/*"],
                 },
             }
         }))
@@ -271,10 +274,10 @@ class TestDeleteProject:
 
         assert not proj_dir.exists()
 
-        # Permissions cleaned up
+        # Agent becomes standalone — all blackboard permissions cleared
         perms = json.loads(perms_file.read_text())
-        assert "projects/doomed/*" not in perms["permissions"]["agent1"]["blackboard_read"]
-        assert "projects/doomed/*" not in perms["permissions"]["agent1"]["blackboard_write"]
+        assert perms["permissions"]["agent1"]["blackboard_read"] == []
+        assert perms["permissions"]["agent1"]["blackboard_write"] == []
 
     def test_delete_nonexistent_raises(self, tmp_path):
         with patch("src.cli.config.PROJECTS_DIR", tmp_path / "nope"):
@@ -292,11 +295,12 @@ class TestAddRemoveAgentProject:
         }))
 
         perms_file = tmp_path / "permissions.json"
+        # Standalone agent: no blackboard permissions
         perms_file.write_text(json.dumps({
             "permissions": {
                 "agent1": {
-                    "blackboard_read": ["context/*"],
-                    "blackboard_write": ["context/*"],
+                    "blackboard_read": [],
+                    "blackboard_write": [],
                 },
             }
         }))
@@ -314,8 +318,13 @@ class TestAddRemoveAgentProject:
         meta = yaml.safe_load((projects_dir / "proj1" / "metadata.yaml").read_text())
         assert "agent1" in meta["members"]
 
+        # Agent gets project + shared blackboard permissions
         perms = json.loads(perms_file.read_text())
         assert "projects/proj1/*" in perms["permissions"]["agent1"]["blackboard_read"]
+        assert "context/*" in perms["permissions"]["agent1"]["blackboard_read"]
+        assert "artifacts/*" in perms["permissions"]["agent1"]["blackboard_read"]
+        assert "projects/proj1/*" in perms["permissions"]["agent1"]["blackboard_write"]
+        assert "context/*" in perms["permissions"]["agent1"]["blackboard_write"]
 
     def test_add_agent_idempotent(self, tmp_path):
         projects_dir, perms_file = self._setup(tmp_path)
@@ -329,6 +338,12 @@ class TestAddRemoveAgentProject:
 
         meta = yaml.safe_load((projects_dir / "proj1" / "metadata.yaml").read_text())
         assert meta["members"].count("agent1") == 1
+
+        # Patterns should not be duplicated
+        perms = json.loads(perms_file.read_text())
+        read_patterns = perms["permissions"]["agent1"]["blackboard_read"]
+        assert read_patterns.count("projects/proj1/*") == 1
+        assert read_patterns.count("context/*") == 1
 
     def test_add_to_nonexistent_project_raises(self, tmp_path):
         projects_dir = tmp_path / "projects"
@@ -355,8 +370,8 @@ class TestAddRemoveAgentProject:
         perms_file.write_text(json.dumps({
             "permissions": {
                 "agent1": {
-                    "blackboard_read": ["context/*", "projects/proj1/*"],
-                    "blackboard_write": ["context/*", "projects/proj1/*"],
+                    "blackboard_read": ["projects/proj1/*", "context/*", "tasks/*", "goals/*", "signals/*", "artifacts/*"],
+                    "blackboard_write": ["projects/proj1/*", "context/*", "goals/*", "signals/*", "artifacts/*"],
                 },
             }
         }))
@@ -370,8 +385,10 @@ class TestAddRemoveAgentProject:
         meta = yaml.safe_load((proj_dir / "metadata.yaml").read_text())
         assert "agent1" not in meta["members"]
 
+        # Agent becomes standalone — all blackboard permissions cleared
         perms = json.loads(perms_file.read_text())
-        assert "projects/proj1/*" not in perms["permissions"]["agent1"]["blackboard_read"]
+        assert perms["permissions"]["agent1"]["blackboard_read"] == []
+        assert perms["permissions"]["agent1"]["blackboard_write"] == []
 
     def test_move_agent_between_projects(self, tmp_path):
         projects_dir = tmp_path / "projects"
@@ -387,8 +404,8 @@ class TestAddRemoveAgentProject:
         perms_file.write_text(json.dumps({
             "permissions": {
                 "agent1": {
-                    "blackboard_read": ["context/*", "projects/proj1/*"],
-                    "blackboard_write": ["context/*", "projects/proj1/*"],
+                    "blackboard_read": ["projects/proj1/*", "context/*", "tasks/*", "goals/*", "signals/*", "artifacts/*"],
+                    "blackboard_write": ["projects/proj1/*", "context/*", "goals/*", "signals/*", "artifacts/*"],
                 },
             }
         }))
@@ -407,18 +424,21 @@ class TestAddRemoveAgentProject:
         meta2 = yaml.safe_load((projects_dir / "proj2" / "metadata.yaml").read_text())
         assert "agent1" in meta2["members"]
 
-        # Permissions updated
+        # Permissions updated: new project pattern, shared patterns re-added
         perms = json.loads(perms_file.read_text())
         assert "projects/proj1/*" not in perms["permissions"]["agent1"]["blackboard_read"]
         assert "projects/proj2/*" in perms["permissions"]["agent1"]["blackboard_read"]
+        assert "context/*" in perms["permissions"]["agent1"]["blackboard_read"]
 
 
 class TestBlackboardPermissions:
     def test_add_permissions(self, tmp_path):
+        """Adding project permissions grants project pattern + shared patterns."""
         perms_file = tmp_path / "permissions.json"
+        # Start with empty blackboard (standalone agent)
         perms_file.write_text(json.dumps({
             "permissions": {
-                "bot": {"blackboard_read": ["context/*"], "blackboard_write": ["context/*"]},
+                "bot": {"blackboard_read": [], "blackboard_write": []},
             }
         }))
 
@@ -426,16 +446,26 @@ class TestBlackboardPermissions:
             _add_project_blackboard_permissions("bot", "marketing")
 
         perms = json.loads(perms_file.read_text())
-        assert "projects/marketing/*" in perms["permissions"]["bot"]["blackboard_read"]
-        assert "projects/marketing/*" in perms["permissions"]["bot"]["blackboard_write"]
+        read = perms["permissions"]["bot"]["blackboard_read"]
+        write = perms["permissions"]["bot"]["blackboard_write"]
+        assert "projects/marketing/*" in read
+        assert "context/*" in read
+        assert "tasks/*" in read
+        assert "goals/*" in read
+        assert "signals/*" in read
+        assert "artifacts/*" in read
+        assert "projects/marketing/*" in write
+        assert "context/*" in write
+        assert "goals/*" in write
 
     def test_remove_permissions(self, tmp_path):
+        """Removing project permissions clears ALL blackboard access."""
         perms_file = tmp_path / "permissions.json"
         perms_file.write_text(json.dumps({
             "permissions": {
                 "bot": {
-                    "blackboard_read": ["context/*", "projects/marketing/*"],
-                    "blackboard_write": ["context/*", "projects/marketing/*"],
+                    "blackboard_read": ["projects/marketing/*", "context/*", "tasks/*", "goals/*", "signals/*", "artifacts/*"],
+                    "blackboard_write": ["projects/marketing/*", "context/*", "goals/*", "signals/*", "artifacts/*"],
                 },
             }
         }))
@@ -444,8 +474,8 @@ class TestBlackboardPermissions:
             _remove_project_blackboard_permissions("bot", "marketing")
 
         perms = json.loads(perms_file.read_text())
-        assert "projects/marketing/*" not in perms["permissions"]["bot"]["blackboard_read"]
-        assert "projects/marketing/*" not in perms["permissions"]["bot"]["blackboard_write"]
+        assert perms["permissions"]["bot"]["blackboard_read"] == []
+        assert perms["permissions"]["bot"]["blackboard_write"] == []
 
 
 class TestLoadConfigWithProjects:
@@ -511,12 +541,12 @@ class TestRemoveAgentCleansProject:
         perms_file.write_text(json.dumps({
             "permissions": {
                 "agent1": {
-                    "blackboard_read": ["context/*", "projects/proj1/*"],
-                    "blackboard_write": ["context/*", "projects/proj1/*"],
+                    "blackboard_read": ["projects/proj1/*", "context/*", "tasks/*", "goals/*", "signals/*", "artifacts/*"],
+                    "blackboard_write": ["projects/proj1/*", "context/*", "goals/*", "signals/*", "artifacts/*"],
                 },
                 "agent2": {
-                    "blackboard_read": ["context/*", "projects/proj1/*"],
-                    "blackboard_write": ["context/*", "projects/proj1/*"],
+                    "blackboard_read": ["projects/proj1/*", "context/*", "tasks/*", "goals/*", "signals/*", "artifacts/*"],
+                    "blackboard_write": ["projects/proj1/*", "context/*", "goals/*", "signals/*", "artifacts/*"],
                 },
             }
         }))

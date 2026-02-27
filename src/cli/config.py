@@ -329,8 +329,8 @@ def _add_agent_permissions(name: str) -> None:
         "can_message": can_message,
         "can_publish": ["*"] if collab else [f"{name}_complete"],
         "can_subscribe": ["*"] if collab else [],
-        "blackboard_read": ["context/*", "tasks/*", "goals/*", "signals/*", "artifacts/*"],
-        "blackboard_write": ["context/*", "goals/*", "signals/*", "artifacts/*"],
+        "blackboard_read": [],
+        "blackboard_write": [],
         "allowed_apis": ["llm"],
         "allowed_credentials": ["*"],
     }
@@ -572,32 +572,45 @@ def _remove_agent_from_project(project: str, agent: str) -> None:
 
 
 def _add_project_blackboard_permissions(agent: str, project: str) -> None:
-    """Add projects/<name>/* patterns to agent's blackboard permissions."""
+    """Grant blackboard access for a project member.
+
+    Adds the project-specific pattern plus shared collaboration patterns.
+    Standalone agents have no blackboard permissions; joining a project
+    is what grants access.
+    """
+    _SHARED_READ = ["context/*", "tasks/*", "goals/*", "signals/*", "artifacts/*"]
+    _SHARED_WRITE = ["context/*", "goals/*", "signals/*", "artifacts/*"]
+
     perms = _load_permissions()
     agent_perms = perms.get("permissions", {}).get(agent)
     if agent_perms is None:
         return
-    pattern = f"projects/{project}/*"
-    for field in ("blackboard_read", "blackboard_write"):
-        patterns = agent_perms.get(field, [])
-        if pattern not in patterns:
-            patterns.append(pattern)
-            agent_perms[field] = patterns
+    project_pattern = f"projects/{project}/*"
+    read_patterns = agent_perms.get("blackboard_read", [])
+    for p in [project_pattern, *_SHARED_READ]:
+        if p not in read_patterns:
+            read_patterns.append(p)
+    agent_perms["blackboard_read"] = read_patterns
+    write_patterns = agent_perms.get("blackboard_write", [])
+    for p in [project_pattern, *_SHARED_WRITE]:
+        if p not in write_patterns:
+            write_patterns.append(p)
+    agent_perms["blackboard_write"] = write_patterns
     _save_permissions(perms)
 
 
 def _remove_project_blackboard_permissions(agent: str, project: str) -> None:
-    """Remove projects/<name>/* patterns from agent's blackboard permissions."""
+    """Revoke all blackboard access when an agent leaves a project.
+
+    Clears both the project-specific pattern and shared collaboration
+    patterns, restoring the agent to standalone (no blackboard access).
+    """
     perms = _load_permissions()
     agent_perms = perms.get("permissions", {}).get(agent)
     if agent_perms is None:
         return
-    pattern = f"projects/{project}/*"
-    for field in ("blackboard_read", "blackboard_write"):
-        patterns = agent_perms.get(field, [])
-        if pattern in patterns:
-            patterns.remove(pattern)
-            agent_perms[field] = patterns
+    agent_perms["blackboard_read"] = []
+    agent_perms["blackboard_write"] = []
     _save_permissions(perms)
 
 
