@@ -1115,6 +1115,118 @@ class TestResolvedCredentialRedaction:
         assert "[REDACTED]" in result["content"]
         bt._resolved_credential_values.clear()
 
+    @pytest.mark.asyncio
+    async def test_evaluate_redacts_nested_dict(self):
+        """browser_evaluate redacts credentials in nested structures."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._resolved_credential_values = {"deep-secret-value"}
+        mock_page = AsyncMock()
+        mock_page.evaluate = AsyncMock(
+            return_value={"data": {"nested": {"token": "deep-secret-value"}}},
+        )
+
+        with patch.object(bt, "_get_page", return_value=mock_page):
+            result = await bt.browser_evaluate(script="getNestedData()")
+
+        assert "deep-secret-value" not in str(result)
+        assert result["result"]["data"]["nested"]["token"] == "[REDACTED]"
+        bt._resolved_credential_values.clear()
+
+    @pytest.mark.asyncio
+    async def test_evaluate_error_redacted(self):
+        """browser_evaluate redacts credentials from error messages."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._resolved_credential_values = {"MySecretP@ss123"}
+        mock_page = AsyncMock()
+        mock_page.evaluate = AsyncMock(
+            side_effect=Exception("Failed with value MySecretP@ss123 in context"),
+        )
+
+        with patch.object(bt, "_get_page", return_value=mock_page):
+            result = await bt.browser_evaluate(script="badScript()")
+
+        assert "MySecretP@ss123" not in str(result)
+        assert "[REDACTED]" in result["error"]
+        bt._resolved_credential_values.clear()
+
+    @pytest.mark.asyncio
+    async def test_type_error_redacted(self):
+        """browser_type redacts credentials from fill() error messages."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._resolved_credential_values = {"actual-secret"}
+        mock_locator = AsyncMock()
+        mock_locator.fill = AsyncMock(
+            side_effect=Exception("fill failed: actual-secret not accepted"),
+        )
+        mock_page = AsyncMock()
+        bt._page_refs["e1"] = mock_locator
+
+        mock_client = AsyncMock()
+        mock_client.vault_resolve.return_value = "actual-secret"
+
+        with patch.object(bt, "_get_page", return_value=mock_page):
+            result = await bt.browser_type(
+                text="$CRED{password}", ref="e1", mesh_client=mock_client,
+            )
+
+        assert "actual-secret" not in str(result)
+        assert "[REDACTED]" in result["error"]
+        bt._resolved_credential_values.clear()
+
+    @pytest.mark.asyncio
+    async def test_auto_recovery_preserves_tracked_credentials(self):
+        """Dead CDP auto-recovery does NOT clear _resolved_credential_values."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._resolved_credential_values = {"must-survive-recovery"}
+
+        mock_page = AsyncMock()
+        mock_page.url = "https://example.com"
+        mock_page.title = AsyncMock(return_value="Example")
+        mock_page.wait_for_timeout = AsyncMock()
+        mock_page.inner_text = AsyncMock(return_value="safe content")
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_page.goto = AsyncMock(
+            side_effect=[
+                Exception("Page.navigate limit reached"),  # triggers auto-recovery
+                mock_response,  # retry succeeds
+            ],
+        )
+
+        with (
+            patch.object(bt, "_get_page", return_value=mock_page),
+            patch.object(bt, "_browser_cleanup_soft", new_callable=AsyncMock),
+        ):
+            await bt.browser_navigate(url="https://example.com")
+
+        # Tracked credentials must survive the auto-recovery
+        assert "must-survive-recovery" in bt._resolved_credential_values
+        bt._resolved_credential_values.clear()
+
+    def test_deep_redact_nested_structures(self):
+        """_deep_redact handles arbitrarily nested dicts and lists."""
+        import src.agent.builtins.browser_tool as bt
+        from src.agent.builtins.browser_tool import _deep_redact
+
+        bt._resolved_credential_values = {"secret-val"}
+
+        # Nested dict
+        assert _deep_redact({"a": {"b": "secret-val"}}) == {"a": {"b": "[REDACTED]"}}
+        # List of dicts
+        assert _deep_redact([{"k": "secret-val"}]) == [{"k": "[REDACTED]"}]
+        # Mixed nesting
+        assert _deep_redact({"items": ["ok", "secret-val"]}) == {"items": ["ok", "[REDACTED]"]}
+        # Non-string leaves pass through
+        assert _deep_redact({"count": 42, "flag": True}) == {"count": 42, "flag": True}
+        # None and empty
+        assert _deep_redact(None) is None
+        assert _deep_redact("") == ""
+        bt._resolved_credential_values.clear()
+
     def test_redact_resolved_credentials_basic(self):
         """_redact_resolved_credentials replaces tracked values."""
         import src.agent.builtins.browser_tool as bt

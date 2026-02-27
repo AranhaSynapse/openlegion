@@ -90,6 +90,23 @@ def _redact_resolved_credentials(text: str) -> str:
     return text
 
 
+def _deep_redact(obj):
+    """Recursively redact credential values from any JSON-serializable structure.
+
+    Applies both pattern-based redaction (_redact_credentials) and exact-value
+    redaction (_redact_resolved_credentials) at every string leaf.  Handles
+    arbitrarily nested dicts and lists — needed because ``browser_evaluate``
+    can return any structure from page JavaScript.
+    """
+    if isinstance(obj, str):
+        return _redact_resolved_credentials(_redact_credentials(obj))
+    if isinstance(obj, dict):
+        return {k: _deep_redact(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_deep_redact(item) for item in obj]
+    return obj
+
+
 async def _get_page(*, mesh_client=None):
     """Connect Playwright to the running Chrome via CDP on demand."""
     global _browser, _context, _page
@@ -302,7 +319,11 @@ async def _browser_cleanup_soft():
     _pw = _browser = _context = _page = None
     _page_refs.clear()
     _credential_filled_refs.clear()
-    _resolved_credential_values.clear()
+    # NOTE: Do NOT clear _resolved_credential_values here. This function is
+    # also called during auto-recovery from dead CDP sessions (browser_navigate
+    # retry path).  Tracked credential values must persist so they stay
+    # redacted from subsequent output.  Only browser_reset and _full_cleanup
+    # clear the set.
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _cleanup_stale_profile)
     # Relaunch Chrome clean (no Playwright) for VNC
@@ -580,6 +601,7 @@ async def browser_reset(*, mesh_client=None) -> dict:
     """Force-close the browser session so the next call gets a fresh one."""
     async with _page_op_lock:
         await _browser_cleanup_soft()
+        _resolved_credential_values.clear()  # safe to clear on explicit reset
         logger.info("Browser session reset (profile preserved)")
         return {
             "status": "reset",
@@ -659,7 +681,7 @@ async def browser_navigate(url: str, wait_ms: int = 1000, *, mesh_client=None) -
                     "url": page.url,
                     "title": await page.title(),
                     "status": response.status if response else 0,
-                    "content": _redact_resolved_credentials(_redact_credentials(text[:50000])),
+                    "content": _deep_redact(text[:50000]),
                 }
                 # Auto-detect and solve CAPTCHAs before returning.
                 try:
@@ -682,9 +704,7 @@ async def browser_navigate(url: str, wait_ms: int = 1000, *, mesh_client=None) -
                             )
                             await page.wait_for_timeout(1000)
                             text = await page.inner_text("body")
-                            result["content"] = _redact_resolved_credentials(
-                                _redact_credentials(text[:50000]),
-                            )
+                            result["content"] = _deep_redact(text[:50000])
                             result["captcha_solved"] = captcha_info["type"]
                         else:
                             result["captcha_detected"] = captcha_info["type"]
@@ -708,7 +728,7 @@ async def browser_navigate(url: str, wait_ms: int = 1000, *, mesh_client=None) -
                     await _browser_cleanup_soft()
                     continue
                 await _disconnect_cdp()
-                return {"error": error_msg, "url": url}
+                return {"error": _deep_redact(error_msg), "url": url}
 
 
 def _parse_aria_snapshot(yaml_text: str) -> list[dict]:
@@ -801,15 +821,7 @@ async def _browser_snapshot_inner(*, mesh_client=None) -> dict:
             _page_refs[ref] = locator
 
             # Redact common secret patterns and resolved credential values
-            redacted_el = dict(el)
-            if "name" in redacted_el:
-                redacted_el["name"] = _redact_resolved_credentials(
-                    _redact_credentials(redacted_el["name"]),
-                )
-            if "value" in redacted_el:
-                redacted_el["value"] = _redact_resolved_credentials(
-                    _redact_credentials(redacted_el["value"]),
-                )
+            redacted_el = _deep_redact(dict(el))
 
             entry = {"ref": ref, **redacted_el}
             elements.append(entry)
@@ -1084,7 +1096,7 @@ async def browser_type(
             return result
         except Exception as e:
             await _disconnect_cdp()
-            return {"error": str(e), "selector": selector, "ref": ref}
+            return {"error": _deep_redact(str(e)), "selector": selector, "ref": ref}
 
 
 @skill(
@@ -1104,24 +1116,12 @@ async def browser_evaluate(script: str, *, mesh_client=None) -> dict:
         try:
             page = await _get_page(mesh_client=mesh_client)
             result = await page.evaluate(script)
-            # Redact any credential values that might appear in evaluate results
-            if isinstance(result, str):
-                result = _redact_resolved_credentials(_redact_credentials(result))
-            elif isinstance(result, dict):
-                result = {
-                    k: _redact_resolved_credentials(_redact_credentials(v)) if isinstance(v, str) else v
-                    for k, v in result.items()
-                }
-            elif isinstance(result, list):
-                result = [
-                    _redact_resolved_credentials(_redact_credentials(item)) if isinstance(item, str) else item
-                    for item in result
-                ]
+            result = _deep_redact(result)
             await _disconnect_cdp()
             return {"result": result}
         except Exception as e:
             await _disconnect_cdp()
-            return {"error": str(e)}
+            return {"error": _deep_redact(str(e))}
 
 
 @skill(
