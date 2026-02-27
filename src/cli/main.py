@@ -486,6 +486,171 @@ def skill_remove(name: str, yes: bool):
     click.echo("Restart agents for changes to take effect.")
 
 
+# ── credential management ──────────────────────────────────
+
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def credential(ctx):
+    """Manage API credentials (add, list, remove)."""
+    if ctx.invoked_subcommand is None:
+        commands = [
+            ("add", "Add an API credential"),
+            ("list", "List stored credentials"),
+            ("remove", "Remove a credential"),
+        ]
+        click.echo("Credential management:\n")
+        for i, (name, desc) in enumerate(commands, 1):
+            click.echo(f"  {i}. {name:<10} {desc}")
+        choice = click.prompt(
+            "\nSelect action",
+            type=click.IntRange(1, len(commands)),
+            default=1,
+        )
+        ctx.invoke(credential.commands[commands[choice - 1][0]])
+
+
+@credential.command("add")
+@click.argument("service", required=False, default=None)
+@click.option("--key", "api_key", default=None, help="API key value")
+@click.option("--tier", type=click.Choice(["agent", "system"]), default="system", help="Credential tier")
+@click.option("--base-url", default=None, help="Custom API base URL")
+def credential_add(service: str | None, api_key: str | None, tier: str, base_url: str | None):
+    """Add an API credential.
+
+    \b
+    Examples:
+      openlegion credential add anthropic_api_key
+      openlegion credential add openai_api_key --key sk-...
+      openlegion credential add                 # interactive
+    """
+    from src.host.credentials import SYSTEM_CREDENTIAL_PROVIDERS
+
+    if service is None:
+        click.echo("Available providers:\n")
+        providers = list(SYSTEM_CREDENTIAL_PROVIDERS)
+        for i, p in enumerate(providers, 1):
+            click.echo(f"  {i}. {p}")
+        click.echo(f"  {len(providers) + 1}. (custom service name)")
+        choice = click.prompt(
+            "\nSelect provider",
+            type=click.IntRange(1, len(providers) + 1),
+            default=1,
+        )
+        if choice <= len(providers):
+            service = providers[choice - 1]
+        else:
+            service = click.prompt("Service name")
+
+    if api_key is None:
+        api_key = click.prompt(f"API key for {service}", hide_input=True)
+
+    if not api_key or not api_key.strip():
+        click.echo("No key provided.", err=True)
+        raise SystemExit(1)
+
+    is_system = tier == "system"
+    _set_env_key(service, api_key.strip(), system=is_system)
+
+    if base_url:
+        _set_env_key(f"{service}_base_url", base_url.strip(), system=is_system)
+
+    click.echo(f"Credential '{service}' saved ({tier} tier).")
+    click.echo("  Restart to apply: openlegion start")
+
+
+@credential.command("list")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def credential_list(as_json: bool):
+    """List stored credentials (keys are masked).
+
+    \b
+    Examples:
+      openlegion credential list
+      openlegion credential list --json
+    """
+    from src.host.credentials import AGENT_PREFIX, SYSTEM_PREFIX
+
+    # Read from .env file
+    creds = []
+    env_file = cli_config.ENV_FILE
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if key.startswith(SYSTEM_PREFIX) or key.startswith(AGENT_PREFIX):
+                name = key
+                if key.startswith(SYSTEM_PREFIX):
+                    name = key[len(SYSTEM_PREFIX):]
+                    cred_tier = "system"
+                else:
+                    name = key[len(AGENT_PREFIX):]
+                    cred_tier = "agent"
+                masked = value[:4] + "..." + value[-4:] if len(value) > 8 else "****"
+                creds.append({"name": name.lower(), "tier": cred_tier, "masked_key": masked})
+
+    if as_json:
+        import json as _json
+        click.echo(_json.dumps({"credentials": creds}))
+        return
+
+    if not creds:
+        click.echo("No credentials stored. Add one: openlegion credential add")
+        return
+
+    click.echo(f"{'Name':<30} {'Tier':<10} {'Key'}")
+    click.echo("-" * 55)
+    for c in creds:
+        click.echo(f"{c['name']:<30} {c['tier']:<10} {c['masked_key']}")
+
+
+@credential.command("remove")
+@click.argument("name")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def credential_remove(name: str, yes: bool):
+    """Remove a stored credential.
+
+    \b
+    Examples:
+      openlegion credential remove anthropic_api_key
+      openlegion credential remove openai_api_key -y
+    """
+    from src.host.credentials import AGENT_PREFIX, SYSTEM_PREFIX
+
+    env_file = cli_config.ENV_FILE
+    if not env_file.exists():
+        click.echo(f"Credential '{name}' not found.", err=True)
+        raise SystemExit(1)
+
+    name_upper = name.upper()
+    lines = env_file.read_text().splitlines()
+    found = False
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
+        # Match by full env key or by service name
+        if key in (f"{SYSTEM_PREFIX}{name_upper}", f"{AGENT_PREFIX}{name_upper}"):
+            found = True
+            if not yes:
+                click.confirm(f"Remove credential '{name}'?", abort=True)
+            continue  # skip this line
+        new_lines.append(line)
+
+    if not found:
+        click.echo(f"Credential '{name}' not found.", err=True)
+        raise SystemExit(1)
+
+    env_file.write_text("\n".join(new_lines) + "\n" if new_lines else "")
+    click.echo(f"Removed credential '{name}'.")
+    click.echo("  Restart to apply: openlegion start")
+
+
 # ── project subgroup ─────────────────────────────────────────
 
 @cli.group(invoke_without_command=True)
