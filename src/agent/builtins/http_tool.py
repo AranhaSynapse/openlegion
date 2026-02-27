@@ -165,8 +165,10 @@ async def http_request(
         resolved_url, url_secrets = await _resolve_creds(url, mesh_client)
         all_secrets.extend(url_secrets)
 
-        # SSRF protection: block requests to private/internal networks
-        if _is_private_url(resolved_url):
+        # SSRF protection: block requests to private/internal networks.
+        # Run in executor because socket.getaddrinfo() blocks the event loop.
+        loop = asyncio.get_running_loop()
+        if await loop.run_in_executor(None, _is_private_url, resolved_url):
             return {"error": "SSRF protection: requests to private/internal addresses are blocked", "status_code": 0}
 
         resolved_headers = {}
