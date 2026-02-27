@@ -1842,3 +1842,54 @@ class TestDashboardBroadcastProjectScoping:
         data = resp.json()
         # Only gamma is unassigned
         assert set(data["responses"].keys()) == {"gamma"}
+
+
+class TestLogsEndpoint:
+    def test_logs_endpoint(self, tmp_path):
+        """GET /dashboard/api/logs returns log lines."""
+        log_path = tmp_path / ".openlegion.log"
+        log_path.write_text(
+            '{"level":"INFO","msg":"test1"}\n{"level":"ERROR","msg":"test2"}\n'
+        )
+
+        components = _make_components(str(tmp_path))
+        client = _make_client(components)
+
+        with patch("src.cli.config.PROJECT_ROOT", tmp_path):
+            resp = client.get("/dashboard/api/logs")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "lines" in data
+            assert len(data["lines"]) == 2
+        _teardown(components)
+
+    def test_logs_level_filter(self, tmp_path):
+        """GET /dashboard/api/logs?level=error filters by level."""
+        log_path = tmp_path / ".openlegion.log"
+        log_path.write_text(
+            '{"level":"INFO","msg":"test1"}\n{"level":"ERROR","msg":"test2"}\n'
+        )
+
+        components = _make_components(str(tmp_path))
+        client = _make_client(components)
+
+        with patch("src.cli.config.PROJECT_ROOT", tmp_path):
+            resp = client.get("/dashboard/api/logs?level=error")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert len(data["lines"]) == 1
+            assert "ERROR" in data["lines"][0]
+        _teardown(components)
+
+    def test_logs_missing_file(self, tmp_path):
+        """GET /dashboard/api/logs returns empty when log file missing."""
+        components = _make_components(str(tmp_path))
+        client = _make_client(components)
+
+        with patch("src.cli.config.PROJECT_ROOT", tmp_path):
+            resp = client.get("/dashboard/api/logs")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["lines"] == []
+            assert data["total"] == 0
+        _teardown(components)

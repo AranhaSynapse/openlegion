@@ -1167,6 +1167,27 @@ def create_dashboard_router(
         except Exception as e:
             raise HTTPException(status_code=502, detail=str(e))
 
+    # ── Logs ──────────────────────────────────────────────────
+
+    @api_router.get("/api/logs")
+    async def api_logs(lines: int = 100, level: str = "") -> dict:
+        """Return recent log lines from .openlegion.log."""
+        from src.cli.config import PROJECT_ROOT
+
+        log_path = PROJECT_ROOT / ".openlegion.log"
+        if not log_path.exists():
+            return {"lines": [], "total": 0}
+
+        content = log_path.read_text()
+        all_lines = content.splitlines()
+
+        if level:
+            level_upper = level.upper()
+            all_lines = [ln for ln in all_lines if level_upper in ln.upper()]
+
+        result_lines = all_lines[-lines:]
+        return {"lines": result_lines, "total": len(all_lines)}
+
     # ── Static files ─────────────────────────────────────────
 
     _MEDIA_TYPES = {

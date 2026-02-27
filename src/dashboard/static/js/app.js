@@ -186,6 +186,20 @@ function dashboard() {
     onboardKey: '',
     onboardBaseUrl: '',
 
+    // Confirm modal
+    confirmModal: { open: false, title: '', message: '', action: null, destructive: false },
+
+    // Logs viewer
+    systemLogs: [],
+    systemLogsLoading: false,
+    systemLogsLevel: '',
+    systemLogsMaxLines: 200,
+
+    // Activity search/filter
+    activitySearch: '',
+    activityAgentFilter: '',
+    activityTimeRange: 'all',
+
     // WebSocket
     _ws: null,
     _refreshInterval: null,
@@ -296,6 +310,21 @@ function dashboard() {
       this._pushUrl(false);
     },
 
+    // ── Confirm modal ─────────────────────────────────────
+
+    showConfirm(title, message, action, destructive = true) {
+      this.confirmModal = { open: true, title, message, action, destructive };
+    },
+
+    cancelConfirm() {
+      this.confirmModal = { open: false, title: '', message: '', action: null, destructive: false };
+    },
+
+    executeConfirm() {
+      if (this.confirmModal.action) this.confirmModal.action();
+      this.cancelConfirm();
+    },
+
     // ── Computed ───────────────────────────────────────────
 
     get showOnboarding() {
@@ -371,6 +400,33 @@ function dashboard() {
     fileCharCount(file) {
       const text = (this.identityEditing && this.identityEditingFile === file) ? this.identityEditBuffer : (this.identityContent[file] || '');
       return text.length;
+    },
+
+    get filteredTraces() {
+      let items = this.traces;
+      if (this.activitySearch) {
+        const q = this.activitySearch.toLowerCase();
+        items = items.filter(t => {
+          const summary = (t.trigger_preview || t.trigger_detail || '').toLowerCase();
+          const agent = (t.agents || []).join(' ').toLowerCase();
+          const detail = (t.trace_id || '').toLowerCase();
+          return summary.includes(q) || agent.includes(q) || detail.includes(q);
+        });
+      }
+      if (this.activityAgentFilter) {
+        items = items.filter(t => (t.agents || []).includes(this.activityAgentFilter));
+      }
+      return items;
+    },
+
+    get activityAgents() {
+      const allAgents = new Set();
+      for (const t of this.traces) {
+        for (const a of (t.agents || [])) {
+          if (a) allAgents.add(a);
+        }
+      }
+      return [...allAgents].sort();
     },
 
     get filteredBbEntries() {
@@ -815,11 +871,17 @@ function dashboard() {
 
     async switchIdentityTab(agentId, tabId) {
       if (this.identityEditing || this.configEditing) {
-        if (!confirm('Discard unsaved changes?')) return;
-        this.identityEditing = false;
-        this.identityEditBuffer = '';
-        this.configEditing = false;
-        this.editForm = {};
+        this.showConfirm('Discard changes?', 'You have unsaved changes that will be lost.', async () => {
+          this.identityEditing = false;
+          this.identityEditBuffer = '';
+          this.configEditing = false;
+          this.editForm = {};
+          this.identityTab = tabId;
+          this.identityContentLoading = false;
+          await this.loadIdentityTabContent(agentId);
+          if (!this._skipPush) this._pushUrl(false);
+        }, true);
+        return;
       }
       this.identityTab = tabId;
       // Reset file-loading flag to prevent stale spinner on non-file tabs
@@ -997,22 +1059,23 @@ function dashboard() {
     },
 
     async deleteProject(name) {
-      if (!confirm(`Delete project "${name}"? Members will become standalone.`)) return;
-      try {
-        const resp = await fetch(`${window.__config.apiBase}/projects/${encodeURIComponent(name)}`, {
-          method: 'DELETE',
-        });
-        if (resp.ok) {
-          this.projectEditing = false;
-          this.projectEditBuffer = '';
-          await this.fetchProjects();
-          if (this.activeProject === name) this.switchProject(null);
-          this.showToast(`Project "${name}" deleted`);
-        } else {
-          const err = await resp.json().catch(() => ({}));
-          this.showToast(`Delete failed: ${err.detail || 'Unknown error'}`);
-        }
-      } catch (e) { this.showToast(`Delete failed: ${e.message}`); }
+      this.showConfirm('Delete Project', `Delete project "${name}"? Members will become standalone.`, async () => {
+        try {
+          const resp = await fetch(`${window.__config.apiBase}/projects/${encodeURIComponent(name)}`, {
+            method: 'DELETE',
+          });
+          if (resp.ok) {
+            this.projectEditing = false;
+            this.projectEditBuffer = '';
+            await this.fetchProjects();
+            if (this.activeProject === name) this.switchProject(null);
+            this.showToast(`Project "${name}" deleted`);
+          } else {
+            const err = await resp.json().catch(() => ({}));
+            this.showToast(`Delete failed: ${err.detail || 'Unknown error'}`);
+          }
+        } catch (e) { this.showToast(`Delete failed: ${e.message}`); }
+      }, true);
     },
 
     async addMember(project, agent) {
@@ -1089,6 +1152,21 @@ function dashboard() {
         if (resp.ok) this.traces = (await resp.json()).traces;
       } catch (e) { console.warn('fetchTraces failed:', e); }
       this.tracesLoading = false;
+    },
+
+    async fetchSystemLogs() {
+      this.systemLogsLoading = true;
+      try {
+        const params = new URLSearchParams({ lines: this.systemLogsMaxLines });
+        if (this.systemLogsLevel) params.set('level', this.systemLogsLevel);
+        const r = await fetch(`${window.__config.apiBase}/logs?${params}`);
+        const data = await r.json();
+        this.systemLogs = data.lines || [];
+      } catch (e) {
+        console.error('Failed to fetch logs:', e);
+      } finally {
+        this.systemLogsLoading = false;
+      }
     },
 
     // ── Agent config fetchers ─────────────────────────────
@@ -1200,18 +1278,19 @@ function dashboard() {
     },
 
     async restartAgent(agentId) {
-      if (!confirm(`Restart agent "${agentId}"? This will interrupt any active work.`)) return;
-      this.showToast(`Restarting ${agentId}...`);
-      try {
-        const resp = await fetch(`${window.__config.apiBase}/agents/${agentId}/restart`, { method: 'POST' });
-        if (resp.ok) {
-          const data = await resp.json();
-          this.showToast(data.ready ? `${agentId} restarted and ready` : `${agentId} restarted (not ready)`);
-          this.fetchAgents();
-        } else {
-          this.showToast(`Restart failed`);
-        }
-      } catch (e) { this.showToast(`Error: ${e.message}`); }
+      this.showConfirm('Restart Agent', `Restart agent "${agentId}"? This will interrupt any active work.`, async () => {
+        this.showToast(`Restarting ${agentId}...`);
+        try {
+          const resp = await fetch(`${window.__config.apiBase}/agents/${agentId}/restart`, { method: 'POST' });
+          if (resp.ok) {
+            const data = await resp.json();
+            this.showToast(data.ready ? `${agentId} restarted and ready` : `${agentId} restarted (not ready)`);
+            this.fetchAgents();
+          } else {
+            this.showToast(`Restart failed`);
+          }
+        } catch (e) { this.showToast(`Error: ${e.message}`); }
+      });
     },
 
     async updateBudget(agentId, dailyUsd) {
@@ -1269,20 +1348,21 @@ function dashboard() {
     },
 
     async removeAgent(agentId) {
-      if (!confirm(`Remove agent "${agentId}"? This will stop the container and remove its config.`)) return;
-      try {
-        const resp = await fetch(`${window.__config.apiBase}/agents/${agentId}`, { method: 'DELETE' });
-        if (resp.ok) {
-          this.showToast(`${agentId} removed`);
-          this.closeChat(agentId);
-          delete this.chatHistories[agentId];
-          if (this.detailAgent === agentId) this.closeDetail();
-          this.fetchAgents();
-        } else {
-          const err = await resp.json();
-          this.showToast(`Error: ${err.detail || 'Failed to remove agent'}`);
-        }
-      } catch (e) { this.showToast(`Error: ${e.message}`); }
+      this.showConfirm('Remove Agent', `Remove agent "${agentId}"? This will stop the container and remove its config.`, async () => {
+        try {
+          const resp = await fetch(`${window.__config.apiBase}/agents/${agentId}`, { method: 'DELETE' });
+          if (resp.ok) {
+            this.showToast(`${agentId} removed`);
+            this.closeChat(agentId);
+            delete this.chatHistories[agentId];
+            if (this.detailAgent === agentId) this.closeDetail();
+            this.fetchAgents();
+          } else {
+            const err = await resp.json();
+            this.showToast(`Error: ${err.detail || 'Failed to remove agent'}`);
+          }
+        } catch (e) { this.showToast(`Error: ${e.message}`); }
+      }, true);
     },
 
     // ── Blackboard write/delete ────────────────────────────
@@ -1305,12 +1385,13 @@ function dashboard() {
     },
 
     async deleteBlackboard(key) {
-      if (!confirm(`Delete blackboard key "${key}"?`)) return;
-      try {
-        const resp = await fetch(`${window.__config.apiBase}/blackboard/${key}`, { method: 'DELETE' });
-        if (resp.ok) { this.showToast(`Deleted: ${key}`); this.fetchBlackboard(); }
-        else { const err = await resp.json(); this.showToast(`Error: ${err.detail}`); }
-      } catch (e) { this.showToast(`Error: ${e.message}`); }
+      this.showConfirm('Delete Entry', `Delete blackboard key "${key}"?`, async () => {
+        try {
+          const resp = await fetch(`${window.__config.apiBase}/blackboard/${key}`, { method: 'DELETE' });
+          if (resp.ok) { this.showToast(`Deleted: ${key}`); this.fetchBlackboard(); }
+          else { const err = await resp.json(); this.showToast(`Error: ${err.detail}`); }
+        } catch (e) { this.showToast(`Error: ${e.message}`); }
+      }, true);
     },
 
     toggleBbExpand(key) {
@@ -1360,19 +1441,20 @@ function dashboard() {
     },
 
     async deleteCronJob(jobId) {
-      if (!confirm('Delete this cron job?')) return;
-      try {
-        const resp = await fetch(`${window.__config.apiBase}/cron/${jobId}`, { method: 'DELETE' });
-        if (resp.ok) {
-          this.showToast(`Job ${jobId} deleted`);
-          this.fetchCronJobs();
-        } else {
-          try {
-            const err = await resp.json();
-            this.showToast(`Error: ${err.detail || 'Delete failed'}`);
-          } catch (_) { this.showToast('Delete failed'); }
-        }
-      } catch (e) { console.warn('deleteCronJob failed:', e); }
+      this.showConfirm('Delete Cron Job', 'Delete this cron job?', async () => {
+        try {
+          const resp = await fetch(`${window.__config.apiBase}/cron/${jobId}`, { method: 'DELETE' });
+          if (resp.ok) {
+            this.showToast(`Job ${jobId} deleted`);
+            this.fetchCronJobs();
+          } else {
+            try {
+              const err = await resp.json();
+              this.showToast(`Error: ${err.detail || 'Delete failed'}`);
+            } catch (_) { this.showToast('Delete failed'); }
+          }
+        } catch (e) { console.warn('deleteCronJob failed:', e); }
+      }, true);
     },
 
     // ── Cron inline editing ─────────────────────────────
@@ -1913,12 +1995,13 @@ function dashboard() {
     // ── Reset ────────────────────────────────────────────
 
     async resetAgent(agentId) {
-      if (!confirm(`Reset conversation for "${agentId}"? This clears their chat history.`)) return;
-      try {
-        const resp = await fetch(`${window.__config.apiBase}/agents/${agentId}/reset`, { method: 'POST' });
-        if (resp.ok) this.showToast(`${agentId} conversation reset`);
-        else this.showToast('Reset failed');
-      } catch (e) { this.showToast(`Error: ${e.message}`); }
+      this.showConfirm('Reset Conversation', `Reset conversation for "${agentId}"? This clears their chat history.`, async () => {
+        try {
+          const resp = await fetch(`${window.__config.apiBase}/agents/${agentId}/reset`, { method: 'POST' });
+          if (resp.ok) this.showToast(`${agentId} conversation reset`);
+          else this.showToast('Reset failed');
+        } catch (e) { this.showToast(`Error: ${e.message}`); }
+      }, true);
     },
 
     // ── Credentials ──────────────────────────────────────
@@ -1952,19 +2035,20 @@ function dashboard() {
     },
 
     async deleteCredential(name) {
-      if (!confirm(`Remove credential "${name}"?`)) return;
-      try {
-        const resp = await fetch(`${window.__config.apiBase}/credentials/${encodeURIComponent(name)}`, {
-          method: 'DELETE',
-        });
-        if (resp.ok) {
-          this.showToast(`Credential removed: ${name}`);
-          this.fetchSettings();
-        } else {
-          const err = await resp.json();
-          this.showToast(`Error: ${err.detail}`);
-        }
-      } catch (e) { this.showToast(`Error: ${e.message}`); }
+      this.showConfirm('Remove Credential', `Remove credential "${name}"?`, async () => {
+        try {
+          const resp = await fetch(`${window.__config.apiBase}/credentials/${encodeURIComponent(name)}`, {
+            method: 'DELETE',
+          });
+          if (resp.ok) {
+            this.showToast(`Credential removed: ${name}`);
+            this.fetchSettings();
+          } else {
+            const err = await resp.json();
+            this.showToast(`Error: ${err.detail}`);
+          }
+        } catch (e) { this.showToast(`Error: ${e.message}`); }
+      }, true);
     },
 
     async submitOnboardCredential() {
