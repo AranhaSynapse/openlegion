@@ -108,15 +108,28 @@ class TelegramChannel(Channel):
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message)
         )
 
-        await self._app.initialize()
+        # bot.get_me() during initialize() can time out on slow networks;
+        # retry transient errors only — permanent errors (InvalidToken) fail fast.
+        from telegram.error import NetworkError, RetryAfter
+
+        for attempt in range(3):
+            try:
+                await self._app.initialize()
+                break
+            except (NetworkError, RetryAfter) as err:
+                if attempt == 2:
+                    raise
+                wait = 2 * (attempt + 1)
+                logger.warning("Telegram init failed (%s), retry in %ds...", err, wait)
+                await asyncio.sleep(wait)
         await self._app.start()
         # Terminate any stale polling session left by a previous instance
         # (e.g. process killed without clean shutdown).  A quick getUpdates
         # call forces Telegram to drop the old long-poll connection.
         try:
             await self._app.bot.get_updates(offset=-1, timeout=0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Bot get_updates cleanup failed: %s", e)
         await asyncio.sleep(0.5)
         await self._app.updater.start_polling(
             drop_pending_updates=True,
@@ -193,7 +206,8 @@ class TelegramChannel(Channel):
             try:
                 response = await self.handle_message(str_id, "/help")
                 await update.message.reply_text(welcome + response)
-            except Exception:
+            except Exception as e:
+                logger.debug("Help fetch after pairing failed: %s", e)
                 await update.message.reply_text(welcome)
             return
 
@@ -215,7 +229,8 @@ class TelegramChannel(Channel):
         try:
             response = await self.handle_message(str_id, "/help")
             await update.message.reply_text(welcome + response)
-        except Exception:
+        except Exception as e:
+            logger.debug("Help fetch on start failed: %s", e)
             await update.message.reply_text(welcome)
 
     async def _cmd_allow(self, update, context) -> None:
@@ -378,8 +393,8 @@ class TelegramChannel(Channel):
                             await self._app.bot.delete_message(
                                 chat_id=chat_id, message_id=streaming_msg.message_id,
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("Streaming message delete failed: %s", e)
                         streaming_msg = None
                     try:
                         if progress_msg is None:
@@ -392,8 +407,8 @@ class TelegramChannel(Channel):
                                 message_id=progress_msg.message_id,
                                 text=progress,
                             )
-                    except Exception:
-                        pass  # edit may fail if text unchanged
+                    except Exception as e:
+                        logger.debug("Progress message edit failed: %s", e)
 
                 elif etype == "tool_result":
                     name = event.get("name", "?")
@@ -413,8 +428,8 @@ class TelegramChannel(Channel):
                                     message_id=progress_msg.message_id,
                                     text=progress,
                                 )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("Tool result progress edit failed: %s", e)
 
                 elif etype == "text_delta":
                     response_text += event.get("content", "")
@@ -434,8 +449,8 @@ class TelegramChannel(Channel):
                                     message_id=streaming_msg.message_id,
                                     text=display[:4096],
                                 )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("Streaming text edit failed: %s", e)
 
                 elif etype == "done":
                     response_text = event.get("response", response_text)
@@ -450,8 +465,8 @@ class TelegramChannel(Channel):
                 await self._app.bot.delete_message(
                     chat_id=chat_id, message_id=progress_msg.message_id,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Progress message delete failed: %s", e)
 
         # Edit streaming message with final text, or send new if none exists
         if response_text:
@@ -499,6 +514,6 @@ class TelegramChannel(Channel):
                 await self._app.bot.send_chat_action(
                     chat_id=chat_id, action=ChatAction.TYPING,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Typing indicator send failed: %s", e)
             await asyncio.sleep(4)
