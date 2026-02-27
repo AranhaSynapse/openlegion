@@ -1414,3 +1414,27 @@ class TestCredentialCLI:
             runner = CliRunner()
             result = runner.invoke(cli, ["credential", "remove", "nonexistent", "-y"])
             assert result.exit_code != 0
+
+    def test_credential_remove_success(self, tmp_path):
+        """credential remove deletes the credential from .env."""
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "OPENLEGION_SYSTEM_ANTHROPIC_API_KEY=sk-test123\nOTHER_VAR=keep\n"
+        )
+        config_file = tmp_path / "mesh.yaml"
+        config_file.write_text(yaml.dump({"mesh": {"host": "0.0.0.0", "port": 8420}}))
+
+        with (
+            patch("src.cli.config.ENV_FILE", env_file),
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.PROJECT_ROOT", tmp_path),
+            patch("src.cli.config.PROJECTS_DIR", tmp_path / "projects"),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli, ["credential", "remove", "anthropic_api_key", "-y"]
+            )
+            assert result.exit_code == 0, result.output
+            content = env_file.read_text()
+            assert "ANTHROPIC_API_KEY" not in content
+            assert "OTHER_VAR=keep" in content

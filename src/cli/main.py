@@ -629,22 +629,31 @@ def credential_remove(name: str, yes: bool):
 
     name_upper = name.upper()
     lines = env_file.read_text().splitlines()
-    found = False
-    new_lines = []
-    for line in lines:
-        stripped = line.strip()
-        key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
-        # Match by full env key or by service name
-        if key in (f"{SYSTEM_PREFIX}{name_upper}", f"{AGENT_PREFIX}{name_upper}"):
-            found = True
-            if not yes:
-                click.confirm(f"Remove credential '{name}'?", abort=True)
-            continue  # skip this line
-        new_lines.append(line)
+
+    # First pass: check if credential exists
+    target_keys = {f"{SYSTEM_PREFIX}{name_upper}", f"{AGENT_PREFIX}{name_upper}"}
+    found = any(
+        (stripped := line.strip())
+        and "=" in stripped
+        and stripped.split("=", 1)[0].strip() in target_keys
+        for line in lines
+    )
 
     if not found:
         click.echo(f"Credential '{name}' not found.", err=True)
         raise SystemExit(1)
+
+    if not yes:
+        click.confirm(f"Remove credential '{name}'?", abort=True)
+
+    # Second pass: filter out matching lines
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
+        if key in target_keys:
+            continue
+        new_lines.append(line)
 
     env_file.write_text("\n".join(new_lines) + "\n" if new_lines else "")
     click.echo(f"Removed credential '{name}'.")
