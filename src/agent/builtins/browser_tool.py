@@ -1,13 +1,9 @@
-"""Browser automation via Playwright / Camoufox.
+"""Browser automation via Playwright CDP.
 
-Provides browser access for web scraping, testing, and interaction.
-A single browser instance is lazily initialized per agent process and reused.
-Supports four backends via BROWSER_BACKEND env var:
-basic, stealth, advanced, persistent.
-
-The persistent backend uses Playwright Chromium with stealth flags and a
-JS init script for anti-detection.  The stealth backend uses Camoufox
-(patched Firefox).
+Every agent gets Chrome + KasmVNC by default.  Chrome runs as a subprocess
+on the X display for VNC interaction; Playwright connects on-demand via CDP
+for programmatic control, then disconnects after each operation so Chrome
+runs clean for manual use.
 """
 
 from __future__ import annotations
@@ -23,8 +19,7 @@ from src.shared.utils import setup_logging
 
 logger = setup_logging("agent.browser")
 
-_pw = None  # Playwright/Patchright instance (needs explicit stop on cleanup)
-_camoufox_cm = None  # Camoufox context manager (needs __aexit__ on cleanup)
+_pw = None  # Playwright instance (needs explicit stop on cleanup)
 _browser = None
 _context = None
 _page = None
@@ -32,8 +27,8 @@ _launch_lock = asyncio.Lock()
 _page_refs: dict[str, object] = {}
 _credential_filled_refs: set[str] = set()  # refs that had $CRED{} typed into them
 _page_op_lock = asyncio.Lock()  # serializes all page operations (Playwright pages aren't concurrent-safe)
-_vnc_proc = None  # Xvnc (KasmVNC) subprocess (persistent backend)
-_chrome_proc = None  # Chrome subprocess (persistent backend, launched without Playwright)
+_vnc_proc = None  # Xvnc (KasmVNC) subprocess
+_chrome_proc = None  # Chrome subprocess (launched without Playwright)
 
 _ACTIONABLE_ROLES = frozenset({
     "button", "link", "textbox", "checkbox", "radio", "combobox",
@@ -81,209 +76,23 @@ def _redact_credentials(text: str) -> str:
 
 
 async def _get_page(*, mesh_client=None):
-    """Lazily initialize a persistent browser context and page."""
+    """Connect Playwright to the running Chrome via CDP on demand."""
     global _browser, _context, _page
     async with _launch_lock:
         if _page and not _page.is_closed():
             return _page
 
-        backend = os.environ.get("BROWSER_BACKEND", "persistent")
-
-        if backend == "stealth":
-            _browser, _context, _page = await _launch_stealth()
-        elif backend == "advanced":
-            _browser, _context, _page = await _launch_advanced(mesh_client)
-        elif backend == "persistent":
-            _browser, _context, _page = await _launch_persistent()
-        else:
-            _browser, _context, _page = await _launch_basic()
+        _browser, _context, _page = await _launch_persistent()
 
         return _page
-
-
-async def _launch_basic():
-    """Launch standard Playwright Chromium."""
-    global _pw
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        raise RuntimeError(
-            "playwright is not installed. The agent container must include "
-            "playwright and chromium. See Dockerfile.agent."
-        )
-    _pw = await async_playwright().start()
-    browser = await _pw.chromium.launch(headless=True)
-    context = await browser.new_context(
-        viewport={"width": 1280, "height": 720},
-        user_agent=(
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        ),
-    )
-    page = await context.new_page()
-    logger.info("Browser backend: basic (Playwright Chromium)")
-    return browser, context, page
-
-
-def _ensure_xvfb():
-    """Start Xvfb virtual display if not already running.
-
-    Camoufox's built-in ``headless="virtual"`` hangs in Docker containers.
-    Starting Xvfb ourselves and setting DISPLAY is the proven approach.
-    """
-    if os.environ.get("DISPLAY"):
-        return
-    try:
-        subprocess.Popen(
-            ["Xvfb", ":99", "-screen", "0", "1280x720x24"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        os.environ["DISPLAY"] = ":99"
-        logger.info("Started Xvfb virtual display on :99")
-    except FileNotFoundError:
-        logger.warning("Xvfb not installed — falling back to headless mode")
-
-
-async def _launch_stealth():
-    """Launch Camoufox anti-detect browser.
-
-    Camoufox handles its own user-agent and fingerprint rotation,
-    so we intentionally skip the custom user_agent set in _launch_basic().
-    Uses Xvfb virtual display for proper rendering and anti-detection.
-    """
-    global _camoufox_cm
-    try:
-        from camoufox.async_api import AsyncCamoufox
-    except ImportError:
-        raise RuntimeError(
-            "camoufox is not installed. The agent container must include "
-            "camoufox. See Dockerfile.agent."
-        )
-    _ensure_xvfb()
-    _camoufox_cm = AsyncCamoufox(headless=True)
-    browser = await _camoufox_cm.__aenter__()
-    context = await browser.new_context(viewport={"width": 1280, "height": 720})
-    page = await context.new_page()
-    logger.info("Browser backend: stealth (Camoufox)")
-    return browser, context, page
-
-
-async def _launch_advanced(mesh_client):
-    """Connect to Bright Data Scraping Browser via CDP."""
-    global _pw
-    if not mesh_client:
-        raise RuntimeError(
-            "Advanced browser backend requires mesh connectivity for credential resolution"
-        )
-    try:
-        cdp_url = await mesh_client.vault_resolve("brightdata_cdp_url")
-    except Exception as e:
-        raise RuntimeError(
-            f"Failed to resolve 'brightdata_cdp_url' from vault: {e}. "
-            "Check agent permissions in config/permissions.json."
-        ) from e
-    if not cdp_url:
-        raise RuntimeError(
-            "Credential 'brightdata_cdp_url' not found in vault. "
-            "Set OPENLEGION_CRED_BRIGHTDATA_CDP_URL on the host."
-        )
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        raise RuntimeError(
-            "playwright is not installed. The agent container must include "
-            "playwright. See Dockerfile.agent."
-        )
-    _pw = await async_playwright().start()
-    browser = await _pw.chromium.connect_over_cdp(cdp_url, timeout=120000)
-    # Use Bright Data's default context — it includes managed fingerprinting,
-    # CAPTCHA solving, and anti-detection.  Creating a new context would strip
-    # those protections away.
-    context = browser.contexts[0]
-    page = context.pages[0] if context.pages else await context.new_page()
-    logger.info("Browser backend: advanced (Bright Data CDP)")
-    return browser, context, page
-
-
-_STEALTH_INIT_SCRIPT = """
-// Hide navigator.webdriver — backup for --disable-blink-features flag.
-Object.defineProperty(navigator, 'webdriver', {
-    get: () => undefined, configurable: true,
-});
-
-// Fake chrome.runtime (real Chrome has this, Playwright doesn't)
-if (!window.chrome) window.chrome = {};
-if (!window.chrome.runtime) {
-    window.chrome.runtime = {
-        connect: () => {},
-        sendMessage: () => {},
-        onMessage: {addListener: () => {}, removeListener: () => {}},
-        onConnect: {addListener: () => {}, removeListener: () => {}},
-    };
-}
-
-// Fake plugins array (automation Chromium reports empty)
-Object.defineProperty(navigator, 'plugins', {
-    get: () => {
-        const p = [
-            {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer',
-             description: 'Portable Document Format', length: 1},
-            {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai',
-             description: '', length: 1},
-            {name: 'Native Client', filename: 'internal-nacl-plugin',
-             description: '', length: 2},
-        ];
-        p.refresh = () => {};
-        return p;
-    },
-});
-
-// Fix permissions.query
-const origQuery = window.navigator.permissions.query.bind(
-    window.navigator.permissions
-);
-window.navigator.permissions.query = (params) => {
-    if (params.name === 'notifications')
-        return Promise.resolve({state: Notification.permission});
-    return origQuery(params);
-};
-
-// Clean up automation globals
-delete window.__playwright;
-delete window.__pw_manual;
-delete window.__pwInitScripts;
-for (const key of Object.keys(window)) {
-    if (key.startsWith('cdc_') || key.startsWith('__pw')) delete window[key];
-}
-
-// Fix navigator.languages
-Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-
-// Fake connection.rtt (0 in automation, ~50 in real browsers)
-if (navigator.connection) {
-    Object.defineProperty(navigator.connection, 'rtt', {get: () => 50});
-}
-
-// Spoof navigator.userActivation (X checks hasBeenActive)
-if (navigator.userActivation) {
-    Object.defineProperty(navigator.userActivation, 'hasBeenActive', {
-        get: () => true,
-    });
-    Object.defineProperty(navigator.userActivation, 'isActive', {
-        get: () => false,
-    });
-}
-"""
 
 
 def _cleanup_stale_profile():
     """Kill orphaned browser processes and remove stale lock files.
 
     After a crash, Chrome leaves SingletonLock/SingletonSocket/SingletonCookie
-    and Firefox leaves lock/.parentlock in the profile directory.  A new browser
-    instance refuses to start if these exist.
-    This helper cleans up before each launch.
+    in the profile directory.  A new browser instance refuses to start if these
+    exist.  This helper cleans up before each launch.
     """
     profile_dir = Path("/data/browser_profile")
     if not profile_dir.exists():
@@ -298,10 +107,9 @@ def _cleanup_stale_profile():
     except Exception:
         pass  # pkill may not exist or no matching processes
 
-    # Remove stale lock files (Chrome + Firefox)
+    # Remove stale Chrome lock files
     lock_names = (
-        "SingletonLock", "SingletonSocket", "SingletonCookie",  # Chrome
-        "lock", ".parentlock",  # Firefox
+        "SingletonLock", "SingletonSocket", "SingletonCookie",
     )
     for name in lock_names:
         lock_path = profile_dir / name
@@ -375,12 +183,27 @@ def _launch_chrome_subprocess():
             # Required for Docker — Chrome's sandbox needs kernel capabilities
             # that aren't available in containers with no-new-privileges.
             "--no-sandbox",
+            # Use /tmp instead of /dev/shm for shared memory.  Docker's /dev/shm
+            # can fill up under heavy JS; when it does, renderers crash silently
+            # (buttons stop responding, "Aw Snap!" pages).
+            "--disable-dev-shm-usage",
+            # NOTE: do NOT add --disable-gpu — reCAPTCHA Enterprise uses WebGL
+            # and Canvas fingerprinting.  Disabling GPU is a bot signal that
+            # causes invisible CAPTCHA to silently block form submissions.
             # Disable Chrome's built-in async DNS client — it bypasses Docker
             # Desktop's DNS forwarder, causing 10-30s timeouts on every request.
             # Belt-and-suspenders with the enterprise policy in the Dockerfile.
             "--disable-features=AsyncDns",
             "--no-first-run",
             "--no-default-browser-check",
+            # No extensions or sync needed in the container.
+            "--disable-extensions",
+            "--disable-sync",
+            "--disable-translate",
+            # NOTE: do NOT add --disable-background-networking — reCAPTCHA
+            # Enterprise needs background network calls to Google for scoring.
+            # Limit renderer processes — one active tab + one spare.
+            "--renderer-process-limit=2",
             # --test-type suppresses the "unsupported command-line flag" infobar.
             # --disable-infobars was deprecated and ironically triggers its own
             # warning banner in newer Chrome, which shifts page content down.
@@ -400,8 +223,8 @@ async def _launch_persistent():
     """Connect Playwright to the already-running Chrome via CDP.
 
     Chrome was launched directly by ``_launch_chrome_subprocess()`` during
-    ``start_persistent_browser()``.  This function connects Playwright
-    on-demand when the agent needs programmatic browser control.
+    ``start_browser()``.  This function connects Playwright on-demand
+    when the agent needs programmatic browser control.
     """
     global _pw
     try:
@@ -417,22 +240,6 @@ async def _launch_persistent():
     )
     context = browser.contexts[0]
     page = context.pages[0] if context.pages else await context.new_page()
-
-    # Override Playwright's Target.setAutoAttach — by default Playwright sets
-    # waitForDebuggerOnStart:true which freezes every new target (including
-    # popup windows from window.open()).  Reddit's login flow opens a popup
-    # that hangs indefinitely because it's waiting for the debugger to resume.
-    try:
-        cdp = await context.new_cdp_session(page)
-        await cdp.send("Target.setAutoAttach", {
-            "autoAttach": True,
-            "waitForDebuggerOnStart": False,
-            "flatten": True,
-        })
-        await cdp.detach()
-    except Exception as e:
-        logger.debug("Could not override Target.setAutoAttach: %s", e)
-
     logger.info("Playwright connected to Chrome via CDP (agent control)")
     return browser, context, page
 
@@ -477,19 +284,119 @@ async def _browser_cleanup_soft():
     _page_refs.clear()
     _credential_filled_refs.clear()
     _cleanup_stale_profile()
-    # Relaunch Chrome clean (no Playwright) for VNC — only in persistent mode
-    if os.environ.get("BROWSER_BACKEND") == "persistent":
-        try:
-            _launch_chrome_subprocess()
-            await asyncio.sleep(1)
-        except RuntimeError:
-            logger.debug("Could not relaunch Chrome subprocess (not in container?)")
+    # Relaunch Chrome clean (no Playwright) for VNC
+    try:
+        _launch_chrome_subprocess()
+        await asyncio.sleep(1)
+    except (RuntimeError, OSError):
+        logger.debug("Could not relaunch Chrome subprocess (not in container?)")
 
 
-async def start_persistent_browser():
-    """Start persistent browser + KasmVNC at container boot.
+async def _disconnect_cdp():
+    """Disconnect Playwright CDP without killing Chrome.
 
-    Called from ``__main__.py`` lifespan when ``BROWSER_BACKEND=persistent``.
+    Removes all CDP instrumentation (Runtime.enable, Target.setAutoAttach,
+    addScriptToEvaluateOnNewDocument) so Chrome runs clean on the X display
+    for VNC interaction.  Called after each browser tool operation completes.
+
+    On a ``connect_over_cdp`` connection, ``browser.close()`` just closes
+    the WebSocket — it does NOT terminate the Chrome process.  The next
+    ``_get_page()`` call will reconnect via ``connect_over_cdp`` on demand.
+
+    This is critical for sites like Reddit whose login uses in-page modals
+    that rely on JavaScript event handlers.  Playwright's CDP sets
+    ``Target.setAutoAttach(waitForDebuggerOnStart=true)`` which can freeze
+    new targets and interfere with normal JS execution.
+    """
+    global _pw, _browser, _context, _page
+    try:
+        if _browser:
+            await _browser.close()
+    except Exception as e:
+        logger.debug("Error closing CDP connection: %s", e)
+    try:
+        if _pw:
+            await _pw.stop()
+    except Exception as e:
+        logger.debug("Error stopping Playwright process: %s", e)
+    _pw = _browser = _context = _page = None
+    _page_refs.clear()
+    _credential_filled_refs.clear()
+    logger.debug("Disconnected Playwright CDP — Chrome running clean")
+
+
+_VNC_INPUT_FIX_JS = r"""
+(() => {
+    if (window.__vnc_input_fix) return;
+    window.__vnc_input_fix = true;
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype, 'value'
+    ).set;
+    const tracked = new Map();
+    function scan() {
+        document.querySelectorAll('*').forEach(el => {
+            if (el.shadowRoot) {
+                el.shadowRoot.querySelectorAll('input, textarea').forEach(inp => {
+                    if (!tracked.has(inp)) tracked.set(inp, inp.value);
+                });
+            }
+        });
+    }
+    setInterval(() => {
+        scan();
+        tracked.forEach((prev, inp) => {
+            if (inp.value !== prev) {
+                tracked.set(inp, inp.value);
+                nativeSetter.call(inp, inp.value);
+                inp.dispatchEvent(new InputEvent('input', {
+                    bubbles: true, composed: true,
+                    inputType: 'insertText', data: inp.value,
+                }));
+                inp.dispatchEvent(new Event('change', {bubbles: true, composed: true}));
+            }
+        });
+    }, 300);
+})();
+"""
+
+
+async def _inject_vnc_input_fix():
+    """Inject a script into Chrome that fixes Shadow DOM input handling for VNC.
+
+    Modern sites (Reddit, etc.) use web components with Shadow DOM inputs.
+    VNC keyboard events update the inner <input> value visually but don't
+    fire the framework events (InputEvent with composed:true) that the
+    outer component needs to update its state.  This causes buttons to
+    stay disabled even after the user types credentials.
+
+    The fix: a small polling script that detects value changes in Shadow DOM
+    inputs and dispatches proper InputEvent/change events.  Registered via
+    CDP Page.addScriptToEvaluateOnNewDocument so it runs on every page load.
+    The CDP connection is closed immediately after registration.
+    """
+    try:
+        from playwright.async_api import async_playwright
+        pw = await async_playwright().start()
+        browser = await pw.chromium.connect_over_cdp("http://127.0.0.1:9222")
+        cdp = await browser.contexts[0].new_cdp_session(browser.contexts[0].pages[0])
+        # Register script for all future page loads
+        await cdp.send(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": _VNC_INPUT_FIX_JS},
+        )
+        # Also run it on the current page
+        await cdp.send("Runtime.evaluate", {"expression": _VNC_INPUT_FIX_JS})
+        await browser.close()
+        await pw.stop()
+        logger.info("Injected VNC Shadow DOM input fix")
+    except Exception as e:
+        logger.debug("Could not inject VNC input fix (non-fatal): %s", e)
+
+
+async def start_browser():
+    """Start Chrome + KasmVNC at container boot.
+
+    Called from ``__main__.py`` lifespan.
     KasmVNC's Xvnc is an X server, VNC server, and web server in a single
     process — no need for separate websockify or noVNC.  It serves its own
     modern web client with seamless clipboard, smooth scrolling, and webp
@@ -528,8 +435,36 @@ async def start_persistent_browser():
     os.environ["DISPLAY"] = ":99"
     logger.info("Started KasmVNC Xvnc on :99, web on :%s", listen_port)
 
-    # Start a lightweight window manager so popup windows (e.g. Reddit login)
-    # can be stacked, focused, and managed properly in the VNC session.
+    # Start a lightweight window manager for proper window stacking in VNC.
+    # Override the Dockerfile's openbox config to NOT maximize popup/dialog
+    # windows — sites like Reddit open login modals that should stay at their
+    # natural size, not be force-maximized over the main Chrome window.
+    _openbox_config = Path("/home/agent/.config/openbox/rc.xml")
+    try:
+        _openbox_config.parent.mkdir(parents=True, exist_ok=True)
+        _openbox_config.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<openbox_config xmlns="http://openbox.org/3.4/rc">\n'
+            "  <desktops><number>1</number></desktops>\n"
+            "  <applications>\n"
+            '    <application class="*">\n'
+            "      <decor>no</decor>\n"
+            "      <maximized>true</maximized>\n"
+            "    </application>\n"
+            "    <!-- Don't maximize popup/dialog windows -->\n"
+            '    <application role="pop-up">\n'
+            "      <maximized>no</maximized>\n"
+            "      <decor>yes</decor>\n"
+            "    </application>\n"
+            '    <application type="dialog">\n'
+            "      <maximized>no</maximized>\n"
+            "      <decor>yes</decor>\n"
+            "    </application>\n"
+            "  </applications>\n"
+            "</openbox_config>\n"
+        )
+    except OSError as e:
+        logger.debug("Could not write openbox config: %s", e)
     subprocess.Popen(
         ["openbox"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -542,11 +477,12 @@ async def start_persistent_browser():
     _cleanup_stale_profile()
     _launch_chrome_subprocess()
     await asyncio.sleep(1)  # let Chrome initialize before agent actions
+    await _inject_vnc_input_fix()
 
 
 async def browser_cleanup():
     """Release browser resources. Called on agent shutdown."""
-    global _pw, _camoufox_cm, _browser, _context, _page, _vnc_proc, _chrome_proc
+    global _pw, _browser, _context, _page, _vnc_proc, _chrome_proc
     try:
         if _page and not _page.is_closed():
             await _page.close()
@@ -562,11 +498,6 @@ async def browser_cleanup():
             await _browser.close()
     except Exception as e:
         logger.debug("Error closing browser: %s", e)
-    try:
-        if _camoufox_cm:
-            await _camoufox_cm.__aexit__(None, None, None)
-    except Exception as e:
-        logger.debug("Error closing camoufox: %s", e)
     try:
         if _pw:
             await _pw.stop()
@@ -584,7 +515,7 @@ async def browser_cleanup():
             _vnc_proc.wait(timeout=5)
         except Exception as e:
             logger.debug("Error stopping Xvnc: %s", e)
-    _pw = _camoufox_cm = _browser = _context = _page = None
+    _pw = _browser = _context = _page = None
     _vnc_proc = _chrome_proc = None
     _page_refs.clear()
     _credential_filled_refs.clear()
@@ -614,35 +545,21 @@ def _is_dead_session_error(error_msg: str) -> bool:
     name="browser_reset",
     description=(
         "Reset the browser by closing the current session and starting fresh. "
-        "Use this when the browser is stuck, showing tunnel errors, or has hit "
-        "navigation limits. After reset, the next browser_navigate call will "
-        "establish a new connection (and a new IP for Bright Data)."
+        "Use this when the browser is stuck or showing errors. "
+        "Profile and VNC are preserved — cookies and sessions survive."
     ),
     parameters={},
 )
 async def browser_reset(*, mesh_client=None) -> dict:
     """Force-close the browser session so the next call gets a fresh one."""
     async with _page_op_lock:
-        backend = os.environ.get("BROWSER_BACKEND", "persistent")
-        if backend == "persistent":
-            await _browser_cleanup_soft()
-            logger.info("Browser session reset (backend: persistent, profile preserved)")
-            return {
-                "status": "reset",
-                "backend": backend,
-                "message": (
-                    "Browser session closed. Profile and VNC are preserved. "
-                    "Next browser call will reopen with existing cookies/sessions."
-                ),
-            }
-        await browser_cleanup()
-        logger.info("Browser session reset (backend: %s)", backend)
+        await _browser_cleanup_soft()
+        logger.info("Browser session reset (profile preserved)")
         return {
             "status": "reset",
-            "backend": backend,
             "message": (
-                "Browser session closed. Next browser call will establish "
-                "a fresh connection."
+                "Browser session closed. Profile and VNC are preserved. "
+                "Next browser call will reopen with existing cookies/sessions."
             ),
         }
 
@@ -698,29 +615,29 @@ def _flatten_tree(node: dict) -> list[dict]:
 async def browser_navigate(url: str, wait_ms: int = 1000, *, mesh_client=None) -> dict:
     """Navigate to a URL and extract text content.
 
-    If the CDP session is dead (navigation limit, tunnel failure), automatically
-    resets the browser and retries once with a fresh session.
+    If the CDP session is dead, automatically resets the browser and retries
+    once with a fresh session.  Disconnects Playwright CDP after extracting
+    content so Chrome runs clean for VNC interaction.
     """
     async with _page_op_lock:
-        backend = os.environ.get("BROWSER_BACKEND", "persistent")
         for attempt in range(2):
             try:
                 _page_refs.clear()
                 _credential_filled_refs.clear()
                 page = await _get_page(mesh_client=mesh_client)
-                # Bright Data premium domains can take up to 2 min for
-                # CAPTCHA solving and proxy rotation; basic/stealth are fast.
-                nav_timeout = 120_000 if backend == "advanced" else 30_000
-                response = await page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout)
+                response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
                 if wait_ms:
                     await page.wait_for_timeout(wait_ms)
                 text = await page.inner_text("body")
-                return {
+                result = {
                     "url": page.url,
                     "title": await page.title(),
                     "status": response.status if response else 0,
                     "content": _redact_credentials(text[:50000]),
                 }
+                # Disconnect CDP so Chrome runs clean for VNC interaction.
+                await _disconnect_cdp()
+                return result
             except Exception as e:
                 error_msg = str(e)
                 if attempt == 0 and _is_dead_session_error(error_msg):
@@ -728,13 +645,10 @@ async def browser_navigate(url: str, wait_ms: int = 1000, *, mesh_client=None) -
                         "Dead CDP session detected (%s), resetting browser and retrying",
                         error_msg[:120],
                     )
-                    if backend == "persistent":
-                        await _browser_cleanup_soft()
-                    else:
-                        await browser_cleanup()
+                    await _browser_cleanup_soft()
                     continue
+                await _disconnect_cdp()
                 return {"error": error_msg, "url": url}
-        return {"error": "Navigation failed after session reset", "url": url}
 
 
 def _parse_aria_snapshot(yaml_text: str) -> list[dict]:
@@ -965,8 +879,10 @@ async def browser_screenshot(
                 # Update file size after drawing labels
                 result["size"] = save_path.stat().st_size
 
+            await _disconnect_cdp()
             return result
         except Exception as e:
+            await _disconnect_cdp()
             return {"error": str(e)}
 
 
@@ -990,7 +906,11 @@ async def browser_screenshot(
     },
 )
 async def browser_click(selector: str = "", ref: str = "", *, mesh_client=None) -> dict:
-    """Click an element by ref or CSS selector."""
+    """Click an element by ref or CSS selector.
+
+    In persistent mode, disconnects CDP after clicking so any modals or
+    popups triggered by the click can render without CDP interference.
+    """
     if not selector and not ref:
         return {"error": "Provide either 'ref' (from browser_snapshot) or 'selector' (CSS)"}
     async with _page_op_lock:
@@ -1002,12 +922,17 @@ async def browser_click(selector: str = "", ref: str = "", *, mesh_client=None) 
                     return {"error": f"Unknown ref '{ref}'. Call browser_snapshot first to get current refs."}
                 await locator.click(timeout=10000)
                 await page.wait_for_timeout(500)
-                return {"clicked": ref, "url": page.url}
+                result = {"clicked": ref, "url": page.url}
             else:
                 await page.click(selector, timeout=10000)
                 await page.wait_for_timeout(500)
-                return {"clicked": selector, "url": page.url}
+                result = {"clicked": selector, "url": page.url}
+            # Disconnect CDP so modals/popups triggered by the click
+            # can render without Playwright's CDP interference.
+            await _disconnect_cdp()
+            return result
         except Exception as e:
+            await _disconnect_cdp()
             return {"error": str(e), "selector": selector, "ref": ref}
 
 
@@ -1085,8 +1010,10 @@ async def browser_type(
                 result["ref"] = ref
             else:
                 result["selector"] = selector
+            await _disconnect_cdp()
             return result
         except Exception as e:
+            await _disconnect_cdp()
             return {"error": str(e), "selector": selector, "ref": ref}
 
 
@@ -1120,6 +1047,8 @@ async def browser_evaluate(script: str, *, mesh_client=None) -> dict:
                     _redact_credentials(item) if isinstance(item, str) else item
                     for item in result
                 ]
+            await _disconnect_cdp()
             return {"result": result}
         except Exception as e:
+            await _disconnect_cdp()
             return {"error": str(e)}
