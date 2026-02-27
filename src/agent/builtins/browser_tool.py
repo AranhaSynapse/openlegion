@@ -26,6 +26,7 @@ _page = None
 _launch_lock = asyncio.Lock()
 _page_refs: dict[str, object] = {}
 _credential_filled_refs: set[str] = set()  # refs that had $CRED{} typed into them
+_resolved_credential_values: set[str] = set()  # actual secret values from $CRED{} resolution
 _page_op_lock = asyncio.Lock()  # serializes all page operations (Playwright pages aren't concurrent-safe)
 _vnc_proc = None  # Xvnc (KasmVNC) subprocess
 _chrome_proc = None  # Chrome subprocess (launched without Playwright)
@@ -72,6 +73,20 @@ def _redact_credentials(text: str) -> str:
         return text
     for pattern in _REDACT_PATTERNS:
         text = pattern.sub("[REDACTED]", text)
+    return text
+
+
+def _redact_resolved_credentials(text: str) -> str:
+    """Replace any resolved $CRED{} values with [REDACTED].
+
+    Complements _redact_credentials (pattern-based) by catching exact
+    credential values that were resolved during browser_type calls.
+    Only values >= 4 characters are tracked to avoid false positives.
+    """
+    if not text or not _resolved_credential_values:
+        return text
+    for value in _resolved_credential_values:
+        text = text.replace(value, "[REDACTED]")
     return text
 
 
@@ -287,6 +302,7 @@ async def _browser_cleanup_soft():
     _pw = _browser = _context = _page = None
     _page_refs.clear()
     _credential_filled_refs.clear()
+    _resolved_credential_values.clear()
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _cleanup_stale_profile)
     # Relaunch Chrome clean (no Playwright) for VNC
@@ -528,6 +544,7 @@ async def browser_cleanup():
     _vnc_proc = _chrome_proc = None
     _page_refs.clear()
     _credential_filled_refs.clear()
+    _resolved_credential_values.clear()
 
 
 # Error patterns that indicate a dead CDP session (navigation limit, tunnel drop).
@@ -642,7 +659,7 @@ async def browser_navigate(url: str, wait_ms: int = 1000, *, mesh_client=None) -
                     "url": page.url,
                     "title": await page.title(),
                     "status": response.status if response else 0,
-                    "content": _redact_credentials(text[:50000]),
+                    "content": _redact_resolved_credentials(_redact_credentials(text[:50000])),
                 }
                 # Auto-detect and solve CAPTCHAs before returning.
                 try:
@@ -665,8 +682,8 @@ async def browser_navigate(url: str, wait_ms: int = 1000, *, mesh_client=None) -
                             )
                             await page.wait_for_timeout(1000)
                             text = await page.inner_text("body")
-                            result["content"] = _redact_credentials(
-                                text[:50000],
+                            result["content"] = _redact_resolved_credentials(
+                                _redact_credentials(text[:50000]),
                             )
                             result["captcha_solved"] = captcha_info["type"]
                         else:
@@ -783,12 +800,16 @@ async def _browser_snapshot_inner(*, mesh_client=None) -> dict:
 
             _page_refs[ref] = locator
 
-            # Redact common secret patterns from element text
+            # Redact common secret patterns and resolved credential values
             redacted_el = dict(el)
             if "name" in redacted_el:
-                redacted_el["name"] = _redact_credentials(redacted_el["name"])
+                redacted_el["name"] = _redact_resolved_credentials(
+                    _redact_credentials(redacted_el["name"]),
+                )
             if "value" in redacted_el:
-                redacted_el["value"] = _redact_credentials(redacted_el["value"])
+                redacted_el["value"] = _redact_resolved_credentials(
+                    _redact_credentials(redacted_el["value"]),
+                )
 
             entry = {"ref": ref, **redacted_el}
             elements.append(entry)
@@ -1031,6 +1052,10 @@ async def browser_type(
             if resolved is None:
                 return {"error": f"Credential not found: {cred_name}"}
             actual_text = actual_text.replace(f"$CRED{{{cred_name}}}", resolved)
+            # Track resolved values for redaction in subsequent browser output.
+            # Min length 4 to avoid false-positive redaction of short strings.
+            if len(resolved) >= 4:
+                _resolved_credential_values.add(resolved)
         is_credential = True
 
     async with _page_op_lock:
@@ -1081,15 +1106,15 @@ async def browser_evaluate(script: str, *, mesh_client=None) -> dict:
             result = await page.evaluate(script)
             # Redact any credential values that might appear in evaluate results
             if isinstance(result, str):
-                result = _redact_credentials(result)
+                result = _redact_resolved_credentials(_redact_credentials(result))
             elif isinstance(result, dict):
                 result = {
-                    k: _redact_credentials(v) if isinstance(v, str) else v
+                    k: _redact_resolved_credentials(_redact_credentials(v)) if isinstance(v, str) else v
                     for k, v in result.items()
                 }
             elif isinstance(result, list):
                 result = [
-                    _redact_credentials(item) if isinstance(item, str) else item
+                    _redact_resolved_credentials(_redact_credentials(item)) if isinstance(item, str) else item
                     for item in result
                 ]
             await _disconnect_cdp()

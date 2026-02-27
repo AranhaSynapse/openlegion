@@ -987,6 +987,157 @@ class TestBrowserTypeCredentialHandles:
         assert result["typed"] == "[credential]"
         mock_locator.fill.assert_awaited_once_with("Bearer secret123", timeout=10000)
 
+    @pytest.mark.asyncio
+    async def test_cred_handle_tracks_resolved_value(self):
+        """$CRED{} resolution adds value to _resolved_credential_values."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._resolved_credential_values.clear()
+        mock_locator = AsyncMock()
+        mock_page = AsyncMock()
+        bt._page_refs["e1"] = mock_locator
+
+        mock_client = AsyncMock()
+        mock_client.vault_resolve.return_value = "MySecretP@ss123"
+
+        with patch.object(bt, "_get_page", return_value=mock_page):
+            await bt.browser_type(
+                text="$CRED{password}", ref="e1", mesh_client=mock_client,
+            )
+
+        assert "MySecretP@ss123" in bt._resolved_credential_values
+        bt._resolved_credential_values.clear()
+
+    @pytest.mark.asyncio
+    async def test_cred_handle_skips_short_values(self):
+        """Resolved values shorter than 4 chars are not tracked (false-positive risk)."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._resolved_credential_values.clear()
+        mock_locator = AsyncMock()
+        mock_page = AsyncMock()
+        bt._page_refs["e1"] = mock_locator
+
+        mock_client = AsyncMock()
+        mock_client.vault_resolve.return_value = "abc"
+
+        with patch.object(bt, "_get_page", return_value=mock_page):
+            await bt.browser_type(
+                text="$CRED{pin}", ref="e1", mesh_client=mock_client,
+            )
+
+        assert "abc" not in bt._resolved_credential_values
+        bt._resolved_credential_values.clear()
+
+
+class TestResolvedCredentialRedaction:
+    """Tests for the readback-attack mitigation.
+
+    After browser_type resolves a $CRED{} handle, the actual value must be
+    redacted from all subsequent browser output (evaluate, snapshot, navigate).
+    """
+
+    @pytest.mark.asyncio
+    async def test_evaluate_redacts_resolved_credential(self):
+        """browser_evaluate redacts a resolved credential value read back from DOM."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._resolved_credential_values = {"MySecretP@ss123"}
+        mock_page = AsyncMock()
+        mock_page.evaluate = AsyncMock(return_value="MySecretP@ss123")
+
+        with patch.object(bt, "_get_page", return_value=mock_page):
+            result = await bt.browser_evaluate(script="document.querySelector('input').value")
+
+        assert "MySecretP@ss123" not in str(result)
+        assert result["result"] == "[REDACTED]"
+        bt._resolved_credential_values.clear()
+
+    @pytest.mark.asyncio
+    async def test_evaluate_redacts_credential_in_dict(self):
+        """browser_evaluate redacts resolved credentials in dict values."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._resolved_credential_values = {"hunter2secret"}
+        mock_page = AsyncMock()
+        mock_page.evaluate = AsyncMock(
+            return_value={"password": "hunter2secret", "username": "admin"},
+        )
+
+        with patch.object(bt, "_get_page", return_value=mock_page):
+            result = await bt.browser_evaluate(script="getFormData()")
+
+        assert "hunter2secret" not in str(result)
+        assert result["result"]["password"] == "[REDACTED]"
+        assert result["result"]["username"] == "admin"
+        bt._resolved_credential_values.clear()
+
+    @pytest.mark.asyncio
+    async def test_evaluate_redacts_credential_in_list(self):
+        """browser_evaluate redacts resolved credentials in list items."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._resolved_credential_values = {"secret-token-xyz"}
+        mock_page = AsyncMock()
+        mock_page.evaluate = AsyncMock(
+            return_value=["safe text", "secret-token-xyz"],
+        )
+
+        with patch.object(bt, "_get_page", return_value=mock_page):
+            result = await bt.browser_evaluate(script="getValues()")
+
+        assert "secret-token-xyz" not in str(result)
+        assert result["result"][0] == "safe text"
+        assert result["result"][1] == "[REDACTED]"
+        bt._resolved_credential_values.clear()
+
+    @pytest.mark.asyncio
+    async def test_navigate_redacts_resolved_credential_in_content(self):
+        """browser_navigate redacts resolved credentials from page content."""
+        import src.agent.builtins.browser_tool as bt
+
+        bt._resolved_credential_values = {"MySecretP@ss123"}
+        mock_page = AsyncMock()
+        mock_page.url = "https://example.com"
+        mock_page.title = AsyncMock(return_value="Example")
+        mock_page.wait_for_timeout = AsyncMock()
+        mock_page.inner_text = AsyncMock(
+            return_value="Your API key is MySecretP@ss123. Keep it safe.",
+        )
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_page.goto = AsyncMock(return_value=mock_response)
+
+        with patch.object(bt, "_get_page", return_value=mock_page):
+            result = await bt.browser_navigate(url="https://example.com")
+
+        assert "MySecretP@ss123" not in result["content"]
+        assert "[REDACTED]" in result["content"]
+        bt._resolved_credential_values.clear()
+
+    def test_redact_resolved_credentials_basic(self):
+        """_redact_resolved_credentials replaces tracked values."""
+        import src.agent.builtins.browser_tool as bt
+        from src.agent.builtins.browser_tool import _redact_resolved_credentials
+
+        bt._resolved_credential_values = {"secret123", "p@ssw0rd"}
+
+        assert _redact_resolved_credentials("the key is secret123") == "the key is [REDACTED]"
+        assert _redact_resolved_credentials("pw: p@ssw0rd") == "pw: [REDACTED]"
+        assert _redact_resolved_credentials("safe text here") == "safe text here"
+        assert _redact_resolved_credentials("") == ""
+        bt._resolved_credential_values.clear()
+
+    def test_redact_resolved_credentials_noop_when_empty(self):
+        """_redact_resolved_credentials is a no-op when no values are tracked."""
+        import src.agent.builtins.browser_tool as bt
+        from src.agent.builtins.browser_tool import _redact_resolved_credentials
+
+        bt._resolved_credential_values = set()
+
+        text = "sk-abcdefghijklmnopqrstuvwxyz"
+        assert _redact_resolved_credentials(text) == text
+
 
 class TestBrowserSnapshotRedaction:
     def test_redacts_api_key_patterns(self):
@@ -1180,6 +1331,7 @@ class TestBrowserReset:
 
         bt._page_refs["e1"] = MagicMock()
         bt._credential_filled_refs.add("e1")
+        bt._resolved_credential_values.add("some-secret")
         bt._page = MagicMock()
         bt._page.is_closed = MagicMock(return_value=False)
         bt._page.close = AsyncMock()
@@ -1196,6 +1348,7 @@ class TestBrowserReset:
         assert bt._context is None
         assert len(bt._page_refs) == 0
         assert len(bt._credential_filled_refs) == 0
+        assert len(bt._resolved_credential_values) == 0
 
     @pytest.mark.asyncio
     async def test_browser_reset_safe_when_no_session(self):
