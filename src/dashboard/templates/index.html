@@ -1187,20 +1187,13 @@
                     class="space-y-4">
                     <template x-for="section in (identityFileMap[identityTab] || [])" :key="section.file">
                       <div class="border rounded-lg p-3 transition-colors duration-300" :class="identitySavedFile === section.file ? 'border-green-500' : 'border-gray-800'">
-                        <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center justify-between mb-1">
                           <div class="flex items-center gap-2">
                             <span class="text-xs font-medium text-gray-300" x-text="section.label"></span>
                             <span class="font-mono text-[10px] text-gray-600" x-text="section.file"></span>
-                            <span class="text-[10px] text-gray-600 hidden sm:inline" x-text="'— ' + section.desc"></span>
-                            <span x-show="section.access === 'user'"
-                              class="text-[10px] px-1 py-0 rounded-full bg-blue-900/40 text-blue-400 border border-blue-800/30"
-                              title="Only you can edit this file">User</span>
                             <span x-show="section.access === 'both'"
                               class="text-[10px] px-1 py-0 rounded-full bg-teal-900/40 text-teal-400 border border-teal-800/30"
                               title="Both you and the agent can edit this file">Shared</span>
-                            <span x-show="section.access === 'agent'"
-                              class="text-[10px] px-1 py-0 rounded-full bg-purple-900/40 text-purple-400 border border-purple-800/30"
-                              title="The agent can update this file">Agent</span>
                             <span x-show="section.access === 'auto'"
                               class="text-[10px] px-1 py-0 rounded-full bg-gray-800/60 text-gray-400 border border-gray-700/30"
                               title="Auto-managed by the system">Auto</span>
@@ -1213,6 +1206,7 @@
                             class="text-xs px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
                             x-text="isFileDefault(section.file) ? 'Customize' : 'Edit'"></button>
                         </div>
+                        <div x-show="!isFileDefault(section.file)" class="text-[10px] text-gray-500 mb-2 hidden sm:block" x-text="section.desc"></div>
                         <!-- Budget bar (for files with cap; hidden for default content unless editing) -->
                         <div x-show="section.cap && (!isFileDefault(section.file) || (identityEditing && identityEditingFile === section.file))" class="mb-2">
                           <div class="flex justify-between items-center text-[10px] text-gray-500 mb-1">
@@ -1461,8 +1455,8 @@
                         </div>
                       </div>
                     </div>
-                    <!-- Danger zone -->
-                    <div class="mt-6 pt-4 border-t border-gray-800/60">
+                    <!-- Danger zone (hidden while config is loading) -->
+                    <div x-show="agentConfigs[selectedAgent]" class="mt-6 pt-4 border-t border-gray-800/60">
                       <div class="flex items-center justify-between">
                         <div>
                           <div class="text-xs text-gray-500">Remove Agent</div>
