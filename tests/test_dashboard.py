@@ -1119,7 +1119,12 @@ class TestDashboardCredentialValidate:
 
     def test_validate_network_error_allows_save(self):
         """Network errors don't block — returns valid=True, skipped=True."""
-        with patch("litellm.acompletion", new_callable=AsyncMock, side_effect=TimeoutError("timeout")):
+        import litellm
+        with patch("litellm.acompletion", new_callable=AsyncMock, side_effect=litellm.Timeout(
+            message="Connection timed out",
+            llm_provider="anthropic",
+            model="anthropic/claude-haiku-4-5-20251001",
+        )):
             resp = self.client.post("/dashboard/api/credentials/validate", json={
                 "service": "anthropic", "key": "sk-some-key",
             })
@@ -2367,7 +2372,9 @@ class TestCredentialValidation:
 
     def test_validate_permission_denied_returns_invalid(self):
         """PermissionDeniedError → valid: False."""
+        import httpx
         import litellm
+        mock_resp = httpx.Response(status_code=403, request=httpx.Request("POST", "https://api.anthropic.com"))
         with patch(
             "litellm.acompletion",
             new_callable=AsyncMock,
@@ -2375,6 +2382,7 @@ class TestCredentialValidation:
                 message="Permission denied",
                 llm_provider="anthropic",
                 model="anthropic/claude-haiku-4-5-20251001",
+                response=mock_resp,
             ),
         ):
             resp = self.client.post(

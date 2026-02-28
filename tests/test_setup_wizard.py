@@ -66,7 +66,9 @@ class TestValidateApiKey:
         """PermissionDeniedError returns False."""
         wizard = SetupWizard(Path("/tmp/test"))
 
+        import httpx
         import litellm
+        mock_resp = httpx.Response(status_code=403, request=httpx.Request("POST", "https://api.anthropic.com"))
         with patch(
             "litellm.acompletion",
             new_callable=AsyncMock,
@@ -74,6 +76,7 @@ class TestValidateApiKey:
                 message="Permission denied",
                 llm_provider="anthropic",
                 model="anthropic/claude-haiku-4-5-20251001",
+                response=mock_resp,
             ),
         ):
             result = wizard._validate_api_key("anthropic", "sk-bad-key")

@@ -1221,7 +1221,7 @@ def create_dashboard_router(
             "has_llm_credentials": has_llm,
             "pubsub_subscriptions": pubsub_subs,
             "model_costs": {k: {"input_per_1k": v[0], "output_per_1k": v[1]} for k, v in all_costs.items()},
-            "provider_models": _PROVIDER_MODELS,
+            "provider_models": dict(_PROVIDER_MODELS.items()),
             "available_provider_models": available_provider_models,
         }
 
