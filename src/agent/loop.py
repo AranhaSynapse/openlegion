@@ -310,7 +310,8 @@ class AgentLoop:
         from src.shared.trace import current_trace_id
         current_trace_id.set(trace_id)
         self._loop_detector.reset()
-        self.state = "working"
+        # State is already set to "working" by receive_task() before spawning
+        # this coroutine. Setting current_task is a no-op but documents intent.
         self.current_task = assignment.task_id
         start = time.time()
         total_tokens = 0
