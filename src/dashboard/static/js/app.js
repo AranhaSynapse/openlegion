@@ -18,9 +18,9 @@ const _IDENTITY_FILE_MAP = {
     { file: 'INSTRUCTIONS.md', label: 'Instructions', cap: 8000, access: 'both', desc: 'Operating procedures, workflow rules, domain knowledge.' },
   ],
   memory: [
-    { file: 'MEMORY.md', label: 'Memory', cap: 16000, access: 'agent', desc: 'Long-term facts from conversations.' },
-    { file: 'USER.md', label: 'Preferences', cap: 4000, access: 'agent', desc: 'Your preferences and working style.' },
-    { file: 'HEARTBEAT.md', label: 'Heartbeat', cap: null, access: 'agent', desc: 'Rules for autonomous operation.' },
+    { file: 'MEMORY.md', label: 'Memory', cap: 16000, access: 'auto', desc: 'Long-term facts from conversations (auto-managed).' },
+    { file: 'USER.md', label: 'Preferences', cap: 4000, access: 'both', desc: 'Your preferences and working style.' },
+    { file: 'HEARTBEAT.md', label: 'Heartbeat', cap: null, access: 'both', desc: 'Rules for autonomous operation.' },
   ],
 };
 
@@ -1079,7 +1079,12 @@ function dashboard() {
         const resp = await fetch(`${window.__config.apiBase}/agents/${agentId}/capabilities`);
         if (resp.ok) {
           const data = await resp.json();
-          this.agentCapabilities = data.capabilities || data.tools || [];
+          // Agent returns tool_definitions (OpenAI format: {type, function: {name, description}})
+          const defs = data.tool_definitions || [];
+          this.agentCapabilities = defs.map(t => ({
+            name: t.function?.name || t.name || '?',
+            description: t.function?.description || t.description || '',
+          }));
         }
       } catch (e) { console.warn('fetchAgentCapabilities failed:', e); }
     },
