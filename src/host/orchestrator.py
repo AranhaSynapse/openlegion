@@ -498,7 +498,7 @@ class Orchestrator:
                     if future.done() and not future.cancelled():
                         try:
                             result = future.result()
-                        except (asyncio.InvalidStateError, asyncio.CancelledError):
+                        except Exception:
                             result = TaskResult(
                                 task_id=assignment.task_id,
                                 status="timeout",

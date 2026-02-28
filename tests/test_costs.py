@@ -144,6 +144,21 @@ class TestBudgetOverrunWarning:
         result = self.tracker.track("agent1", "openai/gpt-4o-mini", 100, 50)
         assert result["over_budget"] is False
 
+    def test_track_returns_over_budget_true_monthly(self):
+        """track() returns over_budget=True when monthly budget exceeded."""
+        self.tracker.set_budget("agent1", daily_usd=100.0, monthly_usd=0.001)
+        result = self.tracker.track("agent1", "openai/gpt-4o", 10000, 5000)
+        assert result["over_budget"] is True
+
+    def test_monthly_warning_logged(self):
+        """track() logs a warning when monthly budget exceeded."""
+        self.tracker.set_budget("agent1", daily_usd=100.0, monthly_usd=0.001)
+        with patch("src.host.costs.logger") as mock_logger:
+            self.tracker.track("agent1", "openai/gpt-4o", 10000, 5000)
+            # Should warn about monthly, not daily
+            calls = mock_logger.warning.call_args_list
+            assert any("exceeded monthly budget" in str(c) for c in calls)
+
 
 class TestProjectCostAggregation:
     """Project-level cost tracking and budget enforcement."""

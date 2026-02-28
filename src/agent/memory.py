@@ -19,6 +19,7 @@ import json
 import math
 import sqlite3
 import struct
+import threading
 from datetime import UTC, datetime
 from typing import Any, Callable, Coroutine, Optional, TypeVar
 
@@ -53,6 +54,7 @@ class MemoryStore:
         embed_fn: Optional[EmbedFn] = None,
         categorize_fn: Optional[CategorizeFn] = None,
     ):
+        self._close_lock = threading.Lock()
         self.db = sqlite3.connect(db_path, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA busy_timeout=30000")
@@ -600,6 +602,7 @@ class MemoryStore:
             "INSERT INTO categories_vec (id, embedding) VALUES (?, ?)",
             (cat_id, blob),
         )
+        self.db.commit()
         return cat_id
 
     def _increment_category_count(self, cat_id: int) -> None:
@@ -609,6 +612,7 @@ class MemoryStore:
             "updated_at = datetime('now') WHERE id = ?",
             (cat_id,),
         )
+        self.db.commit()
         row = self.db.execute("SELECT item_count FROM categories WHERE id = ?", (cat_id,)).fetchone()
         if row and row[0] > 0 and row[0] % _CATEGORY_RECOMPUTE_INTERVAL == 0:
             self._recompute_category_embedding(cat_id)
@@ -788,5 +792,8 @@ class MemoryStore:
         ]
 
     def close(self) -> None:
-        """Close the database connection."""
-        self.db.close()
+        """Close the database connection (thread-safe)."""
+        with self._close_lock:
+            if self.db is not None:
+                self.db.close()
+                self.db = None

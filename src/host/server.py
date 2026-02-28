@@ -143,10 +143,13 @@ def create_mesh_app(
             return
 
         async def _do_notify():
-            await asyncio.gather(
+            results = await asyncio.gather(
                 *(lane_manager.enqueue(wid, msg, mode="steer") for wid in watcher_ids),
                 return_exceptions=True,
             )
+            for wid, result in zip(watcher_ids, results):
+                if isinstance(result, Exception):
+                    _server_logger.warning("Watch notification to %s failed: %s", wid, result)
 
         try:
             asyncio.run_coroutine_threadsafe(_do_notify(), dispatch_loop)

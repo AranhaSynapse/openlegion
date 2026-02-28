@@ -324,7 +324,7 @@ async def test_execute_step_timeout():
 
 @pytest.mark.asyncio
 async def test_execute_step_race_resolve_during_timeout():
-    """If future resolves at the exact moment timeout fires, the result is used."""
+    """If future resolves concurrently with timeout, we get a clean result (not a crash)."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
 
@@ -349,18 +349,22 @@ async def test_execute_step_race_resolve_during_timeout():
     step_task = asyncio.create_task(orch._execute_step(execution, wf.steps[0]))
     await asyncio.sleep(0.05)
 
-    # Resolve the future just as timeout is about to fire
+    # Resolve the future concurrently with timeout (just before it fires)
     assert len(orch._pending_results) == 1
     task_id = next(iter(orch._pending_results))
     late_result = TaskResult(task_id=task_id, status="complete", result={"late": True})
 
-    # Resolve after timeout fires but before cleanup
-    await asyncio.sleep(1.1)
-    await orch.resolve_task_result(task_id, late_result)
+    async def delayed_resolve():
+        await asyncio.sleep(0.95)  # Just before the 1s timeout
+        await orch.resolve_task_result(task_id, late_result)
+
+    resolve_task = asyncio.create_task(delayed_resolve())
 
     result = await step_task
+    await resolve_task
+
     # Should get either "complete" (if resolve won the race) or "timeout"
-    # but never fall through to a polling path
+    # but never crash or fall through to a polling path
     assert result.status in ("complete", "timeout")
     # Pending results should be cleaned up
     assert task_id not in orch._pending_results

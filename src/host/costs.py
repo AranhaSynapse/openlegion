@@ -118,6 +118,13 @@ class CostTracker:
                     agent, daily_spent, budget["daily_usd"],
                 )
                 over_budget = True
+            monthly_spent = self.get_spend(agent, "month").get("total_cost", 0)
+            if monthly_spent > budget["monthly_usd"]:
+                logger.warning(
+                    "Agent '%s' exceeded monthly budget: $%.4f / $%.2f",
+                    agent, monthly_spent, budget["monthly_usd"],
+                )
+                over_budget = True
 
         return {"cost": cost, "over_budget": over_budget}
 
