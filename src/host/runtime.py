@@ -185,9 +185,11 @@ class DockerBackend(RuntimeBackend):
             "AGENT_ROLE": role,
             "MESH_URL": f"http://{mesh_host}:{self.mesh_host_port}",
             "SKILLS_DIR": "/app/skills",
-            "SYSTEM_PROMPT": system_prompt,
             "MESH_AUTH_TOKEN": auth_token,
         }
+        # Route system_prompt through INITIAL_INSTRUCTIONS for spawn compat
+        if system_prompt:
+            environment["INITIAL_INSTRUCTIONS"] = system_prompt
         if model:
             environment["LLM_MODEL"] = model
         if mcp_servers:
@@ -267,7 +269,6 @@ class DockerBackend(RuntimeBackend):
             "port": port,
             "role": role,
             "skills_dir": skills_dir,
-            "system_prompt": system_prompt,
             "model": model,
             "mcp_servers": mcp_servers,
             "thinking": thinking,
@@ -448,10 +449,12 @@ class SandboxBackend(RuntimeBackend):
             "AGENT_ROLE": role,
             "MESH_URL": f"http://host.docker.internal:{self.mesh_host_port}",
             "SKILLS_DIR": "/app/skills",
-            "SYSTEM_PROMPT": system_prompt,
             "AGENT_PORT": str(self.AGENT_PORT),
             "MESH_AUTH_TOKEN": auth_token,
         }
+        # Route system_prompt through INITIAL_INSTRUCTIONS for spawn compat
+        if system_prompt:
+            env_cfg["INITIAL_INSTRUCTIONS"] = system_prompt
         if model:
             env_cfg["LLM_MODEL"] = model
         if mcp_servers:
@@ -523,7 +526,6 @@ class SandboxBackend(RuntimeBackend):
             "url": url,
             "role": role,
             "skills_dir": skills_dir,
-            "system_prompt": system_prompt,
             "model": model,
             "mcp_servers": mcp_servers,
             "thinking": thinking,

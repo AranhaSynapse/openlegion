@@ -105,7 +105,6 @@ class AgentLoop:
         skills: SkillRegistry,
         llm: LLMClient,
         mesh_client: MeshClient,
-        system_prompt: str = "",
         workspace: Optional[WorkspaceManager] = None,
         context_manager: Optional[ContextManager] = None,
     ):
@@ -115,7 +114,6 @@ class AgentLoop:
         self.skills = skills
         self.llm = llm
         self.mesh_client = mesh_client
-        self.system_prompt = system_prompt
         self.workspace = workspace
         self.context_manager = context_manager
         self.state: str = "idle"
@@ -673,8 +671,6 @@ class AgentLoop:
     ) -> str:
         tools_desc = self.skills.get_descriptions()
         parts = []
-        if self.system_prompt:
-            parts.append(self.system_prompt)
 
         # Load workspace identity + project files into system prompt
         if self.workspace:
@@ -685,14 +681,12 @@ class AgentLoop:
         parts.append(
             f"You are the '{self.role}' agent in the OpenLegion multi-agent system.\n"
             f"Your current task: {assignment.task_type}\n\n"
-            f"Available tools:\n{tools_desc}\n\n"
+            f"## Available Tools\n\n{tools_desc}\n\n"
             f"## OPERATING RULES\n"
             f"- You are a tool operated by your user. Act first, explain after.\n"
             f"- Never refuse without attempting. Call tools immediately.\n"
-            f"- Browser: browser_navigate → browser_snapshot (get refs) → browser_click(ref=)/browser_type(ref=).\n"
-            f"- Shell: exec runs any command. HTTP: http_request calls any API.\n"
             f"- When done, respond with final answer (no tool call).\n"
-            f"- Structure final answer as JSON: {{\"result\": {{...}}, \"promote\": {{...}}}}\n"
+            f"- Structure task completion as JSON: {{\"result\": {{...}}, \"promote\": {{...}}}}\n"
             f"- 'promote' contains ONLY data that other agents need to act on.\n"
             f"- Use notify_user to report progress and results to the user.\n"
             f"- The blackboard is for agent-to-agent coordination — not for "
@@ -1078,8 +1072,6 @@ class AgentLoop:
     ) -> str:
         tools_desc = self.skills.get_descriptions()
         parts = []
-        if self.system_prompt:
-            parts.append(self.system_prompt)
 
         if goals:
             parts.append(f"## Your Current Goals\n\n{sanitize_for_prompt(format_dict(goals))}")
@@ -1093,71 +1085,37 @@ class AgentLoop:
             if learnings:
                 parts.append(f"## Learnings from Past Sessions\n\n{sanitize_for_prompt(learnings)}")
 
-        parts.append(
+        has_browser = "browser_navigate" in self.skills.list_skills()
+
+        rules = (
             f"You are the '{self.role}' agent in the OpenLegion fleet.\n"
             f"You are a tool operated by your user on their own machine. "
             f"The user has explicitly authorized you to act on their behalf.\n\n"
-            f"Available tools:\n{tools_desc}\n\n"
+            f"## Available Tools\n\n{tools_desc}\n\n"
             f"## OPERATING RULES (non-negotiable)\n\n"
             f"You are an autonomous execution agent. Your job is to DO things, "
             f"not describe how to do them.\n\n"
-            f"CRITICAL: Do NOT narrate routine tool calls. Just call the tool. "
-            f"Wrong: 'Let me navigate to the page now.' then tool call. "
-            f"Right: just call browser_navigate directly with no text. "
-            f"Only include text when reporting final results or asking a "
-            f"genuinely needed clarification. Between tool calls, NEVER output "
-            f"text like 'Now let me...' or 'Let me check...' — it wastes a "
-            f"round. Call the next tool immediately.\n\n"
-            f"1. ACT FIRST. When the user asks you to do something, call a tool "
-            f"immediately as your first response. Never reply with instructions "
-            f"for the user to follow manually — that defeats your purpose.\n\n"
-            f"2. YOUR TOOLS (you MUST use these):\n"
-            f"   - browser_navigate: open any URL in your Chromium browser\n"
-            f"   - browser_snapshot: get accessibility tree with element refs (e1, e2, ...)\n"
-            f"   - browser_click(ref=): click an element by ref from snapshot\n"
-            f"   - browser_type(ref=, text=): type into a field by ref from snapshot\n"
-            f"   - browser_evaluate: run JavaScript on the page\n"
-            f"   - browser_screenshot: capture the page as an image\n"
-            f"   - exec: run any shell command (install packages, run scripts, etc.)\n"
-            f"   - http_request: make HTTP requests to any API or URL\n"
-            f"   - web_search: search the internet for information\n"
-            f"   - read_file / write_file / list_files: file I/O on your workspace\n"
-            f"   - create_skill: write new tools for yourself\n\n"
-            f"3. NEVER REFUSE WITHOUT TRYING. You must NEVER say 'I can't do that' "
-            f"or 'I'm not able to' without first calling browser_navigate or another "
-            f"tool to attempt the task. If a website has a CAPTCHA or phone "
-            f"verification you can't pass, report that AFTER navigating there and "
-            f"attempting the task — but you MUST attempt it first.\n\n"
-            f"4. WEB TASK RULE: When the user asks you to do ANYTHING on a website "
-            f"(create an account, fill a form, look something up, sign up for a "
-            f"service, etc.), your actions must be:\n"
-            f"   a) browser_navigate to the relevant URL\n"
-            f"   b) browser_snapshot to get element refs\n"
-            f"   c) browser_click(ref=) / browser_type(ref=) to interact by ref\n"
-            f"   d) browser_snapshot again if the page changed\n"
-            f"   e) browser_screenshot ONLY if text content is insufficient\n"
-            f"   f) Continue until done or until you hit an insurmountable blocker\n"
-            f"   g) Only THEN report results to the user\n\n"
-            f"4b. BROWSER EFFICIENCY (critical):\n"
-            f"   - Do NOT re-navigate to a URL you are already on.\n"
-            f"   - ALWAYS use refs from browser_snapshot instead of CSS selectors. "
-            f"Refs are reliable; CSS selectors are fragile guesses.\n"
-            f"   - Re-snapshot after any action that changes the page (navigation, "
-            f"form submit, tab switch) — old refs become stale.\n"
-            f"   - Use browser_evaluate only for shadow DOM, canvas, or elements "
-            f"not in the accessibility tree.\n"
-            f"   - Call multiple tool actions per turn when possible instead of "
-            f"one action per turn.\n"
-            f"   - After filling a form, click submit immediately in the same "
-            f"sequence — do not stop to describe what you did.\n"
-            f"   - If a page has not changed after a click, try a different "
-            f"ref or approach — do not repeat the same action.\n\n"
-            f"5. MAKE DECISIONS. When the user says 'do it', 'just do it', "
-            f"'surprise me', or gives latitude — pick the best option yourself "
-            f"and execute immediately. Do not ask for confirmation.\n\n"
-            f"6. MINIMAL QUESTIONS. Only ask when the task is genuinely ambiguous. "
-            f"Prefer reasonable defaults. Choose usernames, passwords, options "
-            f"yourself when the user tells you to decide.\n\n"
+            f"Do NOT narrate tool calls. Call tools directly with no preamble. "
+            f"Only include text when reporting results or asking a needed clarification.\n\n"
+            f"1. ACT FIRST. Call a tool immediately — never reply with instructions "
+            f"for the user to follow manually.\n\n"
+            f"2. NEVER REFUSE WITHOUT TRYING. Attempt the task first. Report "
+            f"blockers only after you've tried.\n\n"
+            f"3. MAKE DECISIONS. When given latitude, pick the best option and "
+            f"execute. Prefer reasonable defaults over asking questions.\n\n"
+        )
+
+        if has_browser:
+            rules += (
+                f"4. BROWSER WORKFLOW: browser_navigate → browser_snapshot (get refs) "
+                f"→ browser_click(ref=)/browser_type(ref=). Re-snapshot after page changes.\n"
+                f"   - Use refs, not CSS selectors. Use browser_evaluate only for "
+                f"shadow DOM/canvas.\n"
+                f"   - Batch actions per turn. Submit forms immediately after filling.\n"
+                f"   - Don't re-navigate to a URL you're already on.\n\n"
+            )
+
+        rules += (
             f"## Memory & coordination\n"
             f"Before answering questions about prior work, decisions, dates, "
             f"people, preferences, or todos: run memory_search first.\n"
@@ -1170,23 +1128,20 @@ class AgentLoop:
             f"- save_artifact: publish deliverables other agents can find.\n"
             f"- notify_user: report progress and results to the user (use this "
             f"when working autonomously — heartbeat, cron, background tasks).\n"
-            f"- Refer to PROJECT.md for current priorities and constraints.\n"
             f"- Learn from past errors — avoid repeating known failures.\n"
             f"- Respect user corrections — they define preferred behavior.\n"
             f"\n## Reporting: User vs Blackboard\n"
-            f"- **User-facing updates** (what you worked on, progress, results, "
-            f"blockers): report via chat responses or notify_user.\n"
-            f"- **Blackboard** (data for other agents to act on): only write "
-            f"structured data that a specific teammate needs. Keep it minimal.\n"
-            f"- The user wants to hear from you directly. Don't just write to "
-            f"the blackboard and go silent.\n"
+            f"- **User-facing updates**: report via chat or notify_user.\n"
+            f"- **Blackboard**: only structured data a specific teammate needs.\n"
+            f"- The user wants to hear from you directly.\n"
             f"\n## Self-Improvement\n"
             f"Use update_workspace to evolve over time — these files persist across sessions:\n"
-            f"- **SOUL.md**: your identity, communication style, tone, behavioral principles.\n"
-            f"- **INSTRUCTIONS.md**: operating procedures, workflow rules, tool patterns, domain knowledge.\n"
+            f"- **SOUL.md**: identity, communication style, tone.\n"
+            f"- **INSTRUCTIONS.md**: procedures, workflow rules, domain knowledge.\n"
             f"- **USER.md**: user preferences, corrections, project context.\n"
-            f"- **HEARTBEAT.md**: autonomous rules for your periodic wakeups.\n"
+            f"- **HEARTBEAT.md**: autonomous rules for periodic wakeups.\n"
         )
+        parts.append(rules)
 
         # Fleet collaboration context (only for multi-agent setups)
         has_fleet_ctx = False

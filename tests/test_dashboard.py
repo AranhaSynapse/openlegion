@@ -745,6 +745,97 @@ class TestDashboardAgentConfig:
         )
         assert resp.status_code == 400
 
+    # ── Thinking & MCP servers ────────────────────────────
+
+    @patch("src.cli.config._load_config")
+    def test_get_config_includes_thinking_and_mcp(self, mock_load):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4.1-mini"},
+            "agents": {
+                "alpha": {
+                    "model": "openai/gpt-4.1",
+                    "thinking": "medium",
+                    "mcp_servers": [{"name": "brave", "command": "npx"}],
+                },
+            },
+        }
+        resp = self.client.get("/dashboard/api/agents/alpha/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["thinking"] == "medium"
+        assert len(data["mcp_servers"]) == 1
+        assert data["mcp_servers"][0]["name"] == "brave"
+
+    @patch("src.cli.config._load_config")
+    def test_get_config_thinking_defaults_off(self, mock_load):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4.1-mini"},
+            "agents": {"alpha": {"model": "openai/gpt-4.1"}},
+        }
+        resp = self.client.get("/dashboard/api/agents/alpha/config")
+        data = resp.json()
+        assert data["thinking"] == "off"
+        assert data["mcp_servers"] == []
+
+    @patch("src.cli.config._update_agent_field")
+    @patch("src.cli.config._load_config")
+    def test_put_config_thinking(self, mock_load, mock_update):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4.1-mini"},
+            "agents": {"alpha": {"model": "openai/gpt-4.1-mini"}},
+        }
+        resp = self.client.put(
+            "/dashboard/api/agents/alpha/config",
+            json={"thinking": "high"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "thinking" in data["updated"]
+        assert data["restart_required"] is True
+        mock_update.assert_called_with("alpha", "thinking", "high")
+
+    @patch("src.cli.config._load_config")
+    def test_put_config_thinking_invalid(self, mock_load):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4.1-mini"},
+            "agents": {"alpha": {"model": "openai/gpt-4.1-mini"}},
+        }
+        resp = self.client.put(
+            "/dashboard/api/agents/alpha/config",
+            json={"thinking": "extreme"},
+        )
+        assert resp.status_code == 400
+
+    @patch("src.cli.config._update_agent_field")
+    @patch("src.cli.config._load_config")
+    def test_put_config_mcp_servers(self, mock_load, mock_update):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4.1-mini"},
+            "agents": {"alpha": {"model": "openai/gpt-4.1-mini"}},
+        }
+        servers = [{"name": "fs", "command": "npx", "args": ["-y", "fs-server"]}]
+        resp = self.client.put(
+            "/dashboard/api/agents/alpha/config",
+            json={"mcp_servers": servers},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "mcp_servers" in data["updated"]
+        assert data["restart_required"] is True
+
+    @patch("src.cli.config._load_config")
+    def test_put_config_mcp_servers_invalid(self, mock_load):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4.1-mini"},
+            "agents": {"alpha": {"model": "openai/gpt-4.1-mini"}},
+        }
+        # Missing 'command' key
+        resp = self.client.put(
+            "/dashboard/api/agents/alpha/config",
+            json={"mcp_servers": [{"name": "bad"}]},
+        )
+        assert resp.status_code == 400
+
 
 # ── V2 Tests: Queues ────────────────────────────────────────
 

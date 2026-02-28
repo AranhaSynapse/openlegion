@@ -220,7 +220,6 @@ class HealthMonitor:
                     agent_id=agent_id,
                     role=info.get("role", ""),
                     skills_dir=info.get("skills_dir", ""),
-                    system_prompt="",
                     model=info.get("model", ""),
                     mcp_servers=info.get("mcp_servers"),
                     thinking=info.get("thinking", ""),

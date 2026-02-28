@@ -43,7 +43,6 @@ def main() -> None:
     role = os.environ["AGENT_ROLE"]
     mesh_url = os.environ["MESH_URL"]
     skills_dir = os.environ.get("SKILLS_DIR", "/app/skills")
-    system_prompt = os.environ.get("SYSTEM_PROMPT", "")
 
     llm_model = os.environ.get("LLM_MODEL", "openai/gpt-4o-mini")
     embedding_model = os.environ.get("EMBEDDING_MODEL", "")
@@ -95,7 +94,6 @@ def main() -> None:
         skills=skills,
         llm=llm,
         mesh_client=mesh_client,
-        system_prompt=system_prompt,
         workspace=workspace,
         context_manager=context_mgr,
     )

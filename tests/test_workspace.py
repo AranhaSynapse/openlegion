@@ -6,7 +6,14 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from src.agent.workspace import _MAX_SYSTEM, WorkspaceManager, _bm25_score, _tokenize, generate_system_md
+from src.agent.workspace import (
+    _MAX_SYSTEM,
+    WorkspaceManager,
+    _bm25_score,
+    _maybe_add_header,
+    _tokenize,
+    generate_system_md,
+)
 
 
 class TestWorkspaceScaffold:
@@ -217,6 +224,59 @@ class TestBootstrapContent:
         ws = WorkspaceManager(workspace_dir=self._tmpdir)
         content = ws.get_bootstrap_content()
         assert "We are building X" in content
+
+    def test_bootstrap_adds_header_when_no_heading(self):
+        """Files without a markdown heading get a descriptive header prepended."""
+        root = Path(self._tmpdir)
+        (root / "USER.md").write_text("Prefers concise answers.")
+        ws = WorkspaceManager(workspace_dir=self._tmpdir)
+        content = ws.get_bootstrap_content()
+        assert "## USER.md — User Preferences & Corrections" in content
+        assert "Prefers concise answers" in content
+
+    def test_bootstrap_skips_header_when_heading_exists(self):
+        """Files that already start with a markdown heading are not double-labeled."""
+        root = Path(self._tmpdir)
+        (root / "SOUL.md").write_text("# My Identity\n\nI am a poet.")
+        ws = WorkspaceManager(workspace_dir=self._tmpdir)
+        content = ws.get_bootstrap_content()
+        # Should NOT have the auto-header since file starts with #
+        assert "## SOUL.md — Your Identity" not in content
+        assert "# My Identity" in content
+        assert "I am a poet" in content
+
+    def test_bootstrap_adds_header_to_project_md(self):
+        """PROJECT.md without heading gets its header."""
+        root = Path(self._tmpdir)
+        (root / "PROJECT.md").write_text("We are building a fleet.")
+        ws = WorkspaceManager(workspace_dir=self._tmpdir)
+        content = ws.get_bootstrap_content()
+        assert "## PROJECT.md — Fleet-Wide Context" in content
+
+
+class TestMaybeAddHeader:
+    def test_adds_header_for_known_file(self):
+        result = _maybe_add_header("USER.md", "Prefers concise answers.")
+        assert result.startswith("## USER.md — User Preferences & Corrections")
+        assert "Prefers concise answers." in result
+
+    def test_skips_header_when_content_starts_with_heading(self):
+        content = "# My Identity\n\nI am a poet."
+        result = _maybe_add_header("SOUL.md", content)
+        assert result == content
+
+    def test_skips_header_when_content_starts_with_heading_and_whitespace(self):
+        content = "\n  # My Identity\n\nI am a poet."
+        result = _maybe_add_header("SOUL.md", content)
+        assert result == content
+
+    def test_skips_header_for_unknown_file(self):
+        result = _maybe_add_header("CUSTOM.md", "custom content")
+        assert result == "custom content"
+
+    def test_empty_content(self):
+        result = _maybe_add_header("USER.md", "")
+        assert "## USER.md" in result
 
 
 class TestDailyLogs:

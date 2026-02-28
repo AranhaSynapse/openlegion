@@ -753,6 +753,15 @@ def _update_agent_field(name: str, field: str, value) -> None:
             yaml.dump(agents_cfg, f, default_flow_style=False, sort_keys=False)
 
 
+_THINKING_LEVELS = ["off", "low", "medium", "high"]
+_THINKING_LABELS = {
+    "off": "off",
+    "low": "low (5K tokens)",
+    "medium": "medium (10K)",
+    "high": "high (25K)",
+}
+
+
 def _edit_agent_interactive(
     name: str,
     credential_vault: object | None = None,
@@ -760,9 +769,9 @@ def _edit_agent_interactive(
     """Interactive property editor for an agent. Reads fresh config.
 
     Returns the field name that was changed (``"model"``, ``"role"``,
-    ``"budget"``), or ``None`` if nothing changed.  Callers
-    decide how to apply the change (restart hint, live restart,
-    cost-tracker update, etc.).
+    ``"budget"``, ``"thinking"``, ``"mcp_servers"``), or ``None``
+    if nothing changed.  Callers decide how to apply the change
+    (restart hint, live restart, cost-tracker update, etc.).
     """
     cfg = _load_config()
     agent_cfg = cfg.get("agents", {}).get(name, {})
@@ -772,18 +781,28 @@ def _edit_agent_interactive(
     current_desc = agent_cfg.get("role", "")
     budget_cfg = agent_cfg.get("budget", {})
     current_budget = budget_cfg.get("daily_usd") if budget_cfg else None
+    current_thinking = agent_cfg.get("thinking", "off") or "off"
+    current_mcp = agent_cfg.get("mcp_servers") or []
 
     click.echo(f"\n  {name}")
     click.echo(f"  Model:       {current_model}")
     click.echo(f"  Description: {current_desc or '(none)'}")
     if current_budget is not None:
         click.echo(f"  Budget:      ${current_budget:.2f}/day")
+    click.echo(f"  Thinking:    {current_thinking}")
+    mcp_summary = f"{len(current_mcp)} server{'s' if len(current_mcp) != 1 else ''}" if current_mcp else "(none)"
+    if current_mcp:
+        mcp_names = ", ".join(s.get("name", "?") for s in current_mcp)
+        mcp_summary += f" ({mcp_names})"
+    click.echo(f"  MCP servers: {mcp_summary}")
     click.echo("\n  What to change?\n")
 
     options = [
         ("model", current_model),
         ("description", truncate(current_desc, 50) or "(none)"),
         ("budget", f"${current_budget:.2f}/day" if current_budget is not None else "(none)"),
+        ("thinking", current_thinking),
+        ("MCP servers", mcp_summary),
     ]
 
     for i, (label, val) in enumerate(options, 1):
@@ -833,6 +852,62 @@ def _edit_agent_interactive(
         except ValueError:
             click.echo("Invalid number. Budget not changed.")
             return None
+
+    elif choice == 4:  # thinking
+        click.echo()
+        for i, level in enumerate(_THINKING_LEVELS, 1):
+            marker = " (current)" if level == current_thinking else ""
+            click.echo(f"  {i}. {_THINKING_LABELS[level]}{marker}")
+        idx = click.prompt(
+            "\n  Thinking level",
+            type=click.IntRange(1, len(_THINKING_LEVELS)),
+            default=_THINKING_LEVELS.index(current_thinking) + 1,
+        )
+        new_thinking = _THINKING_LEVELS[idx - 1]
+        if new_thinking == current_thinking:
+            click.echo("No change.")
+            return None
+        _update_agent_field(name, "thinking", new_thinking)
+        click.echo(f"Agent '{name}' thinking: {current_thinking} -> {new_thinking}")
+        return "thinking"
+
+    elif choice == 5:  # MCP servers
+        servers = list(current_mcp)
+        changed = False
+        while True:
+            click.echo()
+            if servers:
+                for i, s in enumerate(servers, 1):
+                    click.echo(f"  {i}. {s.get('name', '?')} — {s.get('command', '?')}")
+            else:
+                click.echo("  (no servers)")
+            click.echo(f"\n  1. add server  2. remove server  3. done")
+            action = click.prompt("  Action", type=click.IntRange(1, 3), default=3)
+            if action == 3:
+                break
+            elif action == 1:
+                srv_name = click.prompt("  Server name")
+                srv_command = click.prompt("  Command (e.g. npx)")
+                srv_args_str = click.prompt("  Args (space-separated)", default="")
+                srv_args = srv_args_str.split() if srv_args_str.strip() else []
+                servers.append({"name": srv_name, "command": srv_command, "args": srv_args})
+                changed = True
+            elif action == 2:
+                if not servers:
+                    click.echo("  No servers to remove.")
+                    continue
+                for i, s in enumerate(servers, 1):
+                    click.echo(f"  {i}. {s.get('name', '?')}")
+                idx = click.prompt("  Remove", type=click.IntRange(1, len(servers)))
+                removed = servers.pop(idx - 1)
+                click.echo(f"  Removed '{removed.get('name', '?')}'")
+                changed = True
+        if changed:
+            _update_agent_field(name, "mcp_servers", servers if servers else None)
+            click.echo(f"Agent '{name}' MCP servers updated.")
+            return "mcp_servers"
+        click.echo("No change.")
+        return None
 
     return None
 

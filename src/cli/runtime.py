@@ -324,7 +324,6 @@ class RuntimeContext:
                     agent_id=agent_id,
                     role=agent_cfg["role"],
                     skills_dir=skills_dir,
-                    system_prompt="",
                     model=agent_model,
                     mcp_servers=agent_mcp_servers,
                     thinking=agent_thinking,
@@ -351,10 +350,9 @@ class RuntimeContext:
                         agent_id=agent_id,
                         role=agent_cfg["role"],
                         skills_dir=skills_dir,
-                        system_prompt="",
                         model=agent_model,
                         mcp_servers=agent_mcp_servers,
-                            thinking=agent_thinking,
+                        thinking=agent_thinking,
                     )
                 else:
                     raise

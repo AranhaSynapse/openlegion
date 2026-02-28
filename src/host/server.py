@@ -843,6 +843,7 @@ def create_mesh_app(
         ttl = data.get("ttl", 3600)
         if not isinstance(ttl, (int, float)) or ttl < 60 or ttl > 86400:
             raise HTTPException(400, "ttl must be 60-86400 seconds")
+        # system_prompt is routed through as initial_instructions (workspace seed)
         system_prompt = data.get("system_prompt", f"You are a '{role}' agent.")
         if len(system_prompt) > _MAX_SYSTEM_PROMPT:
             raise HTTPException(400, f"system_prompt exceeds {_MAX_SYSTEM_PROMPT} char limit")

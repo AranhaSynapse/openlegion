@@ -92,7 +92,23 @@ class _REPLCompleter:
                 subs = ["add", "list", "remove"]
                 return [s + " " for s in subs if s.startswith(text)]
 
+        if line.startswith("/agent "):
+            parts = line.split()
+            if len(parts) <= 2:
+                subs = ["edit", "view"]
+                return [s + " " for s in subs if s.startswith(text)]
+            if len(parts) == 3 and parts[1] == "view":
+                files = ["SOUL.md", "INSTRUCTIONS.md", "USER.md", "MEMORY.md", "HEARTBEAT.md"]
+                return [f + " " for f in files if f.lower().startswith(text.lower())]
+
         return []
+
+
+def _format_size(n: int) -> str:
+    """Human-readable byte size (e.g. 1.2 KB, 5.1 KB)."""
+    if n < 1024:
+        return f"{n} B"
+    return f"{n / 1024:.1f} KB"
 
 
 def _bar(value: float, max_val: float, width: int = 20) -> str:
@@ -118,7 +134,7 @@ class REPLSession:
         ("Agents", [
             ("/status",           "Show agents, models, and state"),
             ("/add",              "Add a new agent"),
-            ("/edit [name]",      "Change agent settings"),
+            ("/agent",            "Overview, config, and workspace files"),
             ("/remove [name]",    "Remove an agent"),
             ("/restart [name]",   "Restart an agent container"),
         ]),
@@ -152,6 +168,7 @@ class REPLSession:
             "/use":        (self._cmd_use,        "Switch active agent"),
             "/add":        (self._cmd_add,        "Add a new agent"),
             "/edit":       (self._cmd_edit,       "Change agent settings"),
+            "/agent":      (self._cmd_agent,      "Overview, config, and workspace files"),
             "/remove":     (self._cmd_remove,     "Remove an agent"),
             "/restart":    (self._cmd_restart,    "Restart an agent container"),
             "/status":     (self._cmd_status,     "Show agents, models, and state"),
@@ -412,7 +429,6 @@ class REPLSession:
             agent_id=new_name,
             role=new_desc,
             skills_dir=skills_dir,
-            system_prompt=agent_cfg_data.get("system_prompt", ""),
             model=agent_cfg_data.get("model", model),
             mcp_servers=add_mcp_servers,
             thinking=add_thinking,
@@ -1090,6 +1106,226 @@ class REPLSession:
                 click.echo(f"  {line}")
         click.echo()
 
+    # ── /agent command ──────────────────────────────────────────
+
+    _WORKSPACE_SHORTNAMES: dict[str, str] = {
+        "soul": "SOUL.md",
+        "instructions": "INSTRUCTIONS.md",
+        "user": "USER.md",
+        "memory": "MEMORY.md",
+        "heartbeat": "HEARTBEAT.md",
+    }
+
+    def _cmd_agent(self, arg: str) -> None:
+        """Unified agent command: overview, config editing, workspace file access.
+
+        /agent             — show overview
+        /agent edit        — interactive config editor
+        /agent view <file> — display workspace file
+        """
+        parts = arg.strip().split(None, 1) if arg.strip() else []
+        subcmd = parts[0].lower() if parts else ""
+        subarg = parts[1] if len(parts) > 1 else ""
+
+        if not subcmd:
+            self._agent_overview()
+        elif subcmd == "edit":
+            self._agent_edit(subarg)
+        elif subcmd == "view":
+            self._agent_view_file(subarg)
+        else:
+            click.echo(f"Unknown subcommand: {subcmd}")
+            click.echo("Usage: /agent [edit | view <file>]")
+
+    def _agent_overview(self) -> None:
+        """Show a compact summary of the current agent."""
+        name = self.current
+        if name is None:
+            click.echo("No active agent. Use /add to create one first.")
+            return
+
+        cfg = _load_config()
+        agent_cfg = cfg.get("agents", {}).get(name, {})
+        default_model = cfg.get("llm", {}).get("default_model", "openai/gpt-4o-mini")
+
+        model = agent_cfg.get("model", default_model)
+        role = agent_cfg.get("role", "")
+        budget_cfg = agent_cfg.get("budget", {})
+        daily = budget_cfg.get("daily_usd") if budget_cfg else None
+        thinking = agent_cfg.get("thinking", "off") or "off"
+        mcp_servers = agent_cfg.get("mcp_servers") or []
+
+        click.echo(f"\n  {click.style(name, bold=True)}")
+        click.echo(f"  Model:       {model}")
+        click.echo(f"  Role:        {role or '(none)'}")
+        if daily is not None:
+            click.echo(f"  Budget:      ${daily:.2f}/day")
+        click.echo(f"  Thinking:    {thinking}")
+        if mcp_servers:
+            mcp_names = ", ".join(s.get("name", "?") for s in mcp_servers)
+            click.echo(f"  MCP:         {len(mcp_servers)} server{'s' if len(mcp_servers) != 1 else ''} ({mcp_names})")
+
+        # Fetch workspace file info from the agent
+        try:
+            data = self.ctx.transport.request_sync(name, "GET", "/workspace", timeout=5)
+            files = data.get("files", [])
+            if files:
+                click.echo(f"\n  Files:")
+                for f in files:
+                    fname = f.get("filename", "?")
+                    size = f.get("size", 0)
+                    cap = f.get("cap")
+                    size_str = _format_size(size)
+                    cap_str = f" / {_format_size(cap)}" if cap else ""
+                    default_marker = click.style(" (default)", fg="bright_black") if f.get("is_default") else ""
+                    click.echo(f"    {fname:<20} {size_str}{cap_str}{default_marker}")
+        except Exception:
+            pass  # Agent unreachable — skip files section
+
+        click.echo()
+
+    def _agent_edit(self, subarg: str) -> None:
+        """Interactive config editor with workspace file editing.
+
+        When called with no arg, shows the expanded config picker (model,
+        description, budget, thinking, MCP servers, files). When called
+        with a filename, opens it directly in $EDITOR.
+        """
+        name = self.current
+        if name is None:
+            click.echo("No active agent. Use /add to create one first.")
+            return
+        if name not in self.ctx.agents:
+            click.echo(f"Agent '{name}' not found.")
+            return
+
+        # Direct file edit shortcut: /agent edit soul
+        if subarg.strip():
+            self._agent_edit_file(subarg.strip())
+            return
+
+        # Extended config picker
+        cfg = _load_config()
+        agent_cfg = cfg.get("agents", {}).get(name, {})
+
+        click.echo(f"\n  {name}\n  What to change?\n")
+        options = [
+            "config    (model, description, budget, thinking, MCP)",
+            "files     (SOUL.md, INSTRUCTIONS.md, USER.md, HEARTBEAT.md)",
+        ]
+        for i, opt in enumerate(options, 1):
+            click.echo(f"  {i}. {opt}")
+
+        choice = click.prompt("\n  Select", type=click.IntRange(1, 2), default=1)
+
+        if choice == 1:
+            changed_field = _edit_agent_interactive(name, credential_vault=self.ctx.credential_vault)
+            if not changed_field:
+                return
+            self._apply_agent_change(name, changed_field)
+        else:
+            # File picker
+            editable_files = ["SOUL.md", "INSTRUCTIONS.md", "USER.md", "HEARTBEAT.md"]
+            descs = {
+                "SOUL.md": "identity & personality",
+                "INSTRUCTIONS.md": "procedures & rules",
+                "USER.md": "user preferences",
+                "HEARTBEAT.md": "autonomous rules",
+            }
+            click.echo("\n  Which file?\n")
+            for i, fname in enumerate(editable_files, 1):
+                click.echo(f"  {i}. {fname:<20} ({descs.get(fname, '')})")
+            idx = click.prompt("\n  Select", type=click.IntRange(1, len(editable_files)), default=1)
+            self._agent_edit_file(editable_files[idx - 1])
+
+    def _agent_edit_file(self, filename: str) -> None:
+        """Open a workspace file in $EDITOR and push changes back."""
+        name = self.current
+        if name is None:
+            click.echo("No active agent.")
+            return
+
+        # Resolve short names
+        resolved = self._WORKSPACE_SHORTNAMES.get(filename.lower().replace(".md", ""), filename)
+
+        # Fetch current content
+        try:
+            data = self.ctx.transport.request_sync(
+                name, "GET", f"/workspace/{resolved}", timeout=5,
+            )
+            content = data.get("content", "")
+        except Exception as e:
+            click.echo(f"Could not read {resolved}: {e}")
+            return
+
+        # Open in editor
+        edited = click.edit(content, extension=".md")
+        if edited is None or edited == content:
+            click.echo("No changes.")
+            return
+
+        # Push back
+        try:
+            self.ctx.transport.request_sync(
+                name, "PUT", f"/workspace/{resolved}",
+                json={"content": edited},
+                timeout=10,
+                headers={"x-mesh-internal": "1"},
+            )
+            click.echo(f"Updated {resolved} ({len(edited)} chars).")
+        except Exception as e:
+            click.echo(f"Failed to save {resolved}: {e}")
+
+    def _agent_view_file(self, filename: str) -> None:
+        """Display a workspace file's content."""
+        name = self.current
+        if name is None:
+            click.echo("No active agent.")
+            return
+
+        if not filename:
+            click.echo("Usage: /agent view <file>")
+            click.echo("  Files: SOUL.md, INSTRUCTIONS.md, USER.md, MEMORY.md, HEARTBEAT.md")
+            return
+
+        # Resolve short names
+        resolved = self._WORKSPACE_SHORTNAMES.get(filename.lower().replace(".md", ""), filename)
+
+        try:
+            data = self.ctx.transport.request_sync(
+                name, "GET", f"/workspace/{resolved}", timeout=5,
+            )
+            content = data.get("content", "")
+        except Exception as e:
+            click.echo(f"Could not read {resolved}: {e}")
+            return
+
+        click.echo(f"\n  ── {resolved} ({_format_size(len(content))}) ──\n")
+        if content.strip():
+            for line in content.splitlines():
+                click.echo(f"  {line}")
+        else:
+            click.echo("  (empty)")
+        click.echo()
+
+    def _apply_agent_change(self, name: str, changed_field: str) -> None:
+        """Apply a config change — restart if needed, or update budget live."""
+        if changed_field == "budget":
+            fresh_cfg = _load_config()
+            budget = fresh_cfg.get("agents", {}).get(name, {}).get("budget", {})
+            if budget and self.ctx.cost_tracker:
+                self.ctx.cost_tracker.set_budget(
+                    name,
+                    daily_usd=budget.get("daily_usd", 10.0),
+                    monthly_usd=budget.get("monthly_usd", 200.0),
+                )
+            click.echo("Applied.")
+        else:
+            # Model, description, thinking, MCP servers — restart the container.
+            self._restart_agent(name)
+
+    # ── /edit (backward compat alias) ────────────────────────
+
     def _cmd_edit(self, arg: str) -> None:
         """Interactive property editor for an agent. Auto-applies changes."""
         name = arg.strip() if arg.strip() else self.current
@@ -1103,21 +1339,7 @@ class REPLSession:
         changed_field = _edit_agent_interactive(name, credential_vault=self.ctx.credential_vault)
         if not changed_field:
             return
-
-        if changed_field == "budget":
-            # Budget is enforced by the mesh host — no container restart needed.
-            fresh_cfg = _load_config()
-            budget = fresh_cfg.get("agents", {}).get(name, {}).get("budget", {})
-            if budget and self.ctx.cost_tracker:
-                self.ctx.cost_tracker.set_budget(
-                    name,
-                    daily_usd=budget.get("daily_usd", 10.0),
-                    monthly_usd=budget.get("monthly_usd", 200.0),
-                )
-            click.echo("Applied.")
-        else:
-            # Model, description, system prompt — restart the container.
-            self._restart_agent(name)
+        self._apply_agent_change(name, changed_field)
 
     def _cmd_restart(self, arg: str) -> None:
         """Restart an agent container."""
@@ -1156,7 +1378,6 @@ class REPLSession:
             agent_id=name,
             role=agent_cfg.get("role", ""),
             skills_dir=skills_dir,
-            system_prompt=agent_cfg.get("system_prompt", ""),
             model=agent_model,
             mcp_servers=agent_mcp_servers,
             thinking=agent_thinking,

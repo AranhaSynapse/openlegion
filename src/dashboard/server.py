@@ -224,7 +224,6 @@ def create_dashboard_router(
                 agent_id=name,
                 role=role,
                 skills_dir=skills_dir,
-                system_prompt="",
                 model=acfg.get("model", model),
                 thinking=acfg.get("thinking", ""),
             )
@@ -374,6 +373,8 @@ def create_dashboard_router(
             "role": agent_cfg.get("role", ""),
             "avatar": agent_cfg.get("avatar", 1),
             "budget": agent_cfg.get("budget", {}),
+            "thinking": agent_cfg.get("thinking", "off") or "off",
+            "mcp_servers": agent_cfg.get("mcp_servers") or [],
             "allowed_credentials": allowed_creds,
             "available_credentials": sorted(agent_cred_names),
             "system_credentials": system_cred_names,
@@ -438,6 +439,31 @@ def create_dashboard_router(
                     cost_tracker.set_budget(agent_id, daily_usd=daily)
                     updated.append("budget")
 
+        if "thinking" in body:
+            thinking_val = body["thinking"]
+            if thinking_val not in ("off", "low", "medium", "high"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="thinking must be one of: off, low, medium, high",
+                )
+            _update_agent_field(agent_id, "thinking", thinking_val)
+            updated.append("thinking")
+            restart_required = True
+
+        if "mcp_servers" in body:
+            mcp_val = body["mcp_servers"]
+            if not isinstance(mcp_val, list):
+                raise HTTPException(status_code=400, detail="mcp_servers must be a list")
+            for srv in mcp_val:
+                if not isinstance(srv, dict) or "name" not in srv or "command" not in srv:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Each MCP server must have 'name' and 'command' keys",
+                    )
+            _update_agent_field(agent_id, "mcp_servers", mcp_val if mcp_val else None)
+            updated.append("mcp_servers")
+            restart_required = True
+
         return {"updated": updated, "restart_required": restart_required}
 
     @api_router.post("/api/agents/{agent_id}/restart")
@@ -459,7 +485,6 @@ def create_dashboard_router(
                 agent_id=agent_id,
                 role=agent_cfg.get("role", "assistant"),
                 skills_dir=skills_dir,
-                system_prompt=agent_cfg.get("system_prompt", ""),
                 model=agent_cfg.get("model", default_model),
                 mcp_servers=agent_cfg.get("mcp_servers") or None,
                 thinking=agent_cfg.get("thinking", ""),

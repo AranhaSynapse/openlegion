@@ -86,6 +86,26 @@ _MAX_FILE_SIZE = 200_000
 _MAX_BOOTSTRAP = 40_000
 _MAX_SYSTEM = 6_000
 
+# Headers prepended to workspace files in the system prompt so the LLM
+# knows what each block is. Skipped when the file already starts with
+# its own markdown heading (``# ...``).
+_BOOTSTRAP_HEADERS: dict[str, str] = {
+    "PROJECT.md": "Fleet-Wide Context",
+    "SYSTEM.md": "System Architecture",
+    "INSTRUCTIONS.md": "Your Operating Procedures & Domain Knowledge",
+    "SOUL.md": "Your Identity & Personality",
+    "USER.md": "User Preferences & Corrections",
+    "MEMORY.md": "Long-Term Memory (auto-curated)",
+}
+
+
+def _maybe_add_header(filename: str, content: str) -> str:
+    """Prepend a descriptive header to a workspace file if it lacks its own."""
+    desc = _BOOTSTRAP_HEADERS.get(filename, "")
+    if not desc or content.lstrip().startswith("#"):
+        return content
+    return f"## {filename} — {desc}\n\n{content}"
+
 # Permission keys surfaced to agents in SYSTEM.md and Runtime Context.
 # Keep in sync with the introspect endpoint in src/host/server.py.
 INTROSPECT_PERM_KEYS = (
@@ -200,7 +220,7 @@ class WorkspaceManager:
         # PROJECT.md has no individual cap but counts toward total
         project = self._read_file("PROJECT.md")
         if project and project.strip():
-            parts.append(project.strip())
+            parts.append(_maybe_add_header("PROJECT.md", project.strip()))
 
         # SYSTEM.md — generated architecture guide (static preamble + snapshot)
         system = self._read_file("SYSTEM.md")
@@ -208,7 +228,7 @@ class WorkspaceManager:
             system = system.strip()
             if len(system) > _MAX_SYSTEM:
                 system = system[:_MAX_SYSTEM] + "\n\n... (truncated)"
-            parts.append(system)
+            parts.append(_maybe_add_header("SYSTEM.md", system))
 
         for filename, cap in caps.items():
             content = self._read_file(filename)
@@ -219,7 +239,7 @@ class WorkspaceManager:
                 content = content[:cap] + (
                     "\n\n... (truncated, use memory_search for full content)"
                 )
-            parts.append(content)
+            parts.append(_maybe_add_header(filename, content))
 
         combined = "\n\n---\n\n".join(parts)
         if len(combined) > _MAX_BOOTSTRAP:
