@@ -49,6 +49,17 @@ class MeshClient:
             return f"projects/{self.project_name}/{key}"
         return key
 
+    def _scope_topic(self, topic: str) -> str:
+        """Prefix a pub/sub topic with the project namespace.
+
+        Project agents transparently publish/subscribe under
+        ``projects/{name}/`` so that each project's events are isolated.
+        Standalone agents (no project) use raw topic names.
+        """
+        if self.project_name:
+            return f"projects/{self.project_name}/{topic}"
+        return topic
+
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is not None and not self._client.is_closed:
             return self._client
@@ -110,6 +121,27 @@ class MeshClient:
         response.raise_for_status()
         return response.json()
 
+    async def claim_blackboard(
+        self, key: str, value: dict, expected_version: int,
+    ) -> dict | None:
+        """Atomic compare-and-swap write. Returns None on version conflict (409)."""
+        scoped = self._scope_key(key)
+        client = await self._get_client()
+        response = await client.post(
+            f"{self.mesh_url}/mesh/blackboard/claim",
+            json={
+                "agent_id": self.agent_id,
+                "key": scoped,
+                "value": value,
+                "expected_version": expected_version,
+            },
+            headers=self._trace_headers(),
+        )
+        if response.status_code == 409:
+            return None
+        response.raise_for_status()
+        return response.json()
+
     async def list_blackboard(self, prefix: str) -> list[dict]:
         """List blackboard entries by key prefix."""
         scoped = self._scope_key(prefix)
@@ -154,11 +186,36 @@ class MeshClient:
 
     async def publish_event(self, topic: str, payload: dict | None = None) -> dict:
         """Publish an event to the mesh pub/sub."""
-        event = MeshEvent(topic=topic, source=self.agent_id, payload=payload or {})
+        scoped = self._scope_topic(topic)
+        event = MeshEvent(topic=scoped, source=self.agent_id, payload=payload or {})
         client = await self._get_client()
         response = await client.post(
             f"{self.mesh_url}/mesh/publish",
             json=event.model_dump(mode="json"),
+            headers=self._trace_headers(),
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def subscribe_topic(self, topic: str) -> dict:
+        """Subscribe to a pub/sub topic at runtime."""
+        scoped = self._scope_topic(topic)
+        client = await self._get_client()
+        response = await client.post(
+            f"{self.mesh_url}/mesh/subscribe",
+            params={"topic": scoped, "agent_id": self.agent_id},
+            headers=self._trace_headers(),
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def watch_blackboard(self, pattern: str) -> dict:
+        """Register a glob pattern watch on blackboard keys."""
+        scoped = self._scope_key(pattern)
+        client = await self._get_client()
+        response = await client.post(
+            f"{self.mesh_url}/mesh/blackboard/watch",
+            json={"agent_id": self.agent_id, "pattern": scoped},
             headers=self._trace_headers(),
         )
         response.raise_for_status()

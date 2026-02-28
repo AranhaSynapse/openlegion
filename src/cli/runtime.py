@@ -235,7 +235,11 @@ class RuntimeContext:
             cost_tracker=self.cost_tracker,
             failover_config=failover_config or None,
         )
-        self.router = MessageRouter(self.permissions, self.agent_urls, trace_store=self.trace_store)
+        self.router = MessageRouter(
+            self.permissions, self.agent_urls,
+            trace_store=self.trace_store,
+            agent_projects=self.cfg.get("_agent_projects", {}),
+        )
         self.orchestrator = Orchestrator(
             mesh_url=f"http://localhost:{mesh_port}",
             blackboard=self.blackboard,
@@ -452,6 +456,9 @@ class RuntimeContext:
             health_monitor=self.health_monitor,
             cost_tracker=self.cost_tracker,
             notify_fn=self._handle_notify,
+            agent_projects=self.cfg.get("_agent_projects", {}),
+            lane_manager=self.lane_manager,
+            dispatch_loop=self._dispatch_loop,
         )
         app.include_router(create_webhook_router(self.orchestrator))
         app.include_router(webhook_manager.create_router())

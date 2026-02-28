@@ -582,3 +582,248 @@ def test_can_access_credential_case_insensitive_patterns(tmp_path):
     assert pm.can_access_credential("agent", "brightdata_cdp_url") is True
     assert pm.can_access_credential("agent", "myapp_password") is True
     assert pm.can_access_credential("agent", "other_key") is False
+
+
+# === Blackboard Watcher Tests ===
+
+
+def test_blackboard_add_watch(blackboard):
+    """add_watch registers a glob pattern for an agent."""
+    blackboard.add_watch("agent1", "tasks/*")
+    watchers = blackboard.get_watchers_for_key("tasks/foo")
+    assert "agent1" in watchers
+
+
+def test_blackboard_watch_no_duplicate(blackboard):
+    """add_watch does not add duplicate patterns."""
+    blackboard.add_watch("agent1", "tasks/*")
+    blackboard.add_watch("agent1", "tasks/*")
+    assert len(blackboard._watchers["agent1"]) == 1
+
+
+def test_blackboard_watch_excludes_writer(blackboard):
+    """get_watchers_for_key excludes the agent that wrote the key."""
+    blackboard.add_watch("agent1", "tasks/*")
+    blackboard.add_watch("agent2", "tasks/*")
+    watchers = blackboard.get_watchers_for_key("tasks/foo", exclude="agent1")
+    assert "agent1" not in watchers
+    assert "agent2" in watchers
+
+
+def test_blackboard_watch_glob_matching(blackboard):
+    """Watchers only match keys that match their glob pattern."""
+    blackboard.add_watch("agent1", "tasks/*")
+    blackboard.add_watch("agent2", "context/*")
+    assert "agent1" in blackboard.get_watchers_for_key("tasks/pending")
+    assert "agent1" not in blackboard.get_watchers_for_key("context/data")
+    assert "agent2" in blackboard.get_watchers_for_key("context/data")
+    assert "agent2" not in blackboard.get_watchers_for_key("tasks/pending")
+
+
+def test_blackboard_remove_watch_specific(blackboard):
+    """remove_watch with a specific pattern removes only that pattern."""
+    blackboard.add_watch("agent1", "tasks/*")
+    blackboard.add_watch("agent1", "context/*")
+    blackboard.remove_watch("agent1", "tasks/*")
+    assert "agent1" not in blackboard.get_watchers_for_key("tasks/foo")
+    assert "agent1" in blackboard.get_watchers_for_key("context/data")
+
+
+def test_blackboard_remove_watch_all(blackboard):
+    """remove_watch without pattern removes all watches for an agent."""
+    blackboard.add_watch("agent1", "tasks/*")
+    blackboard.add_watch("agent1", "context/*")
+    blackboard.remove_watch("agent1")
+    assert "agent1" not in blackboard.get_watchers_for_key("tasks/foo")
+    assert "agent1" not in blackboard.get_watchers_for_key("context/data")
+
+
+def test_blackboard_remove_agent_watches(blackboard):
+    """remove_agent_watches cleans up all watches for an agent."""
+    blackboard.add_watch("agent1", "tasks/*")
+    blackboard.remove_agent_watches("agent1")
+    assert "agent1" not in blackboard._watchers
+
+
+def test_blackboard_no_watchers(blackboard):
+    """get_watchers_for_key returns empty list when no watches match."""
+    assert blackboard.get_watchers_for_key("anything") == []
+
+
+# === Blackboard Compare-and-Swap Tests ===
+
+
+def test_blackboard_cas_success(blackboard):
+    """write_if_version succeeds when version matches."""
+    blackboard.write("tasks/claim_me", {"status": "pending"}, written_by="system")
+    result = blackboard.write_if_version(
+        "tasks/claim_me", {"status": "claimed", "by": "agent1"},
+        written_by="agent1", expected_version=1,
+    )
+    assert result is not None
+    assert result.version == 2
+    assert result.value["status"] == "claimed"
+
+
+def test_blackboard_cas_failure_stale_version(blackboard):
+    """write_if_version fails when version is stale."""
+    blackboard.write("tasks/claim_me", {"status": "pending"}, written_by="system")
+    blackboard.write("tasks/claim_me", {"status": "updated"}, written_by="system")
+    # Version is now 2, but we pass expected_version=1
+    result = blackboard.write_if_version(
+        "tasks/claim_me", {"status": "claimed"},
+        written_by="agent1", expected_version=1,
+    )
+    assert result is None
+    # Original value should be unchanged
+    entry = blackboard.read("tasks/claim_me")
+    assert entry.value["status"] == "updated"
+    assert entry.version == 2
+
+
+def test_blackboard_cas_concurrent_claim_one_wins(blackboard):
+    """Only one CAS write succeeds when two agents race."""
+    blackboard.write("tasks/race", {"status": "pending"}, written_by="system")
+    # Both agents read version 1
+    r1 = blackboard.write_if_version(
+        "tasks/race", {"status": "claimed", "by": "agent1"},
+        written_by="agent1", expected_version=1,
+    )
+    r2 = blackboard.write_if_version(
+        "tasks/race", {"status": "claimed", "by": "agent2"},
+        written_by="agent2", expected_version=1,
+    )
+    # Exactly one should succeed
+    assert (r1 is not None) != (r2 is not None)
+    entry = blackboard.read("tasks/race")
+    assert entry.value["status"] == "claimed"
+
+
+def test_blackboard_cas_nonexistent_key(blackboard):
+    """write_if_version returns None for a key that doesn't exist."""
+    result = blackboard.write_if_version(
+        "tasks/nope", {"status": "claimed"},
+        written_by="agent1", expected_version=1,
+    )
+    assert result is None
+
+
+# === Cross-Project Messaging Tests ===
+
+
+@pytest.mark.asyncio
+async def test_router_blocks_cross_project_messaging():
+    """Messages between agents in different projects are blocked."""
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {
+        "alice": AgentPermissions(agent_id="alice", can_message=["*"]),
+        "bob": AgentPermissions(agent_id="bob", can_message=["*"]),
+    }
+    router = MessageRouter(
+        permissions=perms,
+        agent_registry={"alice": "http://a:8400", "bob": "http://b:8400"},
+        agent_projects={"alice": "sales", "bob": "engineering"},
+    )
+    from src.shared.types import AgentMessage
+    msg = AgentMessage(from_agent="alice", to="bob", type="query", payload={})
+    result = await router.route(msg)
+    assert "error" in result
+    assert "Cross-project" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_router_allows_same_project_messaging():
+    """Messages between agents in the same project are allowed (not blocked by project check)."""
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {
+        "alice": AgentPermissions(agent_id="alice", can_message=["*"]),
+        "bob": AgentPermissions(agent_id="bob", can_message=["*"]),
+    }
+    # Use empty registry so route() returns "No agent found" instead of attempting HTTP
+    router = MessageRouter(
+        permissions=perms,
+        agent_registry={},
+        agent_projects={"alice": "sales", "bob": "sales"},
+    )
+    from src.shared.types import AgentMessage
+    msg = AgentMessage(from_agent="alice", to="bob", type="query", payload={})
+    result = await router.route(msg)
+    # Should fail with "no agent" error, NOT cross-project error
+    assert "Cross-project" not in result.get("error", "")
+    assert "No agent found" in result.get("error", "")
+
+
+@pytest.mark.asyncio
+async def test_router_allows_standalone_to_project_messaging():
+    """Standalone agents can message project agents (no cross-project block)."""
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {
+        "standalone": AgentPermissions(agent_id="standalone", can_message=["*"]),
+        "bob": AgentPermissions(agent_id="bob", can_message=["*"]),
+    }
+    # Use empty registry so route() returns "No agent found" instead of attempting HTTP
+    router = MessageRouter(
+        permissions=perms,
+        agent_registry={},
+        agent_projects={"bob": "engineering"},  # standalone is NOT in agent_projects
+    )
+    from src.shared.types import AgentMessage
+    msg = AgentMessage(from_agent="standalone", to="bob", type="query", payload={})
+    result = await router.route(msg)
+    assert "Cross-project" not in result.get("error", "")
+    assert "No agent found" in result.get("error", "")
+
+
+# === Watcher Thread Safety & Cleanup Tests ===
+
+
+def test_blackboard_watcher_cleanup_on_deregister(blackboard):
+    """remove_agent_watches called after deregister cleans up all watches."""
+    blackboard.add_watch("agent1", "tasks/*")
+    blackboard.add_watch("agent1", "context/*")
+    blackboard.add_watch("agent2", "tasks/*")
+    # Simulate deregister
+    blackboard.remove_agent_watches("agent1")
+    assert "agent1" not in blackboard._watchers
+    assert "agent2" in blackboard._watchers
+    assert blackboard.get_watchers_for_key("tasks/foo") == ["agent2"]
+
+
+def test_blackboard_duplicate_watch_ignored(blackboard):
+    """Adding the same pattern twice for an agent doesn't duplicate."""
+    blackboard.add_watch("agent1", "tasks/*")
+    blackboard.add_watch("agent1", "tasks/*")
+    assert len(blackboard._watchers["agent1"]) == 1
+
+
+def test_blackboard_cas_success_with_event_bus(tmp_path):
+    """write_if_version emits event_bus event on success."""
+    from unittest.mock import MagicMock
+    bus = MagicMock()
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"), event_bus=bus)
+    bb.write("tasks/t1", {"status": "pending"}, written_by="system")
+    bus.reset_mock()
+    result = bb.write_if_version(
+        "tasks/t1", {"status": "claimed"}, written_by="agent1", expected_version=1,
+    )
+    assert result is not None
+    bus.emit.assert_called_once()
+    call_kwargs = bus.emit.call_args
+    assert call_kwargs[0][0] == "blackboard_write"
+    bb.close()
+
+
+def test_blackboard_cas_failure_no_event_bus_emission(tmp_path):
+    """write_if_version does NOT emit event_bus event on CAS failure."""
+    from unittest.mock import MagicMock
+    bus = MagicMock()
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"), event_bus=bus)
+    bb.write("tasks/t1", {"status": "pending"}, written_by="system")
+    bb.write("tasks/t1", {"status": "updated"}, written_by="system")
+    bus.reset_mock()
+    result = bb.write_if_version(
+        "tasks/t1", {"status": "claimed"}, written_by="agent1", expected_version=1,
+    )
+    assert result is None
+    bus.emit.assert_not_called()
+    bb.close()

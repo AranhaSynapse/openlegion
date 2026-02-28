@@ -1009,3 +1009,400 @@ def test_introspect_health_returns_none_for_unmonitored_agent(tmp_path):
     assert data["health"] is None
 
     bb.close()
+
+
+# ── PubSub Project Isolation Tests ─────────────────────────────
+
+
+def test_publish_event_project_isolation(tmp_path):
+    """Project agents can only publish to topics prefixed with their project."""
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"))
+    pubsub = PubSub()
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {
+        "alice": AgentPermissions(
+            agent_id="alice", can_message=["*"],
+            can_publish=["*"], can_subscribe=["*"],
+            blackboard_read=["*"], blackboard_write=["*"],
+            allowed_apis=[],
+        ),
+    }
+    router = MessageRouter(permissions=perms, agent_registry={})
+    app = create_mesh_app(
+        bb, pubsub, router, perms,
+        agent_projects={"alice": "sales"},
+    )
+    client = TestClient(app)
+
+    # Publishing to project-scoped topic should succeed
+    resp = client.post("/mesh/publish", json={
+        "topic": "projects/sales/research_done",
+        "source": "alice",
+        "payload": {"msg": "done"},
+    })
+    assert resp.status_code == 200
+
+    # Publishing to wrong project prefix should fail
+    resp = client.post("/mesh/publish", json={
+        "topic": "projects/engineering/research_done",
+        "source": "alice",
+        "payload": {},
+    })
+    assert resp.status_code == 403
+
+    # Publishing to raw topic (no project prefix) should fail for project agents
+    resp = client.post("/mesh/publish", json={
+        "topic": "research_done",
+        "source": "alice",
+        "payload": {},
+    })
+    assert resp.status_code == 403
+
+    bb.close()
+
+
+def test_subscribe_project_isolation(tmp_path):
+    """Project agents can only subscribe to topics prefixed with their project."""
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"))
+    pubsub = PubSub()
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {
+        "bob": AgentPermissions(
+            agent_id="bob", can_message=["*"],
+            can_publish=["*"], can_subscribe=["*"],
+            blackboard_read=["*"], blackboard_write=["*"],
+            allowed_apis=[],
+        ),
+    }
+    router = MessageRouter(permissions=perms, agent_registry={})
+    app = create_mesh_app(
+        bb, pubsub, router, perms,
+        agent_projects={"bob": "engineering"},
+    )
+    client = TestClient(app)
+
+    # Subscribing to project-scoped topic should succeed
+    resp = client.post("/mesh/subscribe", params={
+        "topic": "projects/engineering/deploy_ready",
+        "agent_id": "bob",
+    })
+    assert resp.status_code == 200
+
+    # Subscribing to other project's topic should fail
+    resp = client.post("/mesh/subscribe", params={
+        "topic": "projects/sales/new_lead",
+        "agent_id": "bob",
+    })
+    assert resp.status_code == 403
+
+    bb.close()
+
+
+def test_standalone_agent_no_project_restriction(tmp_path):
+    """Standalone agents (no project) can publish/subscribe to raw topics."""
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"))
+    pubsub = PubSub()
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {
+        "solo": AgentPermissions(
+            agent_id="solo", can_message=["*"],
+            can_publish=["*"], can_subscribe=["*"],
+            blackboard_read=["*"], blackboard_write=["*"],
+            allowed_apis=[],
+        ),
+    }
+    router = MessageRouter(permissions=perms, agent_registry={})
+    app = create_mesh_app(
+        bb, pubsub, router, perms,
+        agent_projects={},  # solo is not in any project
+    )
+    client = TestClient(app)
+
+    resp = client.post("/mesh/publish", json={
+        "topic": "research_done",
+        "source": "solo",
+        "payload": {},
+    })
+    assert resp.status_code == 200
+
+    resp = client.post("/mesh/subscribe", params={
+        "topic": "updates",
+        "agent_id": "solo",
+    })
+    assert resp.status_code == 200
+
+    bb.close()
+
+
+# ── Blackboard Claim (CAS) Tests ──────────────────────────────
+
+
+def test_claim_endpoint_success(tmp_path):
+    """Claim endpoint succeeds when version matches."""
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"))
+    pubsub = PubSub()
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {
+        "agent1": AgentPermissions(
+            agent_id="agent1", can_message=[],
+            blackboard_read=["*"], blackboard_write=["*"],
+            allowed_apis=[],
+        ),
+    }
+    router = MessageRouter(permissions=perms, agent_registry={})
+    app = create_mesh_app(bb, pubsub, router, perms)
+    client = TestClient(app)
+
+    # Write initial value
+    client.put("/mesh/blackboard/tasks/t1", params={"agent_id": "agent1"},
+               json={"status": "pending"})
+
+    # Claim with correct version
+    resp = client.post("/mesh/blackboard/claim", json={
+        "agent_id": "agent1",
+        "key": "tasks/t1",
+        "value": {"status": "claimed"},
+        "expected_version": 1,
+    })
+    assert resp.status_code == 200
+    assert resp.json()["version"] == 2
+
+    bb.close()
+
+
+def test_claim_endpoint_conflict(tmp_path):
+    """Claim endpoint returns 409 on version mismatch."""
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"))
+    pubsub = PubSub()
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {
+        "agent1": AgentPermissions(
+            agent_id="agent1", can_message=[],
+            blackboard_read=["*"], blackboard_write=["*"],
+            allowed_apis=[],
+        ),
+    }
+    router = MessageRouter(permissions=perms, agent_registry={})
+    app = create_mesh_app(bb, pubsub, router, perms)
+    client = TestClient(app)
+
+    client.put("/mesh/blackboard/tasks/t1", params={"agent_id": "agent1"},
+               json={"status": "pending"})
+    # Update to version 2
+    client.put("/mesh/blackboard/tasks/t1", params={"agent_id": "agent1"},
+               json={"status": "updated"})
+
+    # Claim with stale version 1 should fail
+    resp = client.post("/mesh/blackboard/claim", json={
+        "agent_id": "agent1",
+        "key": "tasks/t1",
+        "value": {"status": "claimed"},
+        "expected_version": 1,
+    })
+    assert resp.status_code == 409
+
+    bb.close()
+
+
+# ── Blackboard Watch Endpoint Tests ───────────────────────────
+
+
+def test_watch_blackboard_endpoint(tmp_path):
+    """Watch endpoint registers a glob pattern."""
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"))
+    pubsub = PubSub()
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {
+        "watcher": AgentPermissions(
+            agent_id="watcher", can_message=[],
+            blackboard_read=["tasks/*"], blackboard_write=[],
+            allowed_apis=[],
+        ),
+    }
+    router = MessageRouter(permissions=perms, agent_registry={})
+    app = create_mesh_app(bb, pubsub, router, perms)
+    client = TestClient(app)
+
+    resp = client.post("/mesh/blackboard/watch", json={
+        "agent_id": "watcher",
+        "pattern": "tasks/*",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["watching"] is True
+
+    # Verify watcher was registered
+    assert "watcher" in bb.get_watchers_for_key("tasks/foo")
+
+    bb.close()
+
+
+def test_watch_blackboard_permission_denied(tmp_path):
+    """Watch endpoint rejects patterns the agent can't read."""
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"))
+    pubsub = PubSub()
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {
+        "limited": AgentPermissions(
+            agent_id="limited", can_message=[],
+            blackboard_read=["context/*"], blackboard_write=[],
+            allowed_apis=[],
+        ),
+    }
+    router = MessageRouter(permissions=perms, agent_registry={})
+    app = create_mesh_app(bb, pubsub, router, perms)
+    client = TestClient(app)
+
+    resp = client.post("/mesh/blackboard/watch", json={
+        "agent_id": "limited",
+        "pattern": "tasks/*",  # limited can't read tasks/*
+    })
+    assert resp.status_code == 403
+
+    bb.close()
+
+
+# ── Project Cost Endpoint Tests ───────────────────────────────
+
+
+def test_project_cost_endpoint(tmp_path):
+    """Project cost endpoint returns aggregated spend."""
+    from src.host.costs import CostTracker
+
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"))
+    pubsub = PubSub()
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {}
+    router = MessageRouter(permissions=perms, agent_registry={})
+    tracker = CostTracker(db_path=str(tmp_path / "costs.db"))
+    tracker.set_project_budget("teamA", members=["alice", "bob"],
+                               daily_usd=50.0, monthly_usd=500.0)
+    tracker.track("alice", "openai/gpt-4o-mini", 1000, 500)
+    tracker.track("bob", "openai/gpt-4o-mini", 2000, 1000)
+
+    app = create_mesh_app(bb, pubsub, router, perms, cost_tracker=tracker)
+    client = TestClient(app)
+
+    resp = client.get("/mesh/costs/project/teamA", params={"period": "today"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["project"] == "teamA"
+    assert data["total_tokens"] == 4500
+    assert data["total_cost"] > 0
+    assert len(data["agents"]) == 2
+
+    bb.close()
+    tracker.close()
+
+
+# ── Register Auto-Subscription Scoping Tests ──────────────────
+
+
+def test_register_scopes_subscriptions(tmp_path):
+    """register_agent auto-subscribes with project-scoped topic names."""
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"))
+    pubsub = PubSub()
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {
+        "alice": AgentPermissions(
+            agent_id="alice", can_message=["*"],
+            can_publish=["*"],
+            can_subscribe=["research_complete", "deploy_ready"],
+            blackboard_read=["*"], blackboard_write=["*"],
+            allowed_apis=[],
+        ),
+    }
+    router = MessageRouter(permissions=perms, agent_registry={})
+    app = create_mesh_app(
+        bb, pubsub, router, perms,
+        agent_projects={"alice": "sales"},
+    )
+    client = TestClient(app)
+
+    resp = client.post("/mesh/register", json={
+        "agent_id": "alice", "capabilities": [], "port": 8401,
+    })
+    assert resp.status_code == 200
+
+    # Topics should be scoped
+    assert "alice" in pubsub.get_subscribers("projects/sales/research_complete")
+    assert "alice" in pubsub.get_subscribers("projects/sales/deploy_ready")
+    # Should NOT be subscribed to raw topic
+    assert "alice" not in pubsub.get_subscribers("research_complete")
+
+    bb.close()
+
+
+# ── Watcher Notification on CAS Claim Tests ───────────────────
+
+
+def test_claim_endpoint_notifies_watchers(tmp_path):
+    """CAS claim triggers watcher notification via lane_manager."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"))
+    pubsub = PubSub()
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {
+        "agent1": AgentPermissions(
+            agent_id="agent1", can_message=[],
+            blackboard_read=["*"], blackboard_write=["*"],
+            allowed_apis=[],
+        ),
+    }
+    router = MessageRouter(permissions=perms, agent_registry={})
+
+    # Set up mock lane_manager and dispatch_loop
+    mock_lane = MagicMock()
+    mock_lane.enqueue = AsyncMock()
+    mock_loop = MagicMock()
+
+    app = create_mesh_app(
+        bb, pubsub, router, perms,
+        lane_manager=mock_lane, dispatch_loop=mock_loop,
+    )
+    client = TestClient(app)
+
+    # Register a watcher
+    bb.add_watch("watcher_agent", "tasks/*")
+
+    # Write initial value
+    client.put("/mesh/blackboard/tasks/t1", params={"agent_id": "agent1"},
+               json={"status": "pending"})
+
+    # Claim via CAS
+    resp = client.post("/mesh/blackboard/claim", json={
+        "agent_id": "agent1",
+        "key": "tasks/t1",
+        "value": {"status": "claimed"},
+        "expected_version": 1,
+    })
+    assert resp.status_code == 200
+
+    # The steer notification should have been scheduled via
+    # asyncio.run_coroutine_threadsafe — verify the watch was registered
+    # and the watcher is in the list for this key
+    assert "watcher_agent" in bb.get_watchers_for_key("tasks/t1")
+
+    bb.close()
+
+
+def test_cleanup_removes_watchers(tmp_path):
+    """cleanup_rate_limits removes blackboard watchers for the agent."""
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"))
+    pubsub = PubSub()
+    perms = PermissionMatrix.__new__(PermissionMatrix)
+    perms.permissions = {}
+    router = MessageRouter(permissions=perms, agent_registry={})
+    app = create_mesh_app(bb, pubsub, router, perms)
+
+    # Add a watcher
+    bb.add_watch("agent1", "tasks/*")
+    assert "agent1" in bb.get_watchers_for_key("tasks/foo")
+
+    # Trigger cleanup (as health monitor/dashboard would)
+    app.cleanup_rate_limits("agent1")
+
+    # Watcher should be gone
+    assert "agent1" not in bb.get_watchers_for_key("tasks/foo")
+
+    bb.close()

@@ -181,6 +181,25 @@ class ProjectMetadata(BaseModel):
     settings: dict[str, Any] = {}
 
 
+# === Coordination Requests ===
+
+
+class BlackboardWatchRequest(BaseModel):
+    """Request to watch blackboard keys matching a glob pattern."""
+
+    agent_id: str
+    pattern: str
+
+
+class BlackboardClaimRequest(BaseModel):
+    """Request for atomic compare-and-swap blackboard write."""
+
+    agent_id: str
+    key: str
+    value: dict[str, Any]
+    expected_version: int
+
+
 # === Memory (inside agent container) ===
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import time
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
@@ -21,7 +22,15 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import StreamingResponse
 
 from src.host.credentials import is_system_credential
-from src.shared.types import AgentMessage, APIProxyRequest, APIProxyResponse, MeshEvent, NotifyRequest
+from src.shared.types import (
+    AgentMessage,
+    APIProxyRequest,
+    APIProxyResponse,
+    BlackboardClaimRequest,
+    BlackboardWatchRequest,
+    MeshEvent,
+    NotifyRequest,
+)
 from src.shared.utils import setup_logging
 
 _server_logger = setup_logging("host.server")
@@ -48,6 +57,7 @@ if TYPE_CHECKING:
     from src.host.credentials import CredentialVault
     from src.host.cron import CronScheduler
     from src.host.health import HealthMonitor
+    from src.host.lanes import LaneManager
     from src.host.mesh import Blackboard, MessageRouter, PubSub
     from src.host.orchestrator import Orchestrator
     from src.host.permissions import PermissionMatrix
@@ -72,6 +82,9 @@ def create_mesh_app(
     health_monitor: HealthMonitor | None = None,
     cost_tracker: CostTracker | None = None,
     notify_fn: Callable[[str, str], Coroutine] | None = None,
+    agent_projects: dict[str, str] | None = None,
+    lane_manager: LaneManager | None = None,
+    dispatch_loop: asyncio.AbstractEventLoop | None = None,
 ) -> FastAPI:
     """Create the FastAPI application for the mesh host process."""
     app = FastAPI(title="OpenLegion Mesh")
@@ -80,6 +93,7 @@ def create_mesh_app(
     app.cleanup_rate_limits = lambda agent_id: None  # replaced below
 
     _auth_tokens = auth_tokens if auth_tokens is not None else {}
+    _agent_projects = agent_projects if agent_projects is not None else {}
 
     # -- Input validation helpers ------------------------------------------------
     import re as _re
@@ -128,13 +142,14 @@ def create_mesh_app(
 
         Only clears timestamp lists (not locks) to avoid racing with
         concurrent lock acquisitions on the defaultdict.  Also cleans up
-        per-agent budget locks in the credential vault.
+        per-agent budget locks in the credential vault and blackboard watchers.
         """
         stale = [k for k in _rate_ts if k.endswith(f":{agent_id}")]
         for k in stale:
             del _rate_ts[k]
         if credential_vault is not None:
             credential_vault.cleanup_agent(agent_id)
+        blackboard.remove_agent_watches(agent_id)
 
     app.cleanup_rate_limits = _cleanup_rate_limits  # type: ignore[attr-defined]
 
@@ -256,6 +271,68 @@ def create_mesh_app(
                     trace_id=req_trace_id, source="mesh.blackboard", agent=agent_id,
                     event_type="blackboard_write", detail=key,
                 )
+        # Notify watchers via steer
+        watchers = blackboard.get_watchers_for_key(key, exclude=agent_id)
+        if watchers and lane_manager is not None and dispatch_loop is not None:
+            notify_msg = (
+                f"[Blackboard: {key}] updated by {agent_id}, v{entry.version}"
+            )
+            for watcher_id in watchers:
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        lane_manager.enqueue(watcher_id, notify_msg, mode="steer"),
+                        dispatch_loop,
+                    )
+                except Exception as e:
+                    _server_logger.warning("Watch notification to %s failed: %s", watcher_id, e)
+        return entry.model_dump(mode="json")
+
+    @app.post("/mesh/blackboard/watch")
+    async def watch_blackboard(data: BlackboardWatchRequest, request: Request) -> dict:
+        """Register a glob pattern watch on blackboard keys."""
+        agent_id = _resolve_agent_id(data.agent_id, request)
+        pattern = data.pattern
+        if not permissions.can_read_blackboard(agent_id, pattern):
+            raise HTTPException(403, f"Agent {agent_id} cannot read pattern '{pattern}'")
+        blackboard.add_watch(agent_id, pattern)
+        return {"watching": True, "pattern": pattern}
+
+    @app.post("/mesh/blackboard/claim")
+    async def claim_blackboard(body: BlackboardClaimRequest, request: Request) -> dict:
+        """Atomic compare-and-swap write. Returns 409 on version mismatch."""
+        agent_id = _resolve_agent_id(body.agent_id, request)
+        key = body.key
+        await _check_rate_limit("blackboard_write", agent_id)
+        if not permissions.can_write_blackboard(agent_id, key):
+            raise HTTPException(403, f"Agent {agent_id} cannot write {key}")
+        expected_version = body.expected_version
+        value = body.value
+        entry = blackboard.write_if_version(
+            key, value, written_by=agent_id, expected_version=expected_version,
+        )
+        if entry is None:
+            raise HTTPException(409, f"Version conflict on key '{key}'")
+        if trace_store:
+            req_trace_id = request.headers.get("x-trace-id")
+            if req_trace_id:
+                trace_store.record(
+                    trace_id=req_trace_id, source="mesh.blackboard", agent=agent_id,
+                    event_type="blackboard_claim", detail=key,
+                )
+        # Notify watchers (CAS writes are still writes)
+        watchers = blackboard.get_watchers_for_key(key, exclude=agent_id)
+        if watchers and lane_manager is not None and dispatch_loop is not None:
+            notify_msg = (
+                f"[Blackboard: {key}] claimed by {agent_id}, v{entry.version}"
+            )
+            for watcher_id in watchers:
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        lane_manager.enqueue(watcher_id, notify_msg, mode="steer"),
+                        dispatch_loop,
+                    )
+                except Exception as e:
+                    _server_logger.warning("Watch notification to %s failed: %s", watcher_id, e)
         return entry.model_dump(mode="json")
 
     # === Pub/Sub ===
@@ -265,6 +342,17 @@ def create_mesh_app(
         """Publish an event to a topic."""
         event.source = _resolve_agent_id(event.source, request)
         await _check_rate_limit("publish", event.source)
+
+        # Enforce project isolation: topic must match the publisher's project prefix
+        source_project = _agent_projects.get(event.source)
+        if source_project:
+            expected_prefix = f"projects/{source_project}/"
+            if not event.topic.startswith(expected_prefix):
+                raise HTTPException(
+                    403,
+                    f"Agent {event.source} (project={source_project}) cannot publish to topic '{event.topic}'"
+                )
+
         if not permissions.can_publish(event.source, event.topic):
             raise HTTPException(403, f"Agent {event.source} cannot publish to {event.topic}")
         if trace_store:
@@ -276,21 +364,47 @@ def create_mesh_app(
                 )
         subscribers = pubsub.get_subscribers(event.topic)
         if subscribers:
-            await asyncio.gather(*(
-                router.route(AgentMessage(
-                    from_agent="mesh",
-                    to=agent_id,
-                    type="event",
-                    payload=event.model_dump(mode="json"),
-                ))
-                for agent_id in subscribers
-            ), return_exceptions=True)
+            # Prefer steer delivery for real-time reactivity when lane_manager is available
+            if lane_manager is not None and dispatch_loop is not None:
+                formatted_msg = (
+                    f"[Event: {event.topic}] from {event.source}: "
+                    f"{json.dumps(event.payload, default=str)[:500]}"
+                )
+                for agent_id in subscribers:
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            lane_manager.enqueue(agent_id, formatted_msg, mode="steer"),
+                            dispatch_loop,
+                        )
+                    except Exception as e:
+                        _server_logger.warning("Steer delivery to %s failed: %s", agent_id, e)
+            else:
+                await asyncio.gather(*(
+                    router.route(AgentMessage(
+                        from_agent="mesh",
+                        to=agent_id,
+                        type="event",
+                        payload=event.model_dump(mode="json"),
+                    ))
+                    for agent_id in subscribers
+                ), return_exceptions=True)
         return {"subscribers_notified": len(subscribers)}
 
     @app.post("/mesh/subscribe")
     async def subscribe(topic: str, agent_id: str, request: Request) -> dict:
         """Subscribe an agent to an event topic."""
         agent_id = _resolve_agent_id(agent_id, request)
+
+        # Enforce project isolation: topic must match the subscriber's project prefix
+        sub_project = _agent_projects.get(agent_id)
+        if sub_project:
+            expected_prefix = f"projects/{sub_project}/"
+            if not topic.startswith(expected_prefix):
+                raise HTTPException(
+                    403,
+                    f"Agent {agent_id} (project={sub_project}) cannot subscribe to topic '{topic}'"
+                )
+
         if not permissions.can_subscribe(agent_id, topic):
             raise HTTPException(403, f"Agent {agent_id} cannot subscribe to {topic}")
         pubsub.subscribe(topic, agent_id)
@@ -507,8 +621,10 @@ def create_mesh_app(
 
         router.register_agent(agent_id, url, capabilities)
         agent_perms = permissions.get_permissions(agent_id)
+        reg_project = _agent_projects.get(agent_id)
         for topic in agent_perms.can_subscribe:
-            pubsub.subscribe(topic, agent_id)
+            scoped = f"projects/{reg_project}/{topic}" if reg_project else topic
+            pubsub.subscribe(scoped, agent_id)
         if event_bus is not None:
             event_bus.emit("agent_state", agent=agent_id, data={
                 "state": "registered", "capabilities": capabilities,
@@ -595,6 +711,12 @@ def create_mesh_app(
 
         if section in ("budget", "all") and cost_tracker:
             result["budget"] = cost_tracker.check_budget(agent_id)
+            # Include project budget if agent belongs to a project
+            agent_proj = _agent_projects.get(agent_id)
+            if agent_proj and hasattr(cost_tracker, "get_project_spend"):
+                project_spend = cost_tracker.get_project_spend(agent_proj, "today")
+                if "error" not in project_spend:
+                    result["project_budget"] = project_spend
 
         if section in ("fleet", "all"):
             # Scope fleet list by project: project agents see only peers,
@@ -631,6 +753,17 @@ def create_mesh_app(
             )
 
         return result
+
+    # === Project Costs ===
+
+    @app.get("/mesh/costs/project/{project}")
+    async def get_project_costs(project: str, period: str = "today") -> dict:
+        """Return aggregated cost data for a project."""
+        if cost_tracker is None:
+            raise HTTPException(503, "Cost tracker not available")
+        if not hasattr(cost_tracker, "get_project_spend"):
+            raise HTTPException(503, "Project cost tracking not available")
+        return cost_tracker.get_project_spend(project, period)
 
     # === Cron CRUD ===
 
