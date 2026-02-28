@@ -100,13 +100,15 @@ def agent(ctx):
 @agent.command("add")
 @click.argument("name", required=False, default=None)
 @click.option("--model", "model_override", default=None, help="LLM model")
-def agent_add(name: str | None, model_override: str | None):
+@click.option("--role", "role_override", default=None, help="Agent role/description")
+def agent_add(name: str | None, model_override: str | None, role_override: str | None):
     """Add a new agent.
 
     \b
     Examples:
       openlegion agent add researcher
       openlegion agent add coder --model anthropic/claude-sonnet-4-6
+      openlegion agent add mybot --role "Code review specialist"
       openlegion agent add              # interactive
     """
     from src.cli.config import _pick_model_interactive
@@ -119,7 +121,7 @@ def agent_add(name: str | None, model_override: str | None):
     if name in cfg.get("agents", {}):
         _fail(f"Agent '{name}' already exists.")
 
-    description = click.prompt(
+    description = role_override or click.prompt(
         "What should this agent do?",
         default=_default_description(name),
     )
@@ -137,12 +139,14 @@ def agent_add(name: str | None, model_override: str | None):
 @agent.command("edit")
 @click.argument("name", required=False, default=None)
 @click.option("--model", "model_override", default=None, help="Set LLM model")
-@click.option("--description", "desc_override", default=None, help="Set role/description")
+@click.option("--role", "desc_override", default=None, help="Set role/description")
+@click.option("--description", "desc_override_compat", default=None, hidden=True)
 @click.option("--budget", "budget_override", default=None, type=click.FloatRange(min=0), help="Set daily budget (USD)")
 def agent_edit(
     name: str | None,
     model_override: str | None,
     desc_override: str | None,
+    desc_override_compat: str | None,
     budget_override: float | None,
 ):
     """Change an agent's settings.
@@ -150,12 +154,14 @@ def agent_edit(
     \b
     Examples:
       openlegion agent edit mybot --model anthropic/claude-sonnet-4-6
-      openlegion agent edit mybot --description "Web research specialist"
+      openlegion agent edit mybot --role "Web research specialist"
       openlegion agent edit mybot --budget 10.0
       openlegion agent edit mybot           # interactive property picker
       openlegion agent edit                 # pick agent then property
     """
     from src.cli.config import _edit_agent_interactive
+
+    desc_override = desc_override or desc_override_compat
 
     cfg = _load_config()
     name = _resolve_agent_name(cfg, name)
@@ -471,20 +477,34 @@ def channels_list(as_json: bool):
 
 
 @channels.command("remove")
-@click.argument("channel_type")
-def channels_remove(channel_type: str):
+@click.argument("channel_type", required=False, default=None)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+def channels_remove(channel_type: str | None, yes: bool):
     """Disconnect a messaging channel.
 
     \b
     Examples:
       openlegion channels remove telegram
       openlegion channels remove discord
+      openlegion channels remove           # interactive
+      openlegion channels remove telegram -y
     """
+    if channel_type is None:
+        click.echo("Available channels:\n")
+        for i, (key, info) in enumerate(CHANNEL_TYPES.items(), 1):
+            click.echo(f"  {i}. {info['label']}")
+        click.echo("")
+        choice = click.prompt("Select channel to remove", type=click.IntRange(1, len(CHANNEL_TYPES)), default=1)
+        channel_type = list(CHANNEL_TYPES.keys())[choice - 1]
+
     channel_type = channel_type.lower()
     if channel_type not in CHANNEL_TYPES:
         _fail(f"Unknown channel '{channel_type}'. Available: {', '.join(CHANNEL_TYPES)}")
 
     ch = CHANNEL_TYPES[channel_type]
+
+    if not yes:
+        click.confirm(f"Remove {ch['label']} channel?", abort=True)
 
     mesh_cfg = {}
     if cli_config.CONFIG_FILE.exists():
