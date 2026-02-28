@@ -1170,7 +1170,7 @@ class REPLSession:
             data = self.ctx.transport.request_sync(name, "GET", "/workspace", timeout=5)
             files = data.get("files", [])
             if files:
-                click.echo(f"\n  Files:")
+                click.echo("\n  Files:")
                 for f in files:
                     fname = f.get("filename", "?")
                     size = f.get("size", 0)
@@ -1205,9 +1205,6 @@ class REPLSession:
             return
 
         # Extended config picker
-        cfg = _load_config()
-        agent_cfg = cfg.get("agents", {}).get(name, {})
-
         click.echo(f"\n  {name}\n  What to change?\n")
         options = [
             "config    (model, description, budget, thinking, MCP)",

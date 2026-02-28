@@ -881,7 +881,7 @@ def _edit_agent_interactive(
                     click.echo(f"  {i}. {s.get('name', '?')} — {s.get('command', '?')}")
             else:
                 click.echo("  (no servers)")
-            click.echo(f"\n  1. add server  2. remove server  3. done")
+            click.echo("\n  1. add server  2. remove server  3. done")
             action = click.prompt("  Action", type=click.IntRange(1, 3), default=3)
             if action == 3:
                 break

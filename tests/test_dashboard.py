@@ -836,6 +836,33 @@ class TestDashboardAgentConfig:
         )
         assert resp.status_code == 400
 
+    @patch("src.cli.config._load_config")
+    def test_put_config_mcp_servers_not_a_list(self, mock_load):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4.1-mini"},
+            "agents": {"alpha": {"model": "openai/gpt-4.1-mini"}},
+        }
+        resp = self.client.put(
+            "/dashboard/api/agents/alpha/config",
+            json={"mcp_servers": "not_a_list"},
+        )
+        assert resp.status_code == 400
+
+    @patch("src.cli.config._update_agent_field")
+    @patch("src.cli.config._load_config")
+    def test_put_config_mcp_servers_empty_clears(self, mock_load, mock_update):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4.1-mini"},
+            "agents": {"alpha": {"model": "openai/gpt-4.1-mini"}},
+        }
+        resp = self.client.put(
+            "/dashboard/api/agents/alpha/config",
+            json={"mcp_servers": []},
+        )
+        assert resp.status_code == 200
+        # Empty list should store None to clean up the YAML
+        mock_update.assert_called_with("alpha", "mcp_servers", None)
+
 
 # ── V2 Tests: Queues ────────────────────────────────────────
 
