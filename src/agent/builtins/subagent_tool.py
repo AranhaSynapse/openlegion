@@ -313,4 +313,8 @@ async def wait_for_subagent(
                 return {"subagent_id": subagent_id, "completed": True, **bb.get("value", {})}
         except Exception:
             pass
-    return {"subagent_id": subagent_id, "completed": True, "result": "Result written to blackboard but could not be read."}
+    return {
+        "subagent_id": subagent_id,
+        "completed": True,
+        "result": "Result written to blackboard but could not be read.",
+    }
