@@ -105,19 +105,19 @@ The agent detail view features a tabbed **Agent Identity** panel for viewing and
 | **Logs** | Activity + Learnings (read-only) | Daily session logs and recorded errors/corrections |
 | **Tools** | Capabilities list (read-only) | Available tools and skill definitions |
 
-Files in the Identity tab (`SOUL.md`, `INSTRUCTIONS.md`) are shared — both you and the agent can edit them. Files in the Memory tab are agent-managed.
+Each file card shows an access badge: **Shared** (teal) for files both you and the agent can edit (`SOUL.md`, `INSTRUCTIONS.md`, `USER.md`, `HEARTBEAT.md`), **Auto** (gray) for system-managed files (`MEMORY.md`). Customized files show a description subtitle; default files show a CTA prompt.
 
 ### Usage
 
 1. Click an agent card to open the detail view
 2. The **Agent Identity** panel shows 5 tabs — Identity is selected by default
 3. File cards with default/scaffold content show a "default" pill and a "Customize" button with a friendly prompt
-4. Once customized, a character budget bar shows usage against the cap (indigo → amber at 80% → red at 95%)
+4. Once customized, a description subtitle and character budget bar appear (indigo → amber at 80% → red at 95%)
 5. Click **Edit** (or **Customize** for default files) to open the inline editor
 6. Edit the content in the monospace textarea — the budget bar updates live. Save with **Ctrl+S** / **⌘S** or the Save button
 7. Click **Save** to write changes (content is sanitized for invisible Unicode)
 8. The **Logs** tab shows daily activity logs and learnings (errors in red, corrections in amber), both read-only
-9. The **Config** tab shows model, role, budget, and credential access — click Edit to modify
+9. The **Config** tab shows model, role, budget, credential access, and a **Remove Agent** action at the bottom
 
 The dashboard proxies workspace operations through the mesh transport layer to the agent's container — files are read from and written to the agent's `/data/workspace` volume.
 
