@@ -1136,6 +1136,7 @@ class TestOAuth:
         assert api_key == _ANTHROPIC_OAUTH_API_KEY_SENTINEL
         assert headers["Authorization"] == "Bearer sk-ant-oat01-token123"
         assert headers["anthropic-beta"] == _ANTHROPIC_OAUTH_BETAS
+        assert headers["x-api-key"] == ""
 
     def test_get_auth_for_model_non_anthropic_ignores_oauth(self, monkeypatch):
         """OAuth prefix on a non-Anthropic model produces no auth headers."""
@@ -1206,6 +1207,7 @@ class TestOAuthIntegration:
         assert "extra_headers" in captured
         assert captured["extra_headers"]["Authorization"] == "Bearer sk-ant-oat01-integration"
         assert captured["extra_headers"]["anthropic-beta"] == _ANTHROPIC_OAUTH_BETAS
+        assert captured["extra_headers"]["x-api-key"] == ""
 
     async def test_stream_llm_oauth_sends_sentinel_and_bearer(self, monkeypatch):
         """Verify streaming path sends sentinel api_key and Bearer header."""
@@ -1242,3 +1244,4 @@ class TestOAuthIntegration:
         assert captured["api_key"] == _ANTHROPIC_OAUTH_API_KEY_SENTINEL
         assert captured["extra_headers"]["Authorization"] == "Bearer sk-ant-oat01-stream"
         assert captured["extra_headers"]["anthropic-beta"] == _ANTHROPIC_OAUTH_BETAS
+        assert captured["extra_headers"]["x-api-key"] == ""
