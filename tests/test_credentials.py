@@ -1150,7 +1150,6 @@ class TestGetAuthForModel:
 async def test_budget_lock_timeout_returns_error():
     """Budget lock timeout returns an error instead of silently retrying."""
     import asyncio
-    from unittest.mock import AsyncMock
 
     v = CredentialVault()
     cost_tracker = MagicMock()

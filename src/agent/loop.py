@@ -624,7 +624,9 @@ class AgentLoop:
                         source=f"tool:{tool_name}",
                     )
 
-    async def _record_failure(self, tool_name: str, error: str, context: str = "", arguments: dict | None = None) -> None:
+    async def _record_failure(
+        self, tool_name: str, error: str, context: str = "", arguments: dict | None = None,
+    ) -> None:
         """Record a tool failure so the agent can avoid repeating mistakes."""
         if self.workspace:
             self.workspace.record_error(tool_name, error, context)
