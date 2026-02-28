@@ -955,7 +955,6 @@ class REPLSession:
             service = arg.split()[0]
         # Normalize: bare provider names get _api_key suffix
         from src.host.credentials import (
-            _ANTHROPIC_OAUTH_PREFIX,
             SYSTEM_CREDENTIAL_PROVIDERS,
             is_system_credential,
         )
@@ -965,14 +964,9 @@ class REPLSession:
         if not key_value:
             click.echo("No key provided.")
             return
-        # Detect OAuth setup-token (only for Anthropic credentials)
-        is_oauth = (
-            service.lower() in ("anthropic_api_key", "anthropic")
-            and key_value.startswith(_ANTHROPIC_OAUTH_PREFIX)
-        )
         # Detect known LLM providers → store as system tier
         is_llm_provider = is_system_credential(service)
-        if is_llm_provider or is_oauth:
+        if is_llm_provider:
             is_system = True
         else:
             is_system = click.confirm(
@@ -981,11 +975,8 @@ class REPLSession:
         self.ctx.credential_vault.add_credential(service, key_value, system=is_system)
         tier_label = "system" if is_system else "agent"
         click.echo(f"Credential '{service}' stored ({tier_label} tier).")
-        if is_oauth:
-            click.echo("  OAuth token detected. No prompt caching or 1M context; subscription rate limits apply.")
         # Prompt for optional base URL when the key is for a known LLM provider
-        # (skip for OAuth tokens — they use the default Anthropic endpoint)
-        if is_llm_provider and not is_oauth:
+        if is_llm_provider:
             provider = service.lower().replace("_api_key", "")
             base_url = click.prompt(
                 "  Custom API base URL (leave blank for default)", default="", show_default=False,
