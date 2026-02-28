@@ -2226,7 +2226,10 @@ function dashboard() {
         });
         if (resp.ok) {
           const data = await resp.json();
-          this.showToast(`Credential stored: ${data.service} (${data.tier} tier)`);
+          const msg = data.note
+            ? `Credential stored: ${data.service} (${data.tier} tier). ${data.note}`
+            : `Credential stored: ${data.service} (${data.tier} tier)`;
+          this.showToast(msg);
           this.credService = '';
           this.credCustomService = '';
           this.credKey = '';
@@ -2268,7 +2271,8 @@ function dashboard() {
           body: JSON.stringify(body),
         });
         if (resp.ok) {
-          this.showToast('API key saved');
+          const data = await resp.json();
+          this.showToast(data.note ? `Credential saved. ${data.note}` : 'API key saved');
           this.onboardProvider = '';
           this.onboardKey = '';
           this.onboardBaseUrl = '';

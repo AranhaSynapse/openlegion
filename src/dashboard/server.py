@@ -728,11 +728,11 @@ def create_dashboard_router(
             credential_vault.add_credential(f"{provider}_api_base", base_url, system=is_system)
         tier = "system" if is_system else "agent"
         result: dict = {"stored": True, "service": service, "tier": tier}
-        # Detect OAuth token
+        # Detect Anthropic OAuth token
         from src.host.credentials import _ANTHROPIC_OAUTH_PREFIX
-        if key.startswith(_ANTHROPIC_OAUTH_PREFIX):
+        if service.lower() == "anthropic_api_key" and key.startswith(_ANTHROPIC_OAUTH_PREFIX):
             result["auth_type"] = "oauth"
-            result["note"] = "OAuth tokens don't support prompt caching or 1M context."
+            result["note"] = "OAuth token saved. No prompt caching or 1M context; subscription rate limits apply."
         return result
 
     @api_router.delete("/api/credentials/{name}")
