@@ -5,9 +5,9 @@
  * Real-time updates via WebSocket + periodic REST polling.
  */
 const _IDENTITY_TABS = [
+  { id: 'config', label: 'Config', file: null, access: 'user' },
   { id: 'identity', label: 'Identity', file: null, access: 'user' },
   { id: 'memory', label: 'Memory', file: null, access: 'agent' },
-  { id: 'config', label: 'Config', file: null, access: 'user' },
   { id: 'logs', label: 'Logs', file: null, access: 'auto' },
   { id: 'capabilities', label: 'Tools', file: null, access: 'auto' },
 ];
@@ -148,7 +148,7 @@ function dashboard() {
     // Identity panel
     identityTabs: _IDENTITY_TABS,
     identityFileMap: _IDENTITY_FILE_MAP,
-    identityTab: 'identity',
+    identityTab: 'config',
     identityFiles: [],
     identityLoading: false,
     identityContent: {},
@@ -279,8 +279,8 @@ function dashboard() {
 
     _buildPath() {
       if (this.detailAgent) {
-        const tab = this.identityTab || 'identity';
-        return tab === 'identity'
+        const tab = this.identityTab || 'config';
+        return tab === 'config'
           ? `/agents/${this.detailAgent}`
           : `/agents/${this.detailAgent}/${tab}`;
       }
@@ -309,7 +309,7 @@ function dashboard() {
 
     _parsePath(path) {
       const clean = path.replace(/^\/+/, '').replace(/\/+$/, '');
-      const route = { tab: 'fleet', activityView: 'traces', agentId: null, identityTab: 'identity' };
+      const route = { tab: 'fleet', activityView: 'traces', agentId: null, identityTab: 'config' };
       if (!clean) return route;
 
       const agentMatch = clean.match(/^agents\/([^/]+)(?:\/([^/]+))?$/);
@@ -2661,7 +2661,7 @@ function dashboard() {
       this.selectedAgent = agentId;
       this.detailAgent = agentId;
       this.showBrowserViewer = false;
-      this.identityTab = 'identity';
+      this.identityTab = 'config';
       this.identityFiles = [];
       this.identityContent = {};
       this.identityEditing = false;
