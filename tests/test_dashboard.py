@@ -189,7 +189,7 @@ class TestDashboardAgentsAPI:
         expected_fields = {
             "id", "url", "health_status", "failures", "restarts",
             "last_check", "last_healthy", "daily_cost", "daily_tokens",
-            "role", "model", "project",
+            "role", "model", "avatar", "project",
         }
         assert expected_fields.issubset(agent.keys())
 
@@ -208,6 +208,12 @@ class TestDashboardAgentsAPI:
         alpha = next(a for a in data["agents"] if a["id"] == "alpha")
         assert alpha["daily_cost"] > 0
         assert alpha["daily_tokens"] > 0
+
+    def test_api_agents_avatar_default(self):
+        resp = self.client.get("/dashboard/api/agents")
+        data = resp.json()
+        alpha = next(a for a in data["agents"] if a["id"] == "alpha")
+        assert alpha["avatar"] == 30
 
     def test_api_agents_empty_registry(self):
         self.components["agent_registry"].clear()
@@ -607,6 +613,69 @@ class TestDashboardAgentConfig:
         resp = self.client.put(
             "/dashboard/api/agents/alpha/budget",
             json={"daily_usd": -5},
+        )
+        assert resp.status_code == 400
+
+    @patch("src.cli.config._load_config")
+    def test_get_config_includes_avatar_default(self, mock_load):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4.1-mini"},
+            "agents": {"alpha": {"model": "openai/gpt-4.1"}},
+        }
+        resp = self.client.get("/dashboard/api/agents/alpha/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["avatar"] == 30
+
+    @patch("src.cli.config._load_config")
+    def test_get_config_includes_avatar_custom(self, mock_load):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4.1-mini"},
+            "agents": {"alpha": {"model": "openai/gpt-4.1", "avatar": 7}},
+        }
+        resp = self.client.get("/dashboard/api/agents/alpha/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["avatar"] == 7
+
+    @patch("src.cli.config._update_agent_field")
+    @patch("src.cli.config._load_config")
+    def test_put_config_update_avatar(self, mock_load, mock_update):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4.1-mini"},
+            "agents": {"alpha": {"model": "openai/gpt-4.1-mini"}},
+        }
+        resp = self.client.put(
+            "/dashboard/api/agents/alpha/config",
+            json={"avatar": 15},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "avatar" in data["updated"]
+        assert data["restart_required"] is False
+        mock_update.assert_called_with("alpha", "avatar", 15)
+
+    @patch("src.cli.config._load_config")
+    def test_put_config_avatar_invalid_range(self, mock_load):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4.1-mini"},
+            "agents": {"alpha": {"model": "openai/gpt-4.1-mini"}},
+        }
+        resp = self.client.put(
+            "/dashboard/api/agents/alpha/config",
+            json={"avatar": 99},
+        )
+        assert resp.status_code == 400
+
+    @patch("src.cli.config._load_config")
+    def test_put_config_avatar_invalid_type(self, mock_load):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4.1-mini"},
+            "agents": {"alpha": {"model": "openai/gpt-4.1-mini"}},
+        }
+        resp = self.client.put(
+            "/dashboard/api/agents/alpha/config",
+            json={"avatar": "not_a_number"},
         )
         assert resp.status_code == 400
 
