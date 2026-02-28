@@ -27,7 +27,7 @@ agents:
       You are the 'researcher' agent in a multi-agent fleet.
       Your specialty is finding information and writing reports.
     resources:
-      memory_limit: 512m
+      memory_limit: 1g
       cpu_limit: 0.5
     budget:
       daily_usd: 5.00
@@ -46,9 +46,9 @@ agents:
 | `role` | string | Yes | Short description of the agent's purpose |
 | `model` | string | No | LLM model in `provider/model` format. Falls back to `llm.default_model` in mesh.yaml |
 | `skills_dir` | string | No | Path to custom skills directory |
-| `system_prompt` | string | No | Custom system prompt. Auto-generated if omitted |
-| `resources.memory_limit` | string | No | Docker memory limit (default: `512m`) |
-| `resources.cpu_limit` | float | No | CPU quota, 0.5 = 50% (default: `0.5`) |
+| `system_prompt` | string | No | Custom system prompt. Auto-generated if omitted. Also accepted as `instructions` |
+| `resources.memory_limit` | string | No | Docker memory limit (default: `1g`) |
+| `resources.cpu_limit` | float | No | CPU quota as fraction of one core (default: `0.5`). Note: runtime currently uses a hardcoded 1 CPU quota; this field is accepted but not yet enforced |
 | `budget.daily_usd` | float | No | Daily spend cap in USD |
 | `budget.monthly_usd` | float | No | Monthly spend cap in USD |
 | `initial_instructions` | string | No | Seeds `AGENTS.md` on first boot. Distinct from `system_prompt` — this sets the agent's operating instructions file |
@@ -75,6 +75,7 @@ model: gemini/gemini-2.5-flash
 model: deepseek/deepseek-chat
 model: xai/grok-2
 model: groq/llama-3.3-70b-versatile
+model: zai/glm-4-plus
 ```
 
 ## `config/mesh.yaml`
