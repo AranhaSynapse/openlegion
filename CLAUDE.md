@@ -72,6 +72,7 @@ Three trust zones: **User** (full trust), **Mesh** (trusted coordinator), **Agen
 ## Git Workflow
 
 - **Always use worktrees.** Multiple agents work on this codebase concurrently. To avoid conflicts, always work in an isolated git worktree. Use Claude Code's built-in worktree support (`isolation: "worktree"` for subagents, or the `EnterWorktree` tool for interactive sessions) so each agent gets its own branch and working directory. Never make changes directly on `main`.
+- **Never `pip install` from a worktree.** Running `pip install -e .` inside a worktree silently hijacks the global `openlegion` entry point to point at the worktree's frozen source instead of the main checkout. This breaks the CLI for the user. Never run `pip install`, `pip install -e .`, or any variant from inside a worktree. The CLI is installed once from the main checkout.
 - **Never merge directly to main.** Always create a PR via `gh pr create` and merge through GitHub. Branch protection is enforced.
 - **Branch naming:** use prefixes like `feat/`, `fix/`, `refactor/`, `docs/`, etc.
 - **Commit style:** descriptive subject line, body explains "why". Do not add Co-Authored-By trailers.
@@ -220,6 +221,7 @@ pytest tests/test_loop.py -x -v
 
 ## Common Mistakes to Avoid
 
+- **Running `pip install` from a worktree.** This overwrites the user's `openlegion` entry point to point at the worktree's source instead of the main checkout. The CLI then runs stale code and the user sees none of their changes. A runtime guard in `src/cli/__init__.py` catches this and exits with an error. Never run pip install from any path containing `.claude/`.
 - **Creating httpx clients per request.** Reuse clients with connection pooling. `LLMClient` already does this (`_get_client`). Follow the same pattern elsewhere — create the client once, close on shutdown.
 - **Polling for task completion.** Prefer push-based patterns (agent posts result back to mesh) over polling loops. The current `_wait_for_task_result` in orchestrator.py is a known area for improvement.
 - **Breaking tool-call message grouping.** When trimming context, never separate an `assistant` message with `tool_calls` from its corresponding `tool` result messages. The `_trim_context` method handles this — respect the grouping pattern.
