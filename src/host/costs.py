@@ -69,6 +69,7 @@ class CostTracker:
         self._event_bus = event_bus
         self._init_schema()
         self.budgets: dict[str, dict[str, float]] = {}
+        self._project_budgets: dict[str, dict] = {}
 
     def _init_schema(self) -> None:
         self.db.executescript("""
@@ -215,8 +216,6 @@ class CostTracker:
         monthly_usd: float = 1000.0,
     ) -> None:
         """Set an aggregate budget for a project (sum of member agents)."""
-        if not hasattr(self, "_project_budgets"):
-            self._project_budgets: dict[str, dict] = {}
         self._project_budgets[project] = {
             "members": members,
             "daily_usd": daily_usd,
@@ -225,7 +224,7 @@ class CostTracker:
 
     def get_project_spend(self, project: str, period: str = "today") -> dict:
         """Aggregate spend across all member agents for a project."""
-        pbudget = getattr(self, "_project_budgets", {}).get(project)
+        pbudget = self._project_budgets.get(project)
         if pbudget is None:
             return {"project": project, "error": "No project budget configured"}
         members = pbudget["members"]

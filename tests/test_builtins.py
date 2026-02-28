@@ -3500,3 +3500,26 @@ class TestClaimTaskTool:
             mesh_client=None,
         )
         assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_claim_task_invalid_json_fallback(self):
+        """claim_task with non-JSON string falls back to {text: value}."""
+        from src.agent.builtins.mesh_tool import claim_task
+
+        mock_client = AsyncMock()
+        mock_client.is_standalone = False
+        mock_client.read_blackboard = AsyncMock(return_value={
+            "key": "tasks/t1", "value": {"status": "pending"}, "version": 1,
+        })
+        mock_client.claim_blackboard = AsyncMock(return_value={
+            "key": "tasks/t1", "version": 2,
+        })
+        result = await claim_task(
+            key="tasks/t1",
+            claim_value="not valid json",
+            mesh_client=mock_client,
+        )
+        assert result["claimed"] is True
+        # Verify the parsed value was {"text": "not valid json"}
+        call_args = mock_client.claim_blackboard.call_args
+        assert call_args[0][1] == {"text": "not valid json"}

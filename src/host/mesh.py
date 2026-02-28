@@ -155,6 +155,8 @@ class Blackboard:
             new_version = row[0]
             self._log_event("cas_write", key, written_by, value_json)
             self.db.commit()
+        self._maybe_gc_event_log()
+        self._maybe_gc_ttl()
 
         if self._event_bus:
             preview = value_json[:200] if len(value_json) > 200 else value_json
@@ -283,30 +285,35 @@ class Blackboard:
 
     def add_watch(self, agent_id: str, pattern: str) -> None:
         """Register a glob pattern watch for an agent."""
-        if agent_id not in self._watchers:
-            self._watchers[agent_id] = []
-        if pattern not in self._watchers[agent_id]:
-            self._watchers[agent_id].append(pattern)
+        with self._write_lock:
+            if agent_id not in self._watchers:
+                self._watchers[agent_id] = []
+            if pattern not in self._watchers[agent_id]:
+                self._watchers[agent_id].append(pattern)
 
     def remove_watch(self, agent_id: str, pattern: str | None = None) -> None:
         """Remove a specific watch pattern, or all watches for an agent."""
-        if pattern is None:
-            self._watchers.pop(agent_id, None)
-        elif agent_id in self._watchers:
-            self._watchers[agent_id] = [
-                p for p in self._watchers[agent_id] if p != pattern
-            ]
-            if not self._watchers[agent_id]:
-                del self._watchers[agent_id]
+        with self._write_lock:
+            if pattern is None:
+                self._watchers.pop(agent_id, None)
+            elif agent_id in self._watchers:
+                self._watchers[agent_id] = [
+                    p for p in self._watchers[agent_id] if p != pattern
+                ]
+                if not self._watchers[agent_id]:
+                    del self._watchers[agent_id]
 
     def remove_agent_watches(self, agent_id: str) -> None:
         """Remove all watches for an agent (cleanup on deregister)."""
-        self._watchers.pop(agent_id, None)
+        with self._write_lock:
+            self._watchers.pop(agent_id, None)
 
     def get_watchers_for_key(self, key: str, exclude: str | None = None) -> list[str]:
         """Return agent IDs watching a key, excluding the writer to prevent self-notify."""
+        with self._write_lock:
+            snapshot = dict(self._watchers)
         matched: list[str] = []
-        for agent_id, patterns in self._watchers.items():
+        for agent_id, patterns in snapshot.items():
             if agent_id == exclude:
                 continue
             for pattern in patterns:

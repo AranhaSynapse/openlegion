@@ -194,6 +194,8 @@ class BlackboardWatchRequest(BaseModel):
 class BlackboardClaimRequest(BaseModel):
     """Request for atomic compare-and-swap blackboard write."""
 
+    agent_id: str
+    key: str
     value: dict[str, Any]
     expected_version: int
 

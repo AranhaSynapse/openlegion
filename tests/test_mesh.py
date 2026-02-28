@@ -772,3 +772,58 @@ async def test_router_allows_standalone_to_project_messaging():
     result = await router.route(msg)
     assert "Cross-project" not in result.get("error", "")
     assert "No agent found" in result.get("error", "")
+
+
+# === Watcher Thread Safety & Cleanup Tests ===
+
+
+def test_blackboard_watcher_cleanup_on_deregister(blackboard):
+    """remove_agent_watches called after deregister cleans up all watches."""
+    blackboard.add_watch("agent1", "tasks/*")
+    blackboard.add_watch("agent1", "context/*")
+    blackboard.add_watch("agent2", "tasks/*")
+    # Simulate deregister
+    blackboard.remove_agent_watches("agent1")
+    assert "agent1" not in blackboard._watchers
+    assert "agent2" in blackboard._watchers
+    assert blackboard.get_watchers_for_key("tasks/foo") == ["agent2"]
+
+
+def test_blackboard_duplicate_watch_ignored(blackboard):
+    """Adding the same pattern twice for an agent doesn't duplicate."""
+    blackboard.add_watch("agent1", "tasks/*")
+    blackboard.add_watch("agent1", "tasks/*")
+    assert len(blackboard._watchers["agent1"]) == 1
+
+
+def test_blackboard_cas_success_with_event_bus(tmp_path):
+    """write_if_version emits event_bus event on success."""
+    from unittest.mock import MagicMock
+    bus = MagicMock()
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"), event_bus=bus)
+    bb.write("tasks/t1", {"status": "pending"}, written_by="system")
+    bus.reset_mock()
+    result = bb.write_if_version(
+        "tasks/t1", {"status": "claimed"}, written_by="agent1", expected_version=1,
+    )
+    assert result is not None
+    bus.emit.assert_called_once()
+    call_kwargs = bus.emit.call_args
+    assert call_kwargs[0][0] == "blackboard_write"
+    bb.close()
+
+
+def test_blackboard_cas_failure_no_event_bus_emission(tmp_path):
+    """write_if_version does NOT emit event_bus event on CAS failure."""
+    from unittest.mock import MagicMock
+    bus = MagicMock()
+    bb = Blackboard(db_path=str(tmp_path / "bb.db"), event_bus=bus)
+    bb.write("tasks/t1", {"status": "pending"}, written_by="system")
+    bb.write("tasks/t1", {"status": "updated"}, written_by="system")
+    bus.reset_mock()
+    result = bb.write_if_version(
+        "tasks/t1", {"status": "claimed"}, written_by="agent1", expected_version=1,
+    )
+    assert result is None
+    bus.emit.assert_not_called()
+    bb.close()

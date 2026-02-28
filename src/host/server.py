@@ -22,7 +22,11 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import StreamingResponse
 
 from src.host.credentials import is_system_credential
-from src.shared.types import AgentMessage, APIProxyRequest, APIProxyResponse, MeshEvent, NotifyRequest
+from src.shared.types import (
+    AgentMessage, APIProxyRequest, APIProxyResponse,
+    BlackboardClaimRequest, BlackboardWatchRequest,
+    MeshEvent, NotifyRequest,
+)
 from src.shared.utils import setup_logging
 
 _server_logger = setup_logging("host.server")
@@ -49,6 +53,7 @@ if TYPE_CHECKING:
     from src.host.credentials import CredentialVault
     from src.host.cron import CronScheduler
     from src.host.health import HealthMonitor
+    from src.host.lanes import LaneManager
     from src.host.mesh import Blackboard, MessageRouter, PubSub
     from src.host.orchestrator import Orchestrator
     from src.host.permissions import PermissionMatrix
@@ -74,8 +79,8 @@ def create_mesh_app(
     cost_tracker: CostTracker | None = None,
     notify_fn: Callable[[str, str], Coroutine] | None = None,
     agent_projects: dict[str, str] | None = None,
-    lane_manager: object | None = None,
-    dispatch_loop: object | None = None,
+    lane_manager: LaneManager | None = None,
+    dispatch_loop: asyncio.AbstractEventLoop | None = None,
 ) -> FastAPI:
     """Create the FastAPI application for the mesh host process."""
     app = FastAPI(title="OpenLegion Mesh")
@@ -133,13 +138,14 @@ def create_mesh_app(
 
         Only clears timestamp lists (not locks) to avoid racing with
         concurrent lock acquisitions on the defaultdict.  Also cleans up
-        per-agent budget locks in the credential vault.
+        per-agent budget locks in the credential vault and blackboard watchers.
         """
         stale = [k for k in _rate_ts if k.endswith(f":{agent_id}")]
         for k in stale:
             del _rate_ts[k]
         if credential_vault is not None:
             credential_vault.cleanup_agent(agent_id)
+        blackboard.remove_agent_watches(agent_id)
 
     app.cleanup_rate_limits = _cleanup_rate_limits  # type: ignore[attr-defined]
 
@@ -278,31 +284,25 @@ def create_mesh_app(
         return entry.model_dump(mode="json")
 
     @app.post("/mesh/blackboard/watch")
-    async def watch_blackboard(data: dict, request: Request) -> dict:
+    async def watch_blackboard(data: BlackboardWatchRequest, request: Request) -> dict:
         """Register a glob pattern watch on blackboard keys."""
-        agent_id = _resolve_agent_id(data.get("agent_id", ""), request)
-        pattern = data.get("pattern", "")
-        if not pattern:
-            raise HTTPException(400, "pattern is required")
+        agent_id = _resolve_agent_id(data.agent_id, request)
+        pattern = data.pattern
         if not permissions.can_read_blackboard(agent_id, pattern):
             raise HTTPException(403, f"Agent {agent_id} cannot read pattern '{pattern}'")
         blackboard.add_watch(agent_id, pattern)
         return {"watching": True, "pattern": pattern}
 
     @app.post("/mesh/blackboard/claim")
-    async def claim_blackboard(body: dict, request: Request) -> dict:
+    async def claim_blackboard(body: BlackboardClaimRequest, request: Request) -> dict:
         """Atomic compare-and-swap write. Returns 409 on version mismatch."""
-        agent_id = _resolve_agent_id(body.get("agent_id", ""), request)
-        key = body.get("key", "")
-        if not key:
-            raise HTTPException(400, "key is required")
+        agent_id = _resolve_agent_id(body.agent_id, request)
+        key = body.key
         await _check_rate_limit("blackboard_write", agent_id)
         if not permissions.can_write_blackboard(agent_id, key):
             raise HTTPException(403, f"Agent {agent_id} cannot write {key}")
-        expected_version = body.get("expected_version")
-        if expected_version is None:
-            raise HTTPException(400, "expected_version is required")
-        value = body.get("value", {})
+        expected_version = body.expected_version
+        value = body.value
         entry = blackboard.write_if_version(
             key, value, written_by=agent_id, expected_version=expected_version,
         )
@@ -315,6 +315,20 @@ def create_mesh_app(
                     trace_id=req_trace_id, source="mesh.blackboard", agent=agent_id,
                     event_type="blackboard_claim", detail=key,
                 )
+        # Notify watchers (CAS writes are still writes)
+        watchers = blackboard.get_watchers_for_key(key, exclude=agent_id)
+        if watchers and lane_manager is not None and dispatch_loop is not None:
+            notify_msg = (
+                f"[Blackboard: {key}] claimed by {agent_id}, v{entry.version}"
+            )
+            for watcher_id in watchers:
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        lane_manager.enqueue(watcher_id, notify_msg, mode="steer"),
+                        dispatch_loop,
+                    )
+                except Exception as e:
+                    _server_logger.warning("Watch notification to %s failed: %s", watcher_id, e)
         return entry.model_dump(mode="json")
 
     # === Pub/Sub ===
