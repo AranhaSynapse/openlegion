@@ -2487,10 +2487,7 @@ function dashboard() {
         });
         if (resp.ok) {
           const data = await resp.json();
-          const msg = data.note
-            ? `Credential stored: ${data.service} (${data.tier} tier). ${data.note}`
-            : `Credential stored: ${data.service} (${data.tier} tier)`;
-          this.showToast(msg);
+          this.showToast(`Credential stored: ${data.service} (${data.tier} tier)`);
           this.credService = '';
           this.credCustomService = '';
           this.credKey = '';
@@ -2533,7 +2530,7 @@ function dashboard() {
         });
         if (resp.ok) {
           const data = await resp.json();
-          this.showToast(data.note ? `Credential saved. ${data.note}` : 'API key saved');
+          this.showToast('API key saved');
           this.onboardProvider = '';
           this.onboardKey = '';
           this.onboardBaseUrl = '';

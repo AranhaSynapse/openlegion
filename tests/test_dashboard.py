@@ -985,7 +985,6 @@ class TestDashboardCredentialTier:
         assert data["tier"] == "agent"
 
 
-
 class TestDashboardSettings:
     """Tests for the settings endpoint."""
 
