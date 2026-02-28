@@ -1580,6 +1580,7 @@ function dashboard() {
     closeAddAgentModal() {
       if (this.addAgentLoading) return;
       this.addAgentMode = false;
+      this.addAgentForm = { name: '', role: '', model: '', avatar: 30, _showPicker: false };
     },
 
     async removeAgent(agentId) {
@@ -3059,16 +3060,16 @@ function dashboard() {
     agentAvatarNum(agentId) {
       if (!agentId) return 30;
       const cfg = this.agentConfigs[agentId];
-      if (cfg && cfg.avatar) return cfg.avatar;
+      if (cfg && cfg.avatar != null) return cfg.avatar;
       const agent = this.agents.find(a => a.id === agentId);
-      if (agent && agent.avatar) return agent.avatar;
+      if (agent && agent.avatar != null) return agent.avatar;
       return 30;
     },
 
     agentAvatarUrl(agentId) {
       const num = this.agentAvatarNum(agentId);
       const v = window.__config.assetVersion || '';
-      return `${window.__config.apiBase.replace('/api', '')}/static/avatars/${num}.svg` + (v ? `?v=${v}` : '');
+      return `/dashboard/static/avatars/${num}.svg` + (v ? `?v=${v}` : '');
     },
 
     valueSummary(value) {

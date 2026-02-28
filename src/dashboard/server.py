@@ -175,9 +175,9 @@ def create_dashboard_router(
         try:
             avatar = int(avatar)
             if avatar < 1 or avatar > 50:
-                avatar = 30
+                raise HTTPException(status_code=400, detail="Avatar must be between 1 and 50")
         except (ValueError, TypeError):
-            avatar = 30
+            raise HTTPException(status_code=400, detail="Avatar must be an integer between 1 and 50")
 
         if not model:
             from src.cli.config import _load_config

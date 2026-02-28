@@ -286,6 +286,38 @@ class TestDashboardAgentCRUD:
             "new_agent", "every 30m",
         )
 
+    @patch("src.cli.config._update_agent_field")
+    @patch("src.cli.config._create_agent")
+    @patch("src.cli.config._load_config")
+    def test_post_agent_with_avatar(self, mock_load, mock_create, mock_update):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4o-mini"},
+            "agents": {
+                "new_agent": {
+                    "role": "tester",
+                    "skills_dir": "", "model": "openai/gpt-4o-mini",
+                },
+            },
+        }
+        self.components["runtime"].start_agent.return_value = "http://localhost:8403"
+        self.components["runtime"].wait_for_agent = AsyncMock(return_value=True)
+        self.components["permissions"].reload = MagicMock()
+
+        resp = self.client.post(
+            "/dashboard/api/agents",
+            json={"name": "new_agent", "role": "tester", "avatar": 7},
+        )
+        assert resp.status_code == 200
+        mock_update.assert_called_with("new_agent", "avatar", 7)
+
+    def test_post_agent_invalid_avatar(self):
+        resp = self.client.post(
+            "/dashboard/api/agents",
+            json={"name": "new_agent", "role": "tester", "avatar": 99},
+        )
+        assert resp.status_code == 400
+        assert "avatar" in resp.json()["detail"].lower()
+
     def test_post_agent_missing_name(self):
         resp = self.client.post("/dashboard/api/agents", json={"role": "tester"})
         assert resp.status_code == 400
