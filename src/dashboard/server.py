@@ -79,9 +79,16 @@ def create_dashboard_router(
         autoescape=True,
     )
 
-    # Build flat valid-models list for validation
+    # Build valid-models set for validation (dynamic from litellm)
     from src.cli.config import _PROVIDER_MODELS
-    _valid_models = [m for models in _PROVIDER_MODELS.values() for m in models]
+    from src.shared.models import get_provider_models
+
+    def _is_valid_model(model: str) -> bool:
+        """Check if a model is known (from litellm or featured lists)."""
+        provider = model.split("/")[0] if "/" in model else ""
+        if provider:
+            return model in get_provider_models(provider)
+        return any(model in models for models in _PROVIDER_MODELS.values())
 
     # ── SPA entry point ──────────────────────────────────────
 
@@ -169,7 +176,7 @@ def create_dashboard_router(
         if name in agent_registry:
             raise HTTPException(status_code=409, detail=f"Agent '{name}' already exists")
 
-        if model and model not in _valid_models:
+        if model and not _is_valid_model(model):
             raise HTTPException(status_code=400, detail=f"Invalid model: {model}")
 
         try:
@@ -181,7 +188,21 @@ def create_dashboard_router(
 
         if not model:
             from src.cli.config import _load_config
-            model = _load_config().get("llm", {}).get("default_model", "openai/gpt-4o-mini")
+            default = _load_config().get("llm", {}).get("default_model", "openai/gpt-4o-mini")
+            # Only use the configured default if its provider has credentials
+            default_provider = default.split("/")[0] if "/" in default else ""
+            active = credential_vault.get_providers_with_credentials() if credential_vault else set()
+            if active and default_provider not in active:
+                # Pick the first model from the first provider that has a key
+                model = ""
+                for p, models in _PROVIDER_MODELS.items():
+                    if p in active and models:
+                        model = models[0]
+                        break
+                if not model:
+                    model = default  # No credentials at all — use config default
+            else:
+                model = default
         if not role:
             role = "assistant"
 
@@ -380,7 +401,7 @@ def create_dashboard_router(
 
         if "model" in body:
             new_model = body["model"]
-            if new_model not in _valid_models:
+            if not _is_valid_model(new_model):
                 raise HTTPException(status_code=400, detail=f"Invalid model: {new_model}")
             old_model = agent_cfg.get("model", default_model)
             if new_model != old_model:
@@ -769,11 +790,17 @@ def create_dashboard_router(
                 kwargs["api_base"] = base_url
             await litellm.acompletion(**kwargs)
             return {"valid": True, "skipped": False}
+        except ImportError:
+            return {"valid": True, "skipped": True, "reason": "litellm not installed"}
         except Exception as e:
             if isinstance(e, litellm.AuthenticationError):
                 return {"valid": False, "skipped": False, "reason": "Invalid API key"}
-            # Network, rate limit, etc. — don't block
-            return {"valid": True, "skipped": True, "reason": str(e)[:200]}
+            if isinstance(e, getattr(litellm, "PermissionDeniedError", type(None))):
+                return {"valid": False, "skipped": False, "reason": "Permission denied — check API key"}
+            if isinstance(e, (litellm.Timeout, litellm.APIConnectionError,
+                              litellm.RateLimitError, litellm.ServiceUnavailableError)):
+                return {"valid": True, "skipped": True, "reason": str(e)[:200]}
+            return {"valid": False, "skipped": False, "reason": f"Validation failed: {str(e)[:200]}"}
 
     @api_router.post("/api/credentials")
     async def api_add_credential(request: Request) -> dict:
@@ -1159,8 +1186,8 @@ def create_dashboard_router(
 
     @api_router.get("/api/settings")
     async def api_settings() -> dict:
-        from src.host.costs import MODEL_COSTS
         from src.host.credentials import SYSTEM_CREDENTIAL_PROVIDERS
+        from src.shared.models import get_all_model_costs
 
         cred_names = credential_vault.list_credential_names() if credential_vault else []
         agent_cred_names = credential_vault.list_agent_credential_names() if credential_vault else []
@@ -1177,12 +1204,13 @@ def create_dashboard_router(
                 if p in active_providers
             }
 
+        all_costs = get_all_model_costs()
         return {
             "credentials": {"names": cred_names, "count": len(cred_names)},
             "agent_credentials": agent_cred_names,
             "has_llm_credentials": has_llm,
             "pubsub_subscriptions": pubsub_subs,
-            "model_costs": {k: {"input_per_1k": v[0], "output_per_1k": v[1]} for k, v in MODEL_COSTS.items()},
+            "model_costs": {k: {"input_per_1k": v[0], "output_per_1k": v[1]} for k, v in all_costs.items()},
             "provider_models": _PROVIDER_MODELS,
             "available_provider_models": available_provider_models,
         }

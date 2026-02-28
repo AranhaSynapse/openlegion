@@ -42,10 +42,15 @@ class TestValidateApiKey:
         """Timeout returns True (don't block setup on network issues)."""
         wizard = SetupWizard(Path("/tmp/test"))
 
+        import litellm
         with patch(
             "litellm.acompletion",
             new_callable=AsyncMock,
-            side_effect=TimeoutError("Connection timed out"),
+            side_effect=litellm.Timeout(
+                message="Connection timed out",
+                llm_provider="anthropic",
+                model="anthropic/claude-haiku-4-5-20251001",
+            ),
         ):
             result = wizard._validate_api_key("anthropic", "sk-some-key")
 
@@ -56,6 +61,67 @@ class TestValidateApiKey:
         wizard = SetupWizard(Path("/tmp/test"))
         result = wizard._validate_api_key("unknown_provider", "some-key")
         assert result is True
+
+    def test_validate_permission_denied_returns_false(self):
+        """PermissionDeniedError returns False."""
+        wizard = SetupWizard(Path("/tmp/test"))
+
+        import litellm
+        with patch(
+            "litellm.acompletion",
+            new_callable=AsyncMock,
+            side_effect=litellm.PermissionDeniedError(
+                message="Permission denied",
+                llm_provider="anthropic",
+                model="anthropic/claude-haiku-4-5-20251001",
+            ),
+        ):
+            result = wizard._validate_api_key("anthropic", "sk-bad-key")
+
+        assert result is False
+
+    def test_validate_unknown_error_returns_false(self):
+        """Unknown exception returns False (safe default)."""
+        wizard = SetupWizard(Path("/tmp/test"))
+
+        with patch(
+            "litellm.acompletion",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("Something unexpected"),
+        ):
+            result = wizard._validate_api_key("anthropic", "sk-some-key")
+
+        assert result is False
+
+    def test_validate_rate_limit_returns_true(self):
+        """RateLimitError returns True (transient, don't block setup)."""
+        wizard = SetupWizard(Path("/tmp/test"))
+
+        import litellm
+        with patch(
+            "litellm.acompletion",
+            new_callable=AsyncMock,
+            side_effect=litellm.RateLimitError(
+                message="Rate limit exceeded",
+                llm_provider="anthropic",
+                model="anthropic/claude-haiku-4-5-20251001",
+            ),
+        ):
+            result = wizard._validate_api_key("anthropic", "sk-some-key")
+
+        assert result is True
+
+    def test_validate_uses_api_key_kwarg(self):
+        """Validation passes api_key directly (no env var mutation)."""
+        wizard = SetupWizard(Path("/tmp/test"))
+
+        mock_response = MagicMock()
+        with patch("litellm.acompletion", new_callable=AsyncMock, return_value=mock_response) as mock_call:
+            wizard._validate_api_key("anthropic", "sk-test-key-123")
+
+        # Verify api_key was passed as a kwarg, not via env vars
+        call_kwargs = mock_call.call_args[1]
+        assert call_kwargs["api_key"] == "sk-test-key-123"
 
 
 class TestSummaryCard:

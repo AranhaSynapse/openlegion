@@ -14,6 +14,7 @@ import json
 import time
 from typing import TYPE_CHECKING
 
+from src.shared.models import get_context_window
 from src.shared.utils import setup_logging
 
 if TYPE_CHECKING:
@@ -29,20 +30,6 @@ _WARNING_THRESHOLD = 0.80
 
 _encoding_cache: dict[str, object | None] = {}
 
-MODEL_CONTEXT_WINDOWS: dict[str, int] = {
-    "openai/gpt-4o": 128_000,
-    "openai/gpt-4o-mini": 128_000,
-    "openai/gpt-4.1": 1_047_576,
-    "openai/gpt-4.1-mini": 1_047_576,
-    "openai/gpt-4.1-nano": 1_047_576,
-    "openai/o3": 200_000,
-    "openai/o3-mini": 200_000,
-    "openai/o4-mini": 200_000,
-    "anthropic/claude-opus-4-6": 200_000,
-    "anthropic/claude-sonnet-4-6": 200_000,
-    "anthropic/claude-sonnet-4-5-20250929": 200_000,
-    "anthropic/claude-haiku-4-5-20251001": 200_000,
-}
 _DEFAULT_CONTEXT_WINDOW = 128_000
 
 
@@ -104,7 +91,7 @@ class ContextManager:
         model: str = "",
     ):
         self.model = model
-        self.max_tokens = max_tokens or MODEL_CONTEXT_WINDOWS.get(model, _DEFAULT_CONTEXT_WINDOW)
+        self.max_tokens = max_tokens or get_context_window(model)
         self.llm = llm
         self.workspace = workspace
         self.memory = memory

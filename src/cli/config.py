@@ -43,61 +43,48 @@ _PROVIDERS = [
     {"name": "zai", "label": "Z.AI (GLM)"},
 ]
 
-_PROVIDER_MODELS: dict[str, list[str]] = {
-    "openai": [
-        "openai/gpt-5.2",
-        "openai/gpt-5.2-pro",
-        "openai/gpt-5.1-codex",
-        "openai/gpt-5",
-        "openai/gpt-5-mini",
-        "openai/o3",
-        "openai/o4-mini",
-        "openai/gpt-4.1",
-        "openai/gpt-4.1-mini",
-    ],
-    "anthropic": [
-        "anthropic/claude-opus-4-6",
-        "anthropic/claude-sonnet-4-6",
-        "anthropic/claude-sonnet-4-5-20250929",
-        "anthropic/claude-haiku-4-5-20251001",
-    ],
-    "gemini": [
-        "gemini/gemini-3-pro-preview",
-        "gemini/gemini-3-flash-preview",
-        "gemini/gemini-2.5-pro",
-        "gemini/gemini-2.5-flash",
-    ],
-    "xai": [
-        "xai/grok-4-1-fast-reasoning",
-        "xai/grok-4",
-        "xai/grok-3",
-        "xai/grok-3-mini",
-    ],
-    "deepseek": [
-        "deepseek/deepseek-chat",
-        "deepseek/deepseek-reasoner",
-    ],
-    "moonshot": [
-        "moonshot/kimi-k2.5",
-        "moonshot/kimi-k2",
-        "moonshot/moonshot-v1-128k",
-    ],
-    "groq": [
-        "groq/llama-3.3-70b-versatile",
-        "groq/llama-3.1-8b-instant",
-        "groq/llama-3-groq-70b-tool-use",
-    ],
-    "minimax": [
-        "minimax/MiniMax-M2.5",
-        "minimax/MiniMax-M2.5-Lightning",
-        "minimax/MiniMax-M2.1",
-        "minimax/MiniMax-M2.1-lightning",
-        "minimax/MiniMax-M2",
-    ],
-    "zai": [
-        "zai/glm-5",
-    ],
-}
+
+class _LazyProviderModels:
+    """Dict-like wrapper that builds from litellm on first access."""
+
+    def __init__(self) -> None:
+        self._data: dict[str, list[str]] | None = None
+
+    def _ensure(self) -> None:
+        if self._data is None:
+            from src.shared.models import get_provider_models
+            self._data = {p["name"]: get_provider_models(p["name"]) for p in _PROVIDERS}
+
+    def __getitem__(self, key: str) -> list[str]:
+        self._ensure()
+        return self._data[key]  # type: ignore[index]
+
+    def items(self):
+        self._ensure()
+        return self._data.items()  # type: ignore[union-attr]
+
+    def values(self):
+        self._ensure()
+        return self._data.values()  # type: ignore[union-attr]
+
+    def keys(self):
+        self._ensure()
+        return self._data.keys()  # type: ignore[union-attr]
+
+    def get(self, key: str, default=None):
+        self._ensure()
+        return self._data.get(key, default)  # type: ignore[union-attr]
+
+    def __contains__(self, key: object) -> bool:
+        self._ensure()
+        return key in self._data  # type: ignore[operator]
+
+    def __iter__(self):
+        self._ensure()
+        return iter(self._data)  # type: ignore[arg-type]
+
+
+_PROVIDER_MODELS = _LazyProviderModels()
 
 # ── Channel metadata ────────────────────────────────────────
 

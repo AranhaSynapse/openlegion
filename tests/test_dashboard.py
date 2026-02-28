@@ -350,6 +350,40 @@ class TestDashboardAgentCRUD:
         self.components["cron_scheduler"].remove_agent_jobs.assert_called_once_with("alpha")
         self.components["lane_manager"].remove_lane.assert_called_once_with("alpha")
 
+    @patch("src.cli.config._create_agent")
+    @patch("src.cli.config._load_config")
+    def test_post_agent_default_model_uses_credentialed_provider(
+        self, mock_load, mock_create,
+    ):
+        """When no model is specified, pick from a provider that has credentials."""
+        # Config says default is deepseek, but only anthropic has credentials
+        mock_load.return_value = {
+            "llm": {"default_model": "deepseek/deepseek-chat"},
+            "agents": {
+                "new_agent": {
+                    "role": "tester",
+                    "skills_dir": "", "model": "anthropic/claude-opus-4-6",
+                },
+            },
+        }
+        self.components["credential_vault"].get_providers_with_credentials.return_value = {
+            "anthropic",
+        }
+        self.components["runtime"].start_agent.return_value = "http://localhost:8403"
+        self.components["runtime"].wait_for_agent = AsyncMock(return_value=True)
+        self.components["permissions"].reload = MagicMock()
+
+        resp = self.client.post(
+            "/dashboard/api/agents",
+            json={"name": "new_agent", "role": "tester"},  # no model
+        )
+        assert resp.status_code == 200
+        # _create_agent should be called with a model from anthropic, not deepseek
+        call_args = mock_create.call_args[0]
+        assert call_args[2].startswith("anthropic/"), (
+            f"Expected anthropic model, got: {call_args[2]}"
+        )
+
     def test_delete_agent_not_found(self):
         resp = self.client.delete("/dashboard/api/agents/nonexistent")
         assert resp.status_code == 404
@@ -2297,3 +2331,108 @@ class TestDashboardChannels:
         data = resp.json()
         assert data["disconnected"] is True
         self.components["channel_manager"].stop_channel.assert_called_once_with("telegram")
+
+
+class TestCredentialValidation:
+    """Tests for POST /api/credentials/validate — exception handling."""
+
+    def setup_method(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.components = _make_components(self._tmpdir, include_v2=True)
+        self.client = _make_client(self.components)
+
+    def teardown_method(self):
+        _teardown(self.components)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_validate_auth_error_returns_invalid(self):
+        """AuthenticationError → valid: False."""
+        import litellm
+        with patch(
+            "litellm.acompletion",
+            new_callable=AsyncMock,
+            side_effect=litellm.AuthenticationError(
+                message="Invalid API key",
+                llm_provider="anthropic",
+                model="anthropic/claude-haiku-4-5-20251001",
+            ),
+        ):
+            resp = self.client.post(
+                "/dashboard/api/credentials/validate",
+                json={"service": "anthropic_api_key", "key": "sk-bad"},
+            )
+        data = resp.json()
+        assert data["valid"] is False
+        assert data["skipped"] is False
+
+    def test_validate_permission_denied_returns_invalid(self):
+        """PermissionDeniedError → valid: False."""
+        import litellm
+        with patch(
+            "litellm.acompletion",
+            new_callable=AsyncMock,
+            side_effect=litellm.PermissionDeniedError(
+                message="Permission denied",
+                llm_provider="anthropic",
+                model="anthropic/claude-haiku-4-5-20251001",
+            ),
+        ):
+            resp = self.client.post(
+                "/dashboard/api/credentials/validate",
+                json={"service": "anthropic_api_key", "key": "sk-bad"},
+            )
+        data = resp.json()
+        assert data["valid"] is False
+        assert data["skipped"] is False
+        assert "Permission denied" in data["reason"]
+
+    def test_validate_rate_limit_allows_save(self):
+        """RateLimitError → valid: True, skipped: True (transient)."""
+        import litellm
+        with patch(
+            "litellm.acompletion",
+            new_callable=AsyncMock,
+            side_effect=litellm.RateLimitError(
+                message="Rate limit exceeded",
+                llm_provider="anthropic",
+                model="anthropic/claude-haiku-4-5-20251001",
+            ),
+        ):
+            resp = self.client.post(
+                "/dashboard/api/credentials/validate",
+                json={"service": "anthropic_api_key", "key": "sk-test"},
+            )
+        data = resp.json()
+        assert data["valid"] is True
+        assert data["skipped"] is True
+
+    def test_validate_unknown_error_returns_invalid(self):
+        """Unknown Exception → valid: False (safe default)."""
+        with patch(
+            "litellm.acompletion",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("Something unexpected"),
+        ):
+            resp = self.client.post(
+                "/dashboard/api/credentials/validate",
+                json={"service": "anthropic_api_key", "key": "sk-test"},
+            )
+        data = resp.json()
+        assert data["valid"] is False
+        assert "Validation failed" in data["reason"]
+
+    def test_validate_success(self):
+        """Successful completion → valid: True."""
+        mock_response = MagicMock()
+        with patch(
+            "litellm.acompletion",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            resp = self.client.post(
+                "/dashboard/api/credentials/validate",
+                json={"service": "anthropic_api_key", "key": "sk-valid"},
+            )
+        data = resp.json()
+        assert data["valid"] is True
+        assert data["skipped"] is False

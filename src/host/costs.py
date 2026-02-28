@@ -12,32 +12,10 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from src.shared.models import get_model_cost
 from src.shared.utils import setup_logging
 
 logger = setup_logging("host.costs")
-
-# Cost per 1K tokens (input, output). Update as pricing changes.
-MODEL_COSTS: dict[str, tuple[float, float]] = {
-    "openai/gpt-4o": (0.0025, 0.01),
-    "openai/gpt-4o-mini": (0.00015, 0.0006),
-    "openai/gpt-4.1": (0.002, 0.008),
-    "openai/gpt-4.1-mini": (0.0004, 0.0016),
-    "openai/gpt-4.1-nano": (0.0001, 0.0004),
-    "openai/o3": (0.002, 0.008),
-    "openai/o3-mini": (0.0011, 0.0044),
-    "openai/o4-mini": (0.0011, 0.0044),
-    "anthropic/claude-opus-4-6": (0.015, 0.075),
-    "anthropic/claude-sonnet-4-6": (0.003, 0.015),
-    "anthropic/claude-sonnet-4-5-20250929": (0.003, 0.015),
-    "anthropic/claude-haiku-4-5-20251001": (0.0008, 0.004),
-    "minimax/MiniMax-M2.5": (0.0003, 0.0012),
-    "minimax/MiniMax-M2.1": (0.001, 0.005),
-    "minimax/MiniMax-M2.1-lightning": (0.0005, 0.002),
-    "minimax/MiniMax-M2": (0.001, 0.005),
-    "text-embedding-3-small": (0.00002, 0.0),
-    "minimax/MiniMax-M2.5-Lightning": (0.0003, 0.0024),
-    "zai/glm-5": (0.001, 0.0032),
-}
 
 _DEFAULT_COST = (0.003, 0.015)  # Conservative fallback
 
@@ -52,7 +30,7 @@ def estimate_cost(
 
     If input/output split is unavailable, falls back to 70/30 split of total_tokens.
     """
-    ir, or_ = MODEL_COSTS.get(model, _DEFAULT_COST)
+    ir, or_ = get_model_cost(model)
     pt = input_tokens if input_tokens is not None and input_tokens > 0 else int(total_tokens * 0.7)
     ct = output_tokens if output_tokens is not None and output_tokens > 0 else (total_tokens - pt)
     return round((pt / 1000 * ir) + (ct / 1000 * or_), 6)

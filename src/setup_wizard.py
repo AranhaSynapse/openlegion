@@ -347,43 +347,28 @@ class SetupWizard:
         try:
             import litellm
 
-            # Map provider to the env var litellm expects
-            env_mapping = {
-                "anthropic": "ANTHROPIC_API_KEY",
-                "openai": "OPENAI_API_KEY",
-                "gemini": "GEMINI_API_KEY",
-                "deepseek": "DEEPSEEK_API_KEY",
-                "moonshot": "MOONSHOT_API_KEY",
-                "xai": "XAI_API_KEY",
-                "groq": "GROQ_API_KEY",
-                "minimax": "MINIMAX_API_KEY",
-            }
-            env_var = env_mapping.get(provider)
-            old_val = os.environ.get(env_var, "") if env_var else ""
-
             try:
-                if env_var:
-                    os.environ[env_var] = api_key
                 asyncio.run(
                     litellm.acompletion(
                         model=validation_model,
                         messages=[{"role": "user", "content": "hi"}],
                         max_tokens=1,
+                        api_key=api_key,
                     )
                 )
                 return True
             except litellm.AuthenticationError:
                 return False
             except Exception as e:
-                # Network errors, rate limits, etc. — don't block setup
-                logger.debug("API key validation skipped due to error: %s", e)
-                return True
-            finally:
-                if env_var:
-                    if old_val:
-                        os.environ[env_var] = old_val
-                    else:
-                        os.environ.pop(env_var, None)
+                if isinstance(e, getattr(litellm, "PermissionDeniedError", type(None))):
+                    return False
+                if isinstance(e, (litellm.Timeout, litellm.APIConnectionError,
+                                  litellm.RateLimitError, litellm.ServiceUnavailableError)):
+                    logger.debug("API key validation skipped due to transient error: %s", e)
+                    return True
+                # Unknown errors — default to invalid (safe default)
+                logger.debug("API key validation failed: %s", e)
+                return False
         except ImportError:
             # litellm not installed — skip validation
             return True
