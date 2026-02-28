@@ -170,12 +170,28 @@ function dashboard() {
 
     // Broadcast
     broadcastMessage: '',
+    _broadcastPending: null,
+
+    // Breadcrumb project context
+    _detailReturnProject: null,
+
+    // Identity file save flash
+    identitySavedFile: null,
 
     // Command palette (Cmd+K)
     cmdPaletteOpen: false,
     cmdPaletteQuery: '',
     cmdPaletteResults: [],
     cmdPaletteIdx: 0,
+
+    // System tab — sub-navigation
+    systemTab: 'costs',
+    systemTabs: [
+      { id: 'costs', label: 'Costs & Budgets' },
+      { id: 'blackboard', label: 'Blackboard' },
+      { id: 'automation', label: 'Automation' },
+      { id: 'settings', label: 'Settings' },
+    ],
 
     // System tab — collapsible infrastructure
     systemInfraExpanded: false,
@@ -191,10 +207,23 @@ function dashboard() {
     credBaseUrl: '',
     credTier: 'agent',
 
+    // Webhooks
+    webhooks: [],
+    showWebhookForm: false,
+    webhookFormName: '',
+    webhookFormAgent: '',
+    webhookFormSecret: '',
+
     // Onboarding
     onboardProvider: '',
     onboardKey: '',
     onboardBaseUrl: '',
+
+    // WebSocket reconnect countdown (Alpine-reactive mirror)
+    wsReconnectIn: 0,
+
+    // Keyboard shortcuts modal
+    shortcutsModalOpen: false,
 
     // Confirm modal
     confirmModal: { open: false, title: '', message: '', action: null, destructive: false },
@@ -329,6 +358,10 @@ function dashboard() {
     closeDetail() {
       this.detailAgent = null;
       this.selectedAgent = null;
+      if (this._detailReturnProject !== null && this._detailReturnProject !== undefined) {
+        this.activeProject = this._detailReturnProject;
+      }
+      this._detailReturnProject = null;
       this._pushUrl(false);
     },
 
@@ -352,6 +385,12 @@ function dashboard() {
     get showOnboarding() {
       if (this.loading || !this.settingsData) return false;
       return !this.settingsData.has_llm_credentials || this.agents.length === 0;
+    },
+
+    get addAgentNameValid() {
+      const name = this.addAgentForm.name;
+      if (!name) return true; // empty is valid (not yet typed)
+      return /^[a-z][a-z0-9_]{0,29}$/.test(name);
     },
 
     get filteredEvents() {
@@ -477,6 +516,7 @@ function dashboard() {
         onEvent: (evt) => this.onWsEvent(evt),
         onConnect: () => { this.connected = true; },
         onDisconnect: () => { this.connected = false; },
+        onReconnectTick: (secs) => { this.wsReconnectIn = secs; },
       });
       this._ws.connect();
 
@@ -521,6 +561,15 @@ function dashboard() {
           e.preventDefault();
           const tabMap = { '1': 'fleet', '2': 'activity', '3': 'system' };
           this.switchTab(tabMap[e.key]);
+        }
+        // ? key for shortcuts help (when no input focused and no modal open)
+        if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          const active = document.activeElement;
+          const tag = active ? active.tagName.toLowerCase() : '';
+          if (tag === 'input' || tag === 'textarea' || tag === 'select' || active?.isContentEditable) return;
+          if (this.cmdPaletteOpen || this.addAgentMode || this.confirmModal.open) return;
+          e.preventDefault();
+          this.shortcutsModalOpen = !this.shortcutsModalOpen;
         }
       };
       document.addEventListener('keydown', this._cmdPaletteHandler);
@@ -573,6 +622,8 @@ function dashboard() {
           if (this._cronInterval) { clearInterval(this._cronInterval); this._cronInterval = null; }
           this._stopActivityRefresh();
         } else {
+          // Clear favicon badge
+          document.title = document.title.replace(/^\(\d+\)\s*/, '');
           // Resume polling — restore intervals without navigating (switchTab clears detailAgent)
           this._refreshInterval = setInterval(() => this.fetchAgents(), 15000);
           this.fetchAgents();
@@ -644,6 +695,7 @@ function dashboard() {
         this.fetchBlackboard();
         this.fetchCronJobs();
         this.fetchWorkflows();
+        this.fetchWebhooks();
         this._cronInterval = setInterval(() => this.fetchCronJobs(), 10000);
       }
       if (!this._skipPush) this._pushUrl(false);
@@ -692,6 +744,12 @@ function dashboard() {
       // Track unread events when not on Activity tab
       if (this.activeTab !== 'activity') {
         this.unreadEvents++;
+      }
+
+      // Favicon badge: prefix document title with unread count when tab not visible
+      if (document.hidden && this.unreadEvents > 0) {
+        const base = document.title.replace(/^\(\d+\)\s*/, '');
+        document.title = `(${this.unreadEvents}) ${base}`;
       }
 
       // Update agent activity state
@@ -966,6 +1024,8 @@ function dashboard() {
           this.identityEditingFile = null;
           this.identityEditBuffer = '';
           this.showToast(`Saved ${file}`);
+          this.identitySavedFile = file;
+          setTimeout(() => { this.identitySavedFile = null; }, 2000);
           try {
             const listResp = await fetch(`${window.__config.apiBase}/agents/${agentId}/workspace`);
             if (listResp.ok) this.identityFiles = (await listResp.json()).files || [];
@@ -1306,6 +1366,9 @@ function dashboard() {
             this.showToast(`Error updating permissions: ${err.detail || 'Update failed'}`);
           }
         }
+        if (credsChanged && !configResult?.restart_required) {
+          this.showToast(`Credentials updated for ${agentId} — restart may be needed`);
+        }
         if (configResult && configResult.restart_required) {
           this.showToast(`Updated: ${allUpdated.join(', ')} — restarting ${agentId}...`);
           const restartResp = await fetch(`${window.__config.apiBase}/agents/${agentId}/restart`, { method: 'POST' });
@@ -1314,7 +1377,7 @@ function dashboard() {
             this.showToast(data.ready ? `${agentId} restarted and ready` : `${agentId} restarted (warming up)`);
             this.fetchAgents();
           } else {
-            this.showToast(`Config updated but restart failed — restart manually`);
+            this.showToast(`Config updated but restart failed — restart ${agentId} manually`);
           }
         } else if (allUpdated.length > 0) {
           this.showToast(`Updated: ${allUpdated.join(', ')}`);
@@ -1355,6 +1418,7 @@ function dashboard() {
     async addAgent() {
       const f = this.addAgentForm;
       if (!f.name.trim()) { this.showToast('Name is required'); return; }
+      if (!this.addAgentNameValid) { this.showToast('Invalid name: lowercase letters, numbers, underscores only. Max 30 chars.'); return; }
       this.addAgentLoading = true;
       try {
         const resp = await fetch(`${window.__config.apiBase}/agents`, {
@@ -1988,17 +2052,33 @@ function dashboard() {
       for (const agentId of targets) this.openChat(agentId);
       this.activeChatId = targets[0];
       let sent = 0;
+      const sentTargets = [];
       for (const agentId of targets) {
         if (this.chatStreamingAgents[agentId]) continue;
-        this.sendChatTo(agentId, msg).catch(e => {
+        sentTargets.push(agentId);
+        this.sendChatTo(agentId, msg).then(() => {
+          this._checkBroadcastComplete(agentId);
+        }).catch(e => {
           console.warn('Broadcast sendChatTo failed for', agentId, e);
+          this._checkBroadcastComplete(agentId);
         });
         sent++;
       }
       if (sent === 0) {
         this.showToast('All targeted agents are busy');
       } else {
+        this._broadcastPending = { targets: sentTargets, total: sent, completed: 0 };
         this.showToast(`Broadcast sent to ${sent} agent${sent !== 1 ? 's' : ''}`);
+      }
+    },
+
+    _checkBroadcastComplete(agentId) {
+      if (!this._broadcastPending) return;
+      if (!this._broadcastPending.targets.includes(agentId)) return;
+      this._broadcastPending.completed++;
+      if (this._broadcastPending.completed >= this._broadcastPending.total) {
+        this.showToast(`Broadcast complete — all ${this._broadcastPending.total} agents responded`);
+        this._broadcastPending = null;
       }
     },
 
@@ -2058,14 +2138,37 @@ function dashboard() {
         const agent = (job.agent || '').toLowerCase();
         const message = (job.message || '').toLowerCase();
         if (id.includes(q) || agent.includes(q) || message.includes(q)) {
-          results.push({ type: 'cron', label: job.id, desc: `${job.agent} · ${job.schedule}`, action: () => { this.switchTab('system'); } });
+          results.push({ type: 'cron', label: job.id, desc: `${job.agent} · ${job.schedule}`, action: () => { this.switchTab('system'); this.systemTab = 'automation'; } });
         }
       }
       // Match blackboard keys
       for (const entry of this.bbEntries || []) {
         const key = (entry.key || '').toLowerCase();
         if (key.includes(q)) {
-          results.push({ type: 'blackboard', label: entry.key, desc: `by ${entry.written_by || 'unknown'}`, action: () => { this.switchTab('system'); } });
+          results.push({ type: 'blackboard', label: entry.key, desc: `by ${entry.written_by || 'unknown'}`, action: () => { this.switchTab('system'); this.systemTab = 'blackboard'; } });
+        }
+      }
+      // Match workflows
+      for (const wf of this.workflows || []) {
+        if ((wf.name || '').toLowerCase().includes(q)) {
+          results.push({ type: 'action', label: `Run ${wf.name}`, desc: `Workflow · ${wf.steps} steps`, action: () => { this.switchTab('system'); this.systemTab = 'automation'; this.runWorkflow(wf.name); } });
+        }
+      }
+      // Match credentials
+      for (const name of this.settingsData?.credentials?.names || []) {
+        if (name.toLowerCase().includes(q)) {
+          results.push({ type: 'action', label: name, desc: 'Credential', action: () => { this.switchTab('system'); this.systemTab = 'settings'; } });
+        }
+      }
+      // System quick actions
+      const sysActions = [
+        { label: 'View Logs', desc: 'Open runtime logs', keywords: ['logs', 'runtime', 'debug'], action: () => { this.switchTab('system'); this.systemTab = 'settings'; this.fetchSystemLogs(); } },
+        { label: 'Add Credential', desc: 'Add new API key', keywords: ['key', 'api', 'credential', 'token'], action: () => { this.switchTab('system'); this.systemTab = 'settings'; this.showCredForm = true; } },
+        { label: 'Manage Webhooks', desc: 'View and create webhooks', keywords: ['webhook', 'hook', 'endpoint'], action: () => { this.switchTab('system'); this.systemTab = 'settings'; this.fetchWebhooks(); } },
+      ];
+      for (const act of sysActions) {
+        if (act.keywords.some(kw => kw.includes(q)) || act.label.toLowerCase().includes(q)) {
+          results.push({ type: 'action', label: act.label, desc: act.desc, action: act.action });
         }
       }
       this.cmdPaletteResults = results.slice(0, 10);
@@ -2166,9 +2269,72 @@ function dashboard() {
       } catch (e) { this.showToast(`Error: ${e.message}`); }
     },
 
+    // ── Webhooks ──────────────────────────────────────────
+
+    async fetchWebhooks() {
+      try {
+        const resp = await fetch(`${window.__config.apiBase}/webhooks`);
+        if (resp.ok) this.webhooks = (await resp.json()).webhooks || [];
+      } catch (e) { console.warn('fetchWebhooks failed:', e); }
+    },
+
+    async createWebhook() {
+      const name = this.webhookFormName.trim();
+      const agent = this.webhookFormAgent;
+      if (!name || !agent) { this.showToast('Name and agent are required'); return; }
+      try {
+        const body = { name, agent };
+        if (this.webhookFormSecret.trim()) body.secret = this.webhookFormSecret.trim();
+        const resp = await fetch(`${window.__config.apiBase}/webhooks`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          this.showToast(`Webhook "${name}" created`);
+          this.webhookFormName = '';
+          this.webhookFormAgent = '';
+          this.webhookFormSecret = '';
+          this.showWebhookForm = false;
+          this.fetchWebhooks();
+        } else {
+          const err = await resp.json().catch(() => ({}));
+          this.showToast(`Error: ${err.detail || 'Failed to create webhook'}`);
+        }
+      } catch (e) { this.showToast(`Error: ${e.message}`); }
+    },
+
+    async deleteWebhook(name) {
+      this.showConfirm('Delete Webhook', `Delete webhook "${name}"?`, async () => {
+        try {
+          const resp = await fetch(`${window.__config.apiBase}/webhooks/${encodeURIComponent(name)}`, { method: 'DELETE' });
+          if (resp.ok) {
+            this.showToast(`Webhook "${name}" deleted`);
+            this.fetchWebhooks();
+          } else {
+            const err = await resp.json().catch(() => ({}));
+            this.showToast(`Error: ${err.detail || 'Delete failed'}`);
+          }
+        } catch (e) { this.showToast(`Error: ${e.message}`); }
+      }, true);
+    },
+
+    async testWebhook(name) {
+      try {
+        const resp = await fetch(`${window.__config.apiBase}/webhooks/${encodeURIComponent(name)}/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        if (resp.ok) {
+          this.showToast(`Webhook "${name}" test sent`);
+        } else {
+          const err = await resp.json().catch(() => ({}));
+          this.showToast(`Test failed: ${err.detail || 'Unknown error'}`);
+        }
+      } catch (e) { this.showToast(`Test failed: ${e.message}`); }
+    },
+
     // ── Agent drill-down ──────────────────────────────────
 
     drillDown(agentId) {
+      this._detailReturnProject = this.activeProject;
       this.selectedAgent = agentId;
       this.detailAgent = agentId;
       this.showBrowserViewer = false;
