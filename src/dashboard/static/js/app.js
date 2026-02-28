@@ -1674,8 +1674,9 @@ function dashboard() {
         if (resp.ok) {
           this.settingsData = await resp.json();
           // Extract models for agent edit forms
-          if (this.settingsData.provider_models) {
-            this.availableModels = Object.values(this.settingsData.provider_models).flat();
+          const pm = this.settingsData.available_provider_models || this.settingsData.provider_models;
+          if (pm) {
+            this.availableModels = Object.values(pm).flat();
           }
         }
       } catch (e) { console.warn('fetchSettings failed:', e); }
