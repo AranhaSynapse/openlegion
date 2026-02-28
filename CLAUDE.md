@@ -74,6 +74,7 @@ Three trust zones: **User** (full trust), **Mesh** (trusted coordinator), **Agen
 - **Always use worktrees.** Multiple agents work on this codebase concurrently. To avoid conflicts, always work in an isolated git worktree. Use Claude Code's built-in worktree support (`isolation: "worktree"` for subagents, or the `EnterWorktree` tool for interactive sessions) so each agent gets its own branch and working directory. Never make changes directly on `main`.
 - **Never `pip install` from a worktree.** Running `pip install -e .` inside a worktree silently hijacks the global `openlegion` entry point to point at the worktree's frozen source instead of the main checkout. This breaks the CLI for the user. Never run `pip install`, `pip install -e .`, or any variant from inside a worktree. The CLI is installed once from the main checkout.
 - **Never merge directly to main.** Always create a PR via `gh pr create` and merge through GitHub. Branch protection is enforced.
+- **Wait for CI before merging.** After creating a PR, run `gh pr checks <number> --watch` and wait for all GitHub Actions checks (lint, tests on all Python versions) to pass. If any check fails, fix the issue and push again. Never merge a PR with failing checks.
 - **Branch naming:** use prefixes like `feat/`, `fix/`, `refactor/`, `docs/`, etc.
 - **Commit style:** descriptive subject line, body explains "why". Do not add Co-Authored-By trailers.
 
