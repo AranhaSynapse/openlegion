@@ -21,7 +21,7 @@ _MAX_OUTPUT = 100_000
         "Use for: installing packages, running scripts, processing data, "
         "downloading files, or any system operation. "
         "Do NOT use exec to modify workspace identity files "
-        "(SOUL.md, AGENTS.md, HEARTBEAT.md, USER.md, MEMORY.md) — "
+        "(SOUL.md, INSTRUCTIONS.md, HEARTBEAT.md, USER.md, MEMORY.md) — "
         "use the update_workspace tool instead."
     ),
     parameters={

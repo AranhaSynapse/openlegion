@@ -14,10 +14,9 @@ _ALLOWED_ROOT = "/data"
 _MAX_READ = 500_000
 
 # Workspace identity files that must not be written via write_file.
-# Agents should use the update_workspace tool for writable files
-# (HEARTBEAT.md, USER.md) and cannot modify the rest (SOUL.md, AGENTS.md).
+# Agents should use the update_workspace tool for these instead.
 _PROTECTED_WORKSPACE_FILES = frozenset({
-    "SOUL.md", "AGENTS.md", "HEARTBEAT.md", "USER.md", "MEMORY.md",
+    "SOUL.md", "AGENTS.md", "INSTRUCTIONS.md", "HEARTBEAT.md", "USER.md", "MEMORY.md",
 })
 
 
@@ -138,8 +137,8 @@ def write_file(path: str, content: str, append: bool = False) -> dict:
         return {
             "error": (
                 f"Cannot write to workspace file '{safe.name}' directly. "
-                "Use the update_workspace tool for HEARTBEAT.md and USER.md. "
-                "SOUL.md and AGENTS.md are read-only (human-controlled)."
+                "Use the update_workspace tool for SOUL.md, INSTRUCTIONS.md, "
+                "USER.md, and HEARTBEAT.md. MEMORY.md is system-managed."
             ),
         }
     safe.parent.mkdir(parents=True, exist_ok=True)

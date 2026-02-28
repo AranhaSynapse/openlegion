@@ -696,8 +696,9 @@ class AgentLoop:
             f"status updates or user-facing reports.\n"
             f"- You have max {self.MAX_ITERATIONS} iterations.\n"
             f"- Learn from past errors — avoid repeating known failures.\n"
-            f"- Use update_workspace to save lasting preferences to USER.md "
-            f"or refine autonomous rules in HEARTBEAT.md.\n",
+            f"- Use update_workspace to evolve over time: SOUL.md (identity/tone), "
+            f"INSTRUCTIONS.md (procedures/rules), USER.md (user prefs), "
+            f"HEARTBEAT.md (autonomous rules).\n",
         )
         if self.workspace:
             learnings = self.workspace.get_learnings_context()
@@ -730,7 +731,7 @@ class AgentLoop:
     async def chat(self, user_message: str, *, trace_id: str | None = None) -> dict:
         """Handle a single chat turn with persistent conversation history.
 
-        On first message of a session, loads workspace context (AGENTS.md,
+        On first message of a session, loads workspace context (INSTRUCTIONS.md,
         SOUL.md, USER.md, MEMORY.md, daily logs) into the system prompt
         and auto-searches memory for relevant context.
 
@@ -1177,7 +1178,9 @@ class AgentLoop:
             f"- The user wants to hear from you directly. Don't just write to "
             f"the blackboard and go silent.\n"
             f"\n## Self-Improvement\n"
-            f"Use update_workspace to persist lasting knowledge across sessions:\n"
+            f"Use update_workspace to evolve over time — these files persist across sessions:\n"
+            f"- **SOUL.md**: your identity, communication style, tone, behavioral principles.\n"
+            f"- **INSTRUCTIONS.md**: operating procedures, workflow rules, tool patterns, domain knowledge.\n"
             f"- **USER.md**: user preferences, corrections, project context.\n"
             f"- **HEARTBEAT.md**: autonomous rules for your periodic wakeups.\n"
         )

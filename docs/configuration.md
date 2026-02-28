@@ -51,7 +51,7 @@ agents:
 | `resources.cpu_limit` | float | No | CPU quota as fraction of one core (default: `0.5`). Note: runtime currently uses a hardcoded 1 CPU quota; this field is accepted but not yet enforced |
 | `budget.daily_usd` | float | No | Daily spend cap in USD |
 | `budget.monthly_usd` | float | No | Monthly spend cap in USD |
-| `initial_instructions` | string | No | Seeds `AGENTS.md` on first boot. Distinct from `system_prompt` — this sets the agent's operating instructions file |
+| `initial_instructions` | string | No | Seeds `INSTRUCTIONS.md` on first boot. Distinct from `system_prompt` — this sets the agent's operating instructions file |
 | `thinking` | string | No | Extended thinking/reasoning mode: `off` (default), `low`, `medium`, or `high`. Anthropic models use thinking budgets (5K/10K/25K tokens). OpenAI o-series models use `reasoning_effort`. Ignored for unsupported models |
 | `mcp_servers` | list | No | External MCP tool servers. See [MCP Integration](mcp.md) |
 

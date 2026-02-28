@@ -220,7 +220,7 @@ Agents waking from heartbeat lacked crucial context: HEARTBEAT.md wasn't loaded,
 - Richer daily logs: chat turns now include tool names and multi-line-aware response summaries; task completion/failure logged with iterations, tokens, duration, tools
 - Enriched heartbeat message: `context_fn` fetches HEARTBEAT.md + daily logs from agent, heartbeat includes sections for rules, recent activity, probe alerts, and pending signal/task details
 - Skip-LLM optimization: when HEARTBEAT.md is default, no recent activity, and no probes triggered, heartbeat dispatch is skipped entirely (saves LLM tokens)
-- Dashboard workspace editing: proxy endpoints + Alpine.js UI for viewing/editing SOUL.md, HEARTBEAT.md, USER.md, AGENTS.md, MEMORY.md
+- Dashboard workspace editing: proxy endpoints + Alpine.js UI for viewing/editing SOUL.md, HEARTBEAT.md, USER.md, INSTRUCTIONS.md, MEMORY.md
 
 ---
 
@@ -333,7 +333,7 @@ Cron jobs spawn subagents instead of blocking main agent:
 
 ### ~~5.6 Dashboard Workspace Editing~~ ✅ Done
 
-Dashboard can now view and edit agent workspace files (SOUL.md, HEARTBEAT.md, USER.md, AGENTS.md, MEMORY.md) directly from the agent detail panel. Three proxy endpoints in `src/dashboard/server.py` forward requests to agent containers via transport. Alpine.js UI shows file list with sizes, inline editor with syntax-friendly monospace textarea, and Save/Cancel controls. Content sanitized at both dashboard and agent levels.
+Dashboard can now view and edit agent workspace files (SOUL.md, HEARTBEAT.md, USER.md, INSTRUCTIONS.md, MEMORY.md) directly from the agent detail panel. Three proxy endpoints in `src/dashboard/server.py` forward requests to agent containers via transport. Alpine.js UI shows file list with sizes, inline editor with syntax-friendly monospace textarea, and Save/Cancel controls. Content sanitized at both dashboard and agent levels.
 
 ---
 
@@ -359,7 +359,7 @@ Lower priority items grouped by theme. Implement when convenient or when a speci
 
 **Per-Agent Tool Policies** — Currently all agents in a fleet share the same tool set (minus permission gating on mesh operations). Allow per-agent tool allowlists/blocklists in `agents.yaml`: `tools: {allow: [exec, read_file, write_file], deny: [browser_*]}`. More granular than the current permission matrix which only gates mesh operations. OpenClaw has a 7-layer tool policy pipeline.
 
-**TOOLS.md Workspace File** — A `TOOLS.md` file in the agent workspace where users can write custom tool usage instructions (e.g., "always use `exec` with `timeout=120` for build commands", "prefer `web_fetch` over `http_request` for reading web pages"). Loaded into the system prompt alongside AGENTS.md and SOUL.md. Cheap to implement, powerful for agent customization.
+**TOOLS.md Workspace File** — A `TOOLS.md` file in the agent workspace where users can write custom tool usage instructions (e.g., "always use `exec` with `timeout=120` for build commands", "prefer `web_fetch` over `http_request` for reading web pages"). Loaded into the system prompt alongside INSTRUCTIONS.md and SOUL.md. Cheap to implement, powerful for agent customization.
 
 ### Ecosystem
 

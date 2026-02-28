@@ -19,7 +19,7 @@ class TestWorkspaceScaffold:
 
     def test_scaffold_creates_default_files(self):
         root = Path(self._tmpdir)
-        assert (root / "AGENTS.md").exists()
+        assert (root / "INSTRUCTIONS.md").exists()
         assert (root / "SOUL.md").exists()
         assert (root / "USER.md").exists()
         assert (root / "MEMORY.md").exists()
@@ -29,32 +29,32 @@ class TestWorkspaceScaffold:
 
     def test_scaffold_preserves_existing_files(self):
         root = Path(self._tmpdir)
-        (root / "AGENTS.md").write_text("custom instructions")
+        (root / "INSTRUCTIONS.md").write_text("custom instructions")
         WorkspaceManager(workspace_dir=self._tmpdir)
-        assert (root / "AGENTS.md").read_text() == "custom instructions"
+        assert (root / "INSTRUCTIONS.md").read_text() == "custom instructions"
 
-    def test_initial_instructions_seeds_agents_md(self):
-        """When initial_instructions is provided, AGENTS.md is seeded with that content."""
+    def test_initial_instructions_seeds_instructions_md(self):
+        """When initial_instructions is provided, INSTRUCTIONS.md is seeded with that content."""
         tmpdir = tempfile.mkdtemp()
         try:
             WorkspaceManager(workspace_dir=tmpdir, initial_instructions="You are a sales agent.\nBe concise.")
             root = Path(tmpdir)
-            content = (root / "AGENTS.md").read_text()
-            assert content.startswith("# Agent Instructions")
+            content = (root / "INSTRUCTIONS.md").read_text()
+            assert content.startswith("# Instructions")
             assert "You are a sales agent." in content
             assert "Be concise." in content
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_initial_instructions_does_not_overwrite_existing(self):
-        """If AGENTS.md already exists, initial_instructions is ignored."""
+        """If INSTRUCTIONS.md already exists, initial_instructions is ignored."""
         tmpdir = tempfile.mkdtemp()
         try:
             root = Path(tmpdir)
             root.mkdir(exist_ok=True)
-            (root / "AGENTS.md").write_text("# Existing instructions\nDo not change.")
+            (root / "INSTRUCTIONS.md").write_text("# Existing instructions\nDo not change.")
             WorkspaceManager(workspace_dir=tmpdir, initial_instructions="New instructions")
-            assert (root / "AGENTS.md").read_text() == "# Existing instructions\nDo not change."
+            assert (root / "INSTRUCTIONS.md").read_text() == "# Existing instructions\nDo not change."
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -64,17 +64,57 @@ class TestWorkspaceScaffold:
         try:
             WorkspaceManager(workspace_dir=tmpdir, initial_instructions="")
             root = Path(tmpdir)
-            content = (root / "AGENTS.md").read_text()
+            content = (root / "INSTRUCTIONS.md").read_text()
             # Default scaffold content, not custom instructions
-            assert "# Agent Instructions" in content
-            # Should not have the custom header format from initial_instructions
-            assert content == (root / "AGENTS.md").read_text()
+            assert "# Instructions" in content
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_migration_agents_md_to_instructions_md(self):
+        """Existing AGENTS.md is renamed to INSTRUCTIONS.md on scaffold."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            root = Path(tmpdir)
+            root.mkdir(exist_ok=True)
+            (root / "AGENTS.md").write_text("# My Old Instructions\nDo the thing.")
+            WorkspaceManager(workspace_dir=tmpdir)
+            assert not (root / "AGENTS.md").exists()
+            assert (root / "INSTRUCTIONS.md").exists()
+            assert "Do the thing." in (root / "INSTRUCTIONS.md").read_text()
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_migration_does_not_overwrite_instructions_md(self):
+        """If both AGENTS.md and INSTRUCTIONS.md exist, migration is skipped."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            root = Path(tmpdir)
+            root.mkdir(exist_ok=True)
+            (root / "AGENTS.md").write_text("old content")
+            (root / "INSTRUCTIONS.md").write_text("new content")
+            WorkspaceManager(workspace_dir=tmpdir)
+            # Both files remain; INSTRUCTIONS.md is not overwritten
+            assert (root / "AGENTS.md").exists()
+            assert (root / "INSTRUCTIONS.md").read_text() == "new content"
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_initial_instructions_seeds_after_migration(self):
+        """If AGENTS.md exists, migration renames it so initial_instructions is ignored."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            root = Path(tmpdir)
+            root.mkdir(exist_ok=True)
+            (root / "AGENTS.md").write_text("# Legacy instructions")
+            WorkspaceManager(workspace_dir=tmpdir, initial_instructions="New instructions")
+            # Migration renamed AGENTS.md → INSTRUCTIONS.md, so initial_instructions is ignored
+            assert "Legacy instructions" in (root / "INSTRUCTIONS.md").read_text()
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_load_prompt_context_returns_file_contents(self):
         root = Path(self._tmpdir)
-        (root / "AGENTS.md").write_text("# My Agent\nDo X.")
+        (root / "INSTRUCTIONS.md").write_text("# My Agent\nDo X.")
         (root / "SOUL.md").write_text("# Identity\nFriendly.")
         (root / "USER.md").write_text("# User\nPrefers Python.")
         ws = WorkspaceManager(workspace_dir=self._tmpdir)
@@ -85,7 +125,7 @@ class TestWorkspaceScaffold:
 
     def test_load_prompt_context_skips_empty(self):
         root = Path(self._tmpdir)
-        (root / "AGENTS.md").write_text("")
+        (root / "INSTRUCTIONS.md").write_text("")
         (root / "SOUL.md").write_text("Identity")
         (root / "USER.md").write_text("")
         ws = WorkspaceManager(workspace_dir=self._tmpdir)
@@ -106,7 +146,7 @@ class TestWorkspaceScaffold:
         (root / "PROJECT.md").unlink(missing_ok=True)
         ws = WorkspaceManager(workspace_dir=self._tmpdir)
         context = ws.load_prompt_context()
-        assert "Agent Instructions" in context
+        assert "Instructions" in context
 
 
 class TestBootstrapContent:
@@ -119,7 +159,7 @@ class TestBootstrapContent:
 
     def test_bootstrap_includes_all_workspace_files(self):
         root = Path(self._tmpdir)
-        (root / "AGENTS.md").write_text("Agent instructions here")
+        (root / "INSTRUCTIONS.md").write_text("Agent instructions here")
         (root / "SOUL.md").write_text("Soul content")
         (root / "USER.md").write_text("User prefs")
         (root / "MEMORY.md").write_text("Important memory")
@@ -142,7 +182,7 @@ class TestBootstrapContent:
     def test_bootstrap_enforces_total_cap(self):
         root = Path(self._tmpdir)
         # Fill every file close to its per-file cap to exceed total
-        (root / "AGENTS.md").write_text("A" * 8_000)
+        (root / "INSTRUCTIONS.md").write_text("A" * 8_000)
         (root / "SOUL.md").write_text("S" * 4_000)
         (root / "USER.md").write_text("U" * 4_000)
         (root / "MEMORY.md").write_text("M" * 16_000)
@@ -153,7 +193,7 @@ class TestBootstrapContent:
 
     def test_bootstrap_skips_empty_files(self):
         root = Path(self._tmpdir)
-        (root / "AGENTS.md").write_text("")
+        (root / "INSTRUCTIONS.md").write_text("")
         (root / "SOUL.md").write_text("")
         (root / "USER.md").write_text("User info")
         (root / "MEMORY.md").write_text("")
@@ -437,7 +477,7 @@ class TestPerAgentSoul:
     def test_all_identity_files_scaffolded(self):
         """All 5 identity files are created with default content."""
         root = Path(self._tmpdir)
-        for filename in ("SOUL.md", "AGENTS.md", "USER.md", "MEMORY.md", "HEARTBEAT.md"):
+        for filename in ("SOUL.md", "INSTRUCTIONS.md", "USER.md", "MEMORY.md", "HEARTBEAT.md"):
             assert (root / filename).exists(), f"{filename} not scaffolded"
             content = (root / filename).read_text()
             assert content.strip(), f"{filename} has empty scaffold"
@@ -488,16 +528,17 @@ class TestUpdateFile:
         content = (Path(self._tmpdir) / "USER.md").read_text()
         assert "Prefers short answers" in content
 
-    def test_update_soul_md_blocked(self):
-        result = self.ws.update_file("SOUL.md", "hacked identity")
-        assert "error" in result
-        # Original scaffold content should be preserved
+    def test_update_soul_md(self):
+        result = self.ws.update_file("SOUL.md", "# Identity\nI am a pirate.")
+        assert result["updated"] is True
         content = (Path(self._tmpdir) / "SOUL.md").read_text()
-        assert "Identity" in content
+        assert "pirate" in content
 
-    def test_update_agents_md_blocked(self):
-        result = self.ws.update_file("AGENTS.md", "hacked instructions")
-        assert "error" in result
+    def test_update_instructions_md(self):
+        result = self.ws.update_file("INSTRUCTIONS.md", "# Instructions\nAlways use JSON.")
+        assert result["updated"] is True
+        content = (Path(self._tmpdir) / "INSTRUCTIONS.md").read_text()
+        assert "Always use JSON" in content
 
     def test_update_memory_md_blocked(self):
         result = self.ws.update_file("MEMORY.md", "overwrite memory")

@@ -290,7 +290,7 @@ class RuntimeContext:
             agent_mcp_servers = agent_cfg.get("mcp_servers") or None
             agent_thinking = agent_cfg.get("thinking", "")
 
-            # Seed AGENTS.md from initial_instructions on first boot
+            # Seed INSTRUCTIONS.md from initial_instructions on first boot
             initial_instructions = agent_cfg.get("initial_instructions", "")
             if initial_instructions:
                 self.runtime.extra_env["INITIAL_INSTRUCTIONS"] = initial_instructions

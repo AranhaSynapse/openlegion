@@ -173,21 +173,25 @@ def create_agent_app(loop: AgentLoop) -> FastAPI:
 
     # ── Workspace API ────────────────────────────────────────
 
-    _WORKSPACE_ALLOWLIST = frozenset({"SOUL.md", "HEARTBEAT.md", "USER.md", "AGENTS.md", "MEMORY.md"})
+    _WORKSPACE_ALLOWLIST = frozenset({
+        "SOUL.md", "HEARTBEAT.md", "USER.md", "INSTRUCTIONS.md", "AGENTS.md", "MEMORY.md",
+    })
     _DEFAULT_HEARTBEAT_PREFIX = "# Heartbeat Rules\n\nYou are woken periodically"
 
     _FILE_CAPS = {
         "SOUL.md": 4000,
+        "INSTRUCTIONS.md": 8000,
         "AGENTS.md": 8000,
         "USER.md": 4000,
         "MEMORY.md": 16000,
         "HEARTBEAT.md": None,
     }
     _DEFAULT_PREFIXES = {
-        "SOUL.md": "# Identity\n\nDefine personality",
-        "AGENTS.md": "# Agent Instructions\n\nAdd operating",
-        "USER.md": "# User Context\n\nRecord user",
-        "MEMORY.md": "# Long-Term Memory\n\nCurated facts",
+        "SOUL.md": "# Identity\n\n",
+        "INSTRUCTIONS.md": "# Instructions\n\n",
+        "AGENTS.md": "# Agent Instructions\n\n",
+        "USER.md": "# User Context\n\n",
+        "MEMORY.md": "# Long-Term Memory\n\n",
         "HEARTBEAT.md": "# Heartbeat Rules\n\nYou are woken periodically",
     }
 

@@ -5,17 +5,17 @@
  * Real-time updates via WebSocket + periodic REST polling.
  */
 const _IDENTITY_TABS = [
-  { id: 'config', label: 'Config', file: null, access: 'user', desc: 'Model, role, and daily budget.' },
-  { id: 'identity', label: 'Identity', file: null, access: 'user', desc: 'Agent personality and instructions.' },
-  { id: 'memory', label: 'Memory', file: null, access: 'agent', desc: 'Long-term memory and autonomous heartbeat rules.' },
-  { id: 'logs', label: 'Logs', file: null, access: 'auto', desc: 'Activity logs and learned corrections.' },
-  { id: 'capabilities', label: 'Tools', file: null, access: 'auto', desc: 'Available tools and capabilities.' },
+  { id: 'identity', label: 'Identity', file: null, access: 'user' },
+  { id: 'memory', label: 'Memory', file: null, access: 'agent' },
+  { id: 'config', label: 'Config', file: null, access: 'user' },
+  { id: 'logs', label: 'Logs', file: null, access: 'auto' },
+  { id: 'capabilities', label: 'Tools', file: null, access: 'auto' },
 ];
 
 const _IDENTITY_FILE_MAP = {
   identity: [
-    { file: 'SOUL.md', label: 'Soul', cap: 4000, access: 'user', desc: 'Core personality and behavioral guidelines.' },
-    { file: 'AGENTS.md', label: 'Instructions', cap: 8000, access: 'user', desc: 'Operating instructions for the agent.' },
+    { file: 'SOUL.md', label: 'Soul', cap: 4000, access: 'both', desc: 'Core personality and behavioral guidelines.' },
+    { file: 'INSTRUCTIONS.md', label: 'Instructions', cap: 8000, access: 'both', desc: 'Operating procedures, workflow rules, domain knowledge.' },
   ],
   memory: [
     { file: 'MEMORY.md', label: 'Memory', cap: 16000, access: 'agent', desc: 'Long-term facts from conversations.' },
@@ -471,6 +471,15 @@ function dashboard() {
 
     get identityCurrentTab() {
       return _IDENTITY_TABS.find(t => t.id === this.identityTab) || _IDENTITY_TABS[0];
+    },
+
+    get isMac() {
+      return /mac/i.test(navigator.userAgentData?.platform || navigator.platform || '');
+    },
+
+    isFileDefault(file) {
+      const info = this.identityFiles.find(f => f.name === file);
+      return info ? info.is_default : true;
     },
 
     fileBudgetPct(file, cap) {
