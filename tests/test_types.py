@@ -52,6 +52,18 @@ def test_agent_status_fields():
     assert status.capabilities == []
 
 
+def test_token_budget_record_usage_uses_unified_costs():
+    """WU2: record_usage delegates to estimate_cost from costs.py (18+ models)."""
+    budget = TokenBudget(max_tokens=1_000_000)
+    # Test a model that was NOT in the old inline dict
+    budget.record_usage(1000, "openai/gpt-4o")
+    assert budget.estimated_cost_usd > 0
+    # Test unknown model gets a reasonable fallback
+    budget2 = TokenBudget(max_tokens=1_000_000)
+    budget2.record_usage(1000, "unknown/model")
+    assert budget2.estimated_cost_usd > 0
+
+
 def test_workflow_step_defaults():
     step = WorkflowStep(id="s1", task_type="research")
     assert step.on_failure == "abort"

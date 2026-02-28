@@ -48,13 +48,9 @@ class TokenBudget(BaseModel):
 
     def record_usage(self, tokens: int, model: str = "") -> None:
         self.used_tokens += tokens
-        cost_per_1k = {
-            "anthropic/claude-sonnet-4-5-20250929": 0.003,
-            "anthropic/claude-haiku-4-5-20251001": 0.0008,
-            "text-embedding-3-small": 0.00002,
-        }
-        rate = cost_per_1k.get(model, 0.003)
-        self.estimated_cost_usd += (tokens / 1000) * rate
+        from src.host.costs import estimate_cost
+
+        self.estimated_cost_usd += estimate_cost(model, total_tokens=tokens)
 
 
 class TaskAssignment(BaseModel):

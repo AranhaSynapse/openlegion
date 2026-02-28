@@ -9,6 +9,7 @@ const _IDENTITY_TABS = [
   { id: 'identity', label: 'Identity', file: null, access: 'user', desc: 'Agent personality and instructions.' },
   { id: 'memory', label: 'Memory', file: null, access: 'agent', desc: 'Long-term memory and autonomous heartbeat rules.' },
   { id: 'logs', label: 'Logs', file: null, access: 'auto', desc: 'Activity logs and learned corrections.' },
+  { id: 'capabilities', label: 'Tools', file: null, access: 'auto', desc: 'Available tools and capabilities.' },
 ];
 
 const _IDENTITY_FILE_MAP = {
@@ -126,6 +127,11 @@ function dashboard() {
     cronEditUnit: 'm',
     cronEditCron: '',
 
+    // Workflows
+    workflows: [],
+    workflowsActive: [],
+    workflowsLoading: false,
+
     // Settings
     settingsData: null,
 
@@ -154,6 +160,10 @@ function dashboard() {
     configEditing: false,
     configSaving: false,
     identityLogs: null,
+    agentCapabilities: null,
+
+    // Connection state
+    connectionError: false,
     identityLogsLoading: false,
     identityLearnings: null,
     identityLearningsLoading: false,
@@ -633,6 +643,7 @@ function dashboard() {
         this.fetchCosts();
         this.fetchBlackboard();
         this.fetchCronJobs();
+        this.fetchWorkflows();
         this._cronInterval = setInterval(() => this.fetchCronJobs(), 10000);
       }
       if (!this._skipPush) this._pushUrl(false);
@@ -827,8 +838,12 @@ function dashboard() {
         if (resp.ok) {
           this.agents = (await resp.json()).agents;
           this.lastRefresh = Date.now() / 1000;
+          this.connectionError = false;
         }
-      } catch (e) { console.warn('fetchAgents failed:', e); }
+      } catch (e) {
+        console.warn('fetchAgents failed:', e);
+        this.connectionError = true;
+      }
       this.loading = false;
     },
 
@@ -885,6 +900,20 @@ function dashboard() {
         if (this.identityLogs === null) await this.fetchIdentityLogs(agentId);
         if (this.identityLearnings === null) await this.fetchIdentityLearnings(agentId);
       }
+      if (tab.id === 'capabilities') {
+        await this.fetchAgentCapabilities(agentId);
+      }
+    },
+
+    async fetchAgentCapabilities(agentId) {
+      this.agentCapabilities = null;
+      try {
+        const resp = await fetch(`${window.__config.apiBase}/agents/${agentId}/capabilities`);
+        if (resp.ok) {
+          const data = await resp.json();
+          this.agentCapabilities = data.capabilities || data.tools || [];
+        }
+      } catch (e) { console.warn('fetchAgentCapabilities failed:', e); }
     },
 
     async switchIdentityTab(agentId, tabId) {
@@ -1458,6 +1487,32 @@ function dashboard() {
       } catch (e) { console.warn('resumeCronJob failed:', e); }
     },
 
+    async fetchWorkflows() {
+      this.workflowsLoading = true;
+      try {
+        const resp = await fetch(`${window.__config.apiBase}/workflows`);
+        if (resp.ok) {
+          const data = await resp.json();
+          this.workflows = data.workflows || [];
+          this.workflowsActive = data.active || [];
+        }
+      } catch (e) { console.warn('fetchWorkflows failed:', e); }
+      this.workflowsLoading = false;
+    },
+
+    async runWorkflow(name) {
+      try {
+        const resp = await fetch(`${window.__config.apiBase}/workflows/${encodeURIComponent(name)}/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        if (resp.ok) {
+          const data = await resp.json();
+          this.showToast(`Workflow '${name}' started (${data.execution_id})`);
+          this.fetchWorkflows();
+        } else {
+          this.showToast(`Failed to start workflow '${name}'`);
+        }
+      } catch (e) { console.warn('runWorkflow failed:', e); }
+    },
+
     async deleteCronJob(jobId) {
       this.showConfirm('Delete Cron Job', 'Delete this cron job?', async () => {
         try {
@@ -1897,6 +1952,26 @@ function dashboard() {
       this.$nextTick(() => this._scrollChat(agentId));
     },
 
+    isAgentBusy(agentId) {
+      return !!this.chatStreamingAgents[agentId];
+    },
+
+    async steerAgent(agentId, message) {
+      const msg = (message || '').trim();
+      if (!msg) return;
+      if (!this.chatHistories[agentId]) this.chatHistories[agentId] = [];
+      this.chatHistories[agentId].push({ role: 'user', content: `[steer] ${msg}` });
+      try {
+        await fetch(`${window.__config.apiBase}/agents/${agentId}/steer`, {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ message: msg }),
+        });
+        this.showToast(`Steered ${agentId}`);
+      } catch (e) {
+        this.showToast(`Steer failed: ${e.message}`);
+      }
+    },
+
     // ── Broadcast ────────────────────────────────────────
 
     get broadcastTargets() {
@@ -1945,7 +2020,7 @@ function dashboard() {
       const tabKeywords = {
         fleet: ['agents', 'fleet', 'cards', 'project'],
         activity: ['activity', 'traces', 'events', 'logs'],
-        system: ['system', 'costs', 'cron', 'automation', 'credentials', 'infrastructure', 'pricing', 'browsers', 'pubsub', 'blackboard'],
+        system: ['system', 'costs', 'cron', 'automation', 'credentials', 'infrastructure', 'pricing', 'browsers', 'pubsub', 'blackboard', 'workflows'],
       };
       for (const [tabId, keywords] of Object.entries(tabKeywords)) {
         const tab = this.tabs.find(t => t.id === tabId);

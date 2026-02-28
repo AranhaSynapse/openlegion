@@ -613,8 +613,24 @@ def _remove_project_blackboard_permissions(agent: str, project: str) -> None:
     _save_permissions(perms)
 
 
-def _remove_agent(name: str) -> None:
-    """Remove an agent from config, permissions, and any project membership."""
+def _remove_agent(name: str, stop_container: bool = False) -> None:
+    """Remove an agent from config, permissions, and any project membership.
+
+    If *stop_container* is True, attempt to stop and remove the Docker
+    container named ``openlegion_{name}``.  Failures are silently ignored
+    so that config removal always succeeds.
+    """
+    if stop_container:
+        try:
+            import docker
+
+            client = docker.from_env()
+            container = client.containers.get(f"openlegion_{name}")
+            container.stop(timeout=10)
+            container.remove()
+        except Exception:
+            pass  # Docker unavailable or container already gone
+
     # Remove from project if member
     project = _get_agent_project(name)
     if project:

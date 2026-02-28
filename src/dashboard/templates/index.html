@@ -231,6 +231,15 @@
     <!-- Main content -->
     <main class="flex-1 overflow-auto p-4 lg:p-6 transition-[margin] duration-200" :class="openChats.length > 0 && !chatPanelMinimized && 'sm:mr-[380px]'">
 
+      <!-- Connection error banner -->
+      <div x-show="connectionError" x-cloak class="mb-4 bg-red-900/30 border border-red-800 rounded-lg px-4 py-3 flex items-center gap-3">
+        <svg class="w-5 h-5 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+        <div>
+          <div class="text-sm text-red-300 font-medium">Connection lost</div>
+          <div class="text-xs text-red-400/70">Unable to reach the mesh host. Is the runtime running?</div>
+        </div>
+      </div>
+
       <!-- Fleet Overview (merged: Fleet + Agents + Queues) -->
       <div x-show="activeTab === 'fleet' && !detailAgent" x-cloak>
         <!-- Project switcher + Add Agent row -->
@@ -729,12 +738,14 @@
         <div class="px-3 py-2.5 border-t border-gray-800 shrink-0" x-data="{ chatInput: '' }">
           <div class="flex gap-1.5">
             <input type="text" x-model="chatInput" id="chat-slide-input"
-              @keydown.enter="if (chatInput.trim() && !chatStreamingAgents[activeChatId] && !chatLoadingAgents[activeChatId]) { sendChatTo(activeChatId, chatInput); chatInput = ''; }"
-              class="dash-input flex-1 text-xs py-1.5" placeholder="Message..."
-              :disabled="chatStreamingAgents[activeChatId] || chatLoadingAgents[activeChatId]">
-            <button @click="if (chatInput.trim()) { sendChatTo(activeChatId, chatInput); chatInput = ''; }"
-              :disabled="chatStreamingAgents[activeChatId] || chatLoadingAgents[activeChatId] || !chatInput.trim()"
-              class="text-[10px] px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors">Send</button>
+              @keydown.enter="if (chatInput.trim()) { if (isAgentBusy(activeChatId)) { steerAgent(activeChatId, chatInput); } else { sendChatTo(activeChatId, chatInput); } chatInput = ''; }"
+              class="dash-input flex-1 text-xs py-1.5"
+              :placeholder="isAgentBusy(activeChatId) ? 'Steer agent...' : 'Message...'">
+            <button @click="if (chatInput.trim()) { if (isAgentBusy(activeChatId)) { steerAgent(activeChatId, chatInput); } else { sendChatTo(activeChatId, chatInput); } chatInput = ''; }"
+              :disabled="!chatInput.trim()"
+              class="text-[10px] px-3 py-1.5 rounded text-white disabled:opacity-50 transition-colors"
+              :class="isAgentBusy(activeChatId) ? 'bg-amber-600 hover:bg-amber-500' : 'bg-indigo-600 hover:bg-indigo-500'"
+              x-text="isAgentBusy(activeChatId) ? 'Steer' : 'Send'"></button>
           </div>
         </div>
       </div>
@@ -1300,6 +1311,24 @@
                       </div>
                     </div>
                   </div>
+                  <!-- ═══ Capabilities / Tools tab ═══ -->
+                  <div x-show="identityTab === 'capabilities'">
+                    <div x-show="agentCapabilities === null" class="py-6 text-center text-gray-600 text-sm">
+                      <svg class="animate-spin h-4 w-4 inline mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                      Loading tools...
+                    </div>
+                    <div x-show="agentCapabilities !== null && agentCapabilities.length === 0" class="py-6 text-center text-gray-600 text-sm">
+                      No tools available for this agent.
+                    </div>
+                    <div x-show="agentCapabilities !== null && agentCapabilities.length > 0" class="space-y-1.5">
+                      <template x-for="tool in (agentCapabilities || [])" :key="tool.name || tool">
+                        <div class="bg-gray-800/50 rounded px-3 py-2 border border-gray-800">
+                          <div class="text-xs font-mono text-indigo-400" x-text="tool.name || tool"></div>
+                          <div x-show="tool.description" class="text-[11px] text-gray-500 mt-0.5" x-text="tool.description"></div>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
                 </div>
               </div>
               <!-- Right column: Spend + Budget + Health -->
@@ -1666,6 +1695,56 @@
               </svg>
               <div class="text-gray-500 font-medium mb-1">No automation jobs configured</div>
               <div class="text-gray-600 text-sm">Add cron jobs in your agent config</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Workflows -->
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-3">Workflows</div>
+        <div class="mb-6">
+          <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+            <div x-show="workflows.length > 0">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-left text-gray-500 border-b border-gray-800">
+                    <th class="px-4 py-2">Name</th>
+                    <th class="px-4 py-2">Trigger</th>
+                    <th class="px-4 py-2">Steps</th>
+                    <th class="px-4 py-2">Timeout</th>
+                    <th class="px-4 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="wf in workflows" :key="wf.name">
+                    <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+                      <td class="px-4 py-2 text-gray-200 font-mono text-xs" x-text="wf.name"></td>
+                      <td class="px-4 py-2 text-gray-400 text-xs" x-text="wf.trigger"></td>
+                      <td class="px-4 py-2 text-gray-400 text-xs" x-text="wf.steps"></td>
+                      <td class="px-4 py-2 text-gray-400 text-xs" x-text="wf.timeout + 's'"></td>
+                      <td class="px-4 py-2 text-right">
+                        <button @click="runWorkflow(wf.name)" class="text-xs text-indigo-400 hover:text-indigo-300">Run</button>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <!-- Active executions -->
+              <template x-if="workflowsActive.length > 0">
+                <div class="px-4 py-2 border-t border-gray-800 bg-gray-900/50">
+                  <div class="text-xs text-gray-500 mb-1">Active Executions</div>
+                  <template x-for="exec in workflowsActive" :key="exec.execution_id">
+                    <div class="text-xs text-gray-400 flex items-center gap-2 py-0.5">
+                      <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                      <span x-text="exec.workflow || exec.execution_id"></span>
+                      <span class="text-gray-600" x-text="exec.status || 'running'"></span>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+            <div x-show="workflows.length === 0" class="text-center py-8">
+              <div class="text-gray-500 text-sm">No workflows configured</div>
+              <div class="text-gray-600 text-xs mt-1">Add workflows in your mesh.yaml config</div>
             </div>
           </div>
         </div>

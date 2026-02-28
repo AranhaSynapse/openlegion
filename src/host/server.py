@@ -171,6 +171,17 @@ def create_mesh_app(
                 return aid
         raise HTTPException(401, "Invalid authentication token")
 
+    def _resolve_agent_id(agent_id: str, request: Request) -> str:
+        """Verified agent_id when auth active, else trust caller.
+
+        When auth tokens are configured, derives the true agent identity
+        from the Bearer token — ignoring the caller-supplied agent_id to
+        prevent spoofing.  In dev/test mode (no tokens), trusts the caller.
+        """
+        if _auth_tokens:
+            return _extract_verified_agent_id(request)
+        return agent_id
+
     # === System Messaging (orchestrator/mesh → agent) ===
 
     @app.post("/mesh/message")
@@ -195,8 +206,10 @@ def create_mesh_app(
     # === Workflow Cancellation ===
 
     @app.post("/mesh/cancel/{execution_id}")
-    async def cancel_workflow(execution_id: str) -> dict:
+    async def cancel_workflow(execution_id: str, request: Request) -> dict:
         """Cancel a running workflow execution."""
+        if _auth_tokens:
+            _extract_verified_agent_id(request)
         if orchestrator is None:
             raise HTTPException(503, "Orchestrator not available")
         if orchestrator.cancel_execution(execution_id):
@@ -209,7 +222,7 @@ def create_mesh_app(
     @app.get("/mesh/blackboard/")
     async def list_blackboard(prefix: str, agent_id: str, request: Request) -> list[dict]:
         """List blackboard entries by prefix."""
-        _verify_auth(agent_id, request)
+        agent_id = _resolve_agent_id(agent_id, request)
         await _check_rate_limit("blackboard_read", agent_id)
         if not permissions.can_read_blackboard(agent_id, prefix):
             raise HTTPException(403, f"Agent {agent_id} cannot read {prefix}")
@@ -219,7 +232,7 @@ def create_mesh_app(
     @app.get("/mesh/blackboard/{key:path}")
     async def read_blackboard(key: str, agent_id: str, request: Request) -> dict:
         """Read a blackboard entry. Agent must have read permission."""
-        _verify_auth(agent_id, request)
+        agent_id = _resolve_agent_id(agent_id, request)
         await _check_rate_limit("blackboard_read", agent_id)
         if not permissions.can_read_blackboard(agent_id, key):
             raise HTTPException(403, f"Agent {agent_id} cannot read {key}")
@@ -231,7 +244,7 @@ def create_mesh_app(
     @app.put("/mesh/blackboard/{key:path}")
     async def write_blackboard(key: str, agent_id: str, value: dict, request: Request) -> dict:
         """Write to blackboard. Agent must have write permission."""
-        _verify_auth(agent_id, request)
+        agent_id = _resolve_agent_id(agent_id, request)
         await _check_rate_limit("blackboard_write", agent_id)
         if not permissions.can_write_blackboard(agent_id, key):
             raise HTTPException(403, f"Agent {agent_id} cannot write {key}")
@@ -250,7 +263,7 @@ def create_mesh_app(
     @app.post("/mesh/publish")
     async def publish_event(event: MeshEvent, request: Request) -> dict:
         """Publish an event to a topic."""
-        _verify_auth(event.source, request)
+        event.source = _resolve_agent_id(event.source, request)
         await _check_rate_limit("publish", event.source)
         if not permissions.can_publish(event.source, event.topic):
             raise HTTPException(403, f"Agent {event.source} cannot publish to {event.topic}")
@@ -277,7 +290,7 @@ def create_mesh_app(
     @app.post("/mesh/subscribe")
     async def subscribe(topic: str, agent_id: str, request: Request) -> dict:
         """Subscribe an agent to an event topic."""
-        _verify_auth(agent_id, request)
+        agent_id = _resolve_agent_id(agent_id, request)
         if not permissions.can_subscribe(agent_id, topic):
             raise HTTPException(403, f"Agent {agent_id} cannot subscribe to {topic}")
         pubsub.subscribe(topic, agent_id)
@@ -408,8 +421,7 @@ def create_mesh_app(
     @app.post("/mesh/vault/store")
     async def vault_store(data: dict, request: Request) -> dict:
         """Store a credential and return an opaque $CRED{name} handle."""
-        agent_id = data.get("agent_id", "")
-        _verify_auth(agent_id, request)
+        agent_id = _resolve_agent_id(data.get("agent_id", ""), request)
         if not permissions.can_manage_vault(agent_id):
             raise HTTPException(403, f"Agent {agent_id} cannot manage vault")
         if credential_vault is None:
@@ -430,7 +442,7 @@ def create_mesh_app(
     @app.get("/mesh/vault/list")
     async def vault_list(agent_id: str, request: Request) -> dict:
         """List credential names the agent can access (never values)."""
-        _verify_auth(agent_id, request)
+        agent_id = _resolve_agent_id(agent_id, request)
         if not permissions.can_manage_vault(agent_id):
             raise HTTPException(403, f"Agent {agent_id} cannot manage vault")
         if credential_vault is None:
@@ -443,7 +455,7 @@ def create_mesh_app(
     @app.get("/mesh/vault/status/{name}")
     async def vault_status(name: str, agent_id: str, request: Request) -> dict:
         """Check if a credential exists by name."""
-        _verify_auth(agent_id, request)
+        agent_id = _resolve_agent_id(agent_id, request)
         if not permissions.can_access_credential(agent_id, name):
             raise HTTPException(403, f"Agent {agent_id} cannot access credential {name}")
         if credential_vault is None:
@@ -453,8 +465,7 @@ def create_mesh_app(
     @app.post("/mesh/vault/resolve")
     async def vault_resolve(data: dict, request: Request) -> dict:
         """Resolve a credential handle to its value. Internal use only (browser tool)."""
-        agent_id = data.get("agent_id", "")
-        _verify_auth(agent_id, request)
+        agent_id = _resolve_agent_id(data.get("agent_id", ""), request)
         name = data.get("name", "")
         if not name:
             raise HTTPException(400, "name is required")
@@ -659,6 +670,8 @@ def create_mesh_app(
     @app.put("/mesh/cron/{job_id}")
     async def update_cron_job(job_id: str, request: Request) -> dict:
         """Update a cron job by ID. Body: fields to update (schedule, enabled, etc)."""
+        if _auth_tokens:
+            _extract_verified_agent_id(request)
         if cron_scheduler is None:
             raise HTTPException(503, "Cron scheduler not available")
         body = await request.json()
@@ -673,8 +686,10 @@ def create_mesh_app(
         return {"status": "updated", "job": asdict(job)}
 
     @app.delete("/mesh/cron/{job_id}")
-    async def delete_cron_job(job_id: str) -> dict:
+    async def delete_cron_job(job_id: str, request: Request) -> dict:
         """Remove a cron job by ID."""
+        if _auth_tokens:
+            _extract_verified_agent_id(request)
         if cron_scheduler is None:
             raise HTTPException(503, "Cron scheduler not available")
         if cron_scheduler.remove_job(job_id):
@@ -684,7 +699,7 @@ def create_mesh_app(
     # === Dynamic Agent Spawning ===
 
     @app.post("/mesh/spawn")
-    async def spawn_agent(data: dict) -> dict:
+    async def spawn_agent(data: dict, request: Request) -> dict:
         """Spawn an ephemeral agent. Body: {role, system_prompt?, model?, ttl?}."""
         if container_manager is None:
             raise HTTPException(503, "Container manager not available")
@@ -692,6 +707,7 @@ def create_mesh_app(
         if not isinstance(role, str) or len(role) > 64:
             raise HTTPException(400, "role must be a string of at most 64 chars")
         spawned_by = data.get("spawned_by", "unknown")
+        _verify_auth(spawned_by, request)
         model = data.get("model", "")
         ttl = data.get("ttl", 3600)
         if not isinstance(ttl, (int, float)) or ttl < 60 or ttl > 86400:

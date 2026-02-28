@@ -54,6 +54,14 @@ from src.cli.config import (
 
 logger = logging.getLogger("cli")
 
+_json_mode = False
+
+
+def _set_json(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    """Eager callback to enable global JSON output mode."""
+    global _json_mode
+    _json_mode = value
+
 
 def _fail(msg: str) -> None:
     """Print error message to stderr and exit with code 1."""
@@ -61,16 +69,56 @@ def _fail(msg: str) -> None:
     raise SystemExit(1)
 
 
+# ── Shell completion helpers ─────────────────────────────────
+
+
+def _complete_agent_names(ctx, param, incomplete):
+    """Return matching agent names for shell completion."""
+    try:
+        cfg = _load_config()
+        names = sorted(cfg.get("agents", {}).keys())
+        return [n for n in names if n.startswith(incomplete)]
+    except Exception:
+        return []
+
+
+def _complete_project_names(ctx, param, incomplete):
+    """Return matching project names for shell completion."""
+    try:
+        from src.cli.config import _load_projects
+        names = sorted(_load_projects().keys())
+        return [n for n in names if n.startswith(incomplete)]
+    except Exception:
+        return []
+
+
+def _complete_channel_types(ctx, param, incomplete):
+    """Return matching channel types for shell completion."""
+    return [k for k in CHANNEL_TYPES if k.startswith(incomplete)]
+
+
 # ── Main group ───────────────────────────────────────────────
 
 @click.group()
 @click.version_option(package_name="openlegion")
-def cli():
+@click.option(
+    "--json", "json_flag", is_flag=True, is_eager=True, expose_value=False,
+    callback=_set_json, help="Output in JSON format (where supported)",
+)
+@click.option("--verbose", "-v", is_flag=True, default=False, help="Verbose output (DEBUG logging)")
+@click.option("--quiet", "-q", is_flag=True, default=False, help="Quiet output (ERROR logging only)")
+def cli(verbose: bool, quiet: bool):
     """OpenLegion -- Autonomous AI agent fleet."""
     from dotenv import load_dotenv
 
     load_dotenv(cli_config.ENV_FILE)
-    _suppress_host_logs()
+
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG, force=True)
+    elif quiet:
+        logging.basicConfig(level=logging.ERROR, force=True)
+    else:
+        _suppress_host_logs()
 
 
 # ── agent subgroup ───────────────────────────────────────────
@@ -137,7 +185,7 @@ def agent_add(name: str | None, model_override: str | None, role_override: str |
 
 
 @agent.command("edit")
-@click.argument("name", required=False, default=None)
+@click.argument("name", required=False, default=None, shell_complete=_complete_agent_names)
 @click.option("--model", "model_override", default=None, help="Set LLM model")
 @click.option("--role", "desc_override", default=None, help="Set role/description")
 @click.option("--description", "desc_override_compat", default=None, hidden=True)
@@ -233,6 +281,7 @@ def _resolve_agent_name(cfg: dict, name: str | None) -> str | None:
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def agent_list(as_json: bool):
     """List all configured agents and their status."""
+    as_json = as_json or _json_mode
     cfg = _load_config()
     agents = cfg.get("agents", {})
     if not agents:
@@ -274,7 +323,7 @@ def agent_list(as_json: bool):
 
 
 @agent.command("remove")
-@click.argument("name", required=False, default=None)
+@click.argument("name", required=False, default=None, shell_complete=_complete_agent_names)
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 def agent_remove(name: str | None, yes: bool):
     """Remove an agent from configuration."""
@@ -285,7 +334,7 @@ def agent_remove(name: str | None, yes: bool):
     if not yes:
         click.confirm(f"Remove agent '{name}'? This deletes its config and permissions.", abort=True)
 
-    _remove_agent(name)
+    _remove_agent(name, stop_container=True)
     click.echo(f"Removed agent '{name}'.")
 
 
@@ -436,6 +485,7 @@ def channels_add(channel_type: str | None):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def channels_list(as_json: bool):
     """Show configured channels and their status."""
+    as_json = as_json or _json_mode
     mesh_cfg = {}
     if cli_config.CONFIG_FILE.exists():
         with open(cli_config.CONFIG_FILE) as f:
@@ -477,7 +527,7 @@ def channels_list(as_json: bool):
 
 
 @channels.command("remove")
-@click.argument("channel_type", required=False, default=None)
+@click.argument("channel_type", required=False, default=None, shell_complete=_complete_channel_types)
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 def channels_remove(channel_type: str | None, yes: bool):
     """Disconnect a messaging channel.
@@ -490,12 +540,25 @@ def channels_remove(channel_type: str | None, yes: bool):
       openlegion channels remove telegram -y
     """
     if channel_type is None:
-        click.echo("Available channels:\n")
-        for i, (key, info) in enumerate(CHANNEL_TYPES.items(), 1):
+        # Show only enabled channels for a better UX
+        mesh_cfg_pick = {}
+        if cli_config.CONFIG_FILE.exists():
+            with open(cli_config.CONFIG_FILE) as f:
+                mesh_cfg_pick = yaml.safe_load(f) or {}
+        channel_cfg_pick = mesh_cfg_pick.get("channels", {})
+        enabled = [
+            (key, info) for key, info in CHANNEL_TYPES.items()
+            if channel_cfg_pick.get(info["config_section"], {}).get("enabled")
+        ]
+        if not enabled:
+            click.echo("No channels configured. Add one: openlegion channels add")
+            return
+        click.echo("Configured channels:\n")
+        for i, (key, info) in enumerate(enabled, 1):
             click.echo(f"  {i}. {info['label']}")
         click.echo("")
-        choice = click.prompt("Select channel to remove", type=click.IntRange(1, len(CHANNEL_TYPES)), default=1)
-        channel_type = list(CHANNEL_TYPES.keys())[choice - 1]
+        choice = click.prompt("Select channel to remove", type=click.IntRange(1, len(enabled)), default=1)
+        channel_type = enabled[choice - 1][0]
 
     channel_type = channel_type.lower()
     if channel_type not in CHANNEL_TYPES:
@@ -573,6 +636,7 @@ def skill_install(repo_url: str, ref: str):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def skill_list(as_json: bool):
     """List installed marketplace skills."""
+    as_json = as_json or _json_mode
     from src.marketplace import list_skills
 
     skills = list_skills(cli_config.MARKETPLACE_DIR)
@@ -799,6 +863,7 @@ def project(ctx):
             ("list", "List all projects"),
             ("create", "Create a new project"),
             ("delete", "Delete a project"),
+            ("remove", "Delete a project (alias)"),
             ("add-agent", "Add an agent to a project"),
             ("remove-agent", "Remove an agent from a project"),
             ("edit", "Edit project description or context"),
@@ -879,6 +944,7 @@ def project_create(name: str | None, desc: str, agents_str: str):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def project_list(as_json: bool):
     """List all projects and their members."""
+    as_json = as_json or _json_mode
     from src.cli.config import _load_projects
 
     cfg = _load_config()
@@ -914,7 +980,7 @@ def project_list(as_json: bool):
 
 
 @project.command("delete")
-@click.argument("name", required=False, default=None)
+@click.argument("name", required=False, default=None, shell_complete=_complete_project_names)
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 def project_delete(name: str | None, yes: bool):
     """Delete a project. Agents become standalone.
@@ -956,9 +1022,18 @@ def project_delete(name: str | None, yes: bool):
     click.echo(f"Deleted project '{name}'.")
 
 
+@project.command("remove")
+@click.argument("name", required=False, default=None, shell_complete=_complete_project_names)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def project_remove(ctx, name: str | None, yes: bool):
+    """Delete a project (alias for 'project delete')."""
+    ctx.invoke(project_delete, name=name, yes=yes)
+
+
 @project.command("add-agent")
-@click.argument("project_name", required=False, default=None)
-@click.argument("agent_name", required=False, default=None)
+@click.argument("project_name", required=False, default=None, shell_complete=_complete_project_names)
+@click.argument("agent_name", required=False, default=None, shell_complete=_complete_agent_names)
 def project_add_agent(project_name: str | None, agent_name: str | None):
     """Add an agent to a project.
 
@@ -1005,8 +1080,8 @@ def project_add_agent(project_name: str | None, agent_name: str | None):
 
 
 @project.command("remove-agent")
-@click.argument("project_name", required=False, default=None)
-@click.argument("agent_name", required=False, default=None)
+@click.argument("project_name", required=False, default=None, shell_complete=_complete_project_names)
+@click.argument("agent_name", required=False, default=None, shell_complete=_complete_agent_names)
 def project_remove_agent(project_name: str | None, agent_name: str | None):
     """Remove an agent from a project (becomes standalone).
 
@@ -1267,7 +1342,7 @@ def _start_detached(config_path: str) -> None:
 # ── chat (for detached mode) ─────────────────────────────────
 
 @cli.command("chat")
-@click.argument("name", required=False, default=None)
+@click.argument("name", required=False, default=None, shell_complete=_complete_agent_names)
 @click.option("--port", default=8420, type=int, help="Mesh host port")
 def chat(name: str | None, port: int):
     """Connect to a running agent and start chatting.
@@ -1358,10 +1433,61 @@ def _single_agent_repl(agent_name: str, agent_url: str) -> None:
                 except Exception as e:
                     click.echo(f"Error: {e}", err=True)
                 continue
+            elif cmd == "/costs":
+                try:
+                    data = httpx.get("http://localhost:8420/dashboard/api/costs?period=today", timeout=5).json()
+                    agents = data if isinstance(data, list) else data.get("agents", [])
+                    if not agents:
+                        click.echo("  No costs recorded today.")
+                    else:
+                        for a in agents:
+                            cost = a.get('cost', 0)
+                            tokens = a.get('tokens', 0)
+                            click.echo(f"  {a.get('agent', '?')}: ${cost:.4f} ({tokens} tokens)")
+                except Exception as e:
+                    click.echo(f"Error: {e}", err=True)
+                continue
+            elif cmd == "/agents":
+                try:
+                    resp = httpx.get("http://localhost:8420/mesh/agents", timeout=5)
+                    agents = resp.json()
+                    for aid, info in agents.items():
+                        role = info.get("role", "") if isinstance(info, dict) else ""
+                        click.echo(f"  {aid}: {role}")
+                except Exception as e:
+                    click.echo(f"Error: {e}", err=True)
+                continue
+            elif cmd == "/debug":
+                try:
+                    data = httpx.get("http://localhost:8420/dashboard/api/traces", timeout=5).json()
+                    traces = data if isinstance(data, list) else data.get("traces", [])
+                    for t in traces[:10]:
+                        click.echo(f"  {t.get('trace_id', '?')} {t.get('agent', '?')} {t.get('event_type', '?')}")
+                    if not traces:
+                        click.echo("  No recent traces.")
+                except Exception as e:
+                    click.echo(f"Error: {e}", err=True)
+                continue
+            elif cmd.startswith("/blackboard"):
+                try:
+                    data = httpx.get("http://localhost:8420/dashboard/api/blackboard", timeout=5).json()
+                    entries = data if isinstance(data, list) else data.get("entries", [])
+                    if not entries:
+                        click.echo("  Blackboard is empty.")
+                    else:
+                        for e in entries:
+                            click.echo(f"  {e.get('key', '?')}: {_json.dumps(e.get('value', {}), default=str)[:60]}")
+                except Exception as e:
+                    click.echo(f"Error: {e}", err=True)
+                continue
             elif cmd == "/help":
                 click.echo("Commands:")
                 click.echo(f"  {'/reset':<18} Clear conversation history")
                 click.echo(f"  {'/status':<18} Show agent status")
+                click.echo(f"  {'/costs':<18} Show cost breakdown (today)")
+                click.echo(f"  {'/agents':<18} List running agents")
+                click.echo(f"  {'/debug':<18} Show recent traces")
+                click.echo(f"  {'/blackboard':<18} Show blackboard entries")
                 click.echo(f"  {'/quit':<18} Exit chat")
                 click.echo(f"  {'/help':<18} Show this help")
                 continue
@@ -1456,6 +1582,7 @@ def _sync_detached_chat(agent_name: str, agent_url: str, message: str) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def status(port: int, wide: bool, watch_interval: int | None, as_json: bool):
     """Show status of all agents."""
+    as_json = as_json or _json_mode
     import httpx
 
     def _collect_status():
@@ -1565,15 +1692,17 @@ def status(port: int, wide: bool, watch_interval: int | None, as_json: bool):
 @cli.group(invoke_without_command=True)
 @click.pass_context
 def webhook(ctx):
-    """Manage webhooks (list, test)."""
+    """Manage webhooks (list, add, remove, test)."""
     if ctx.invoked_subcommand is None:
         ctx.invoke(webhook_list)
 
 
 @webhook.command("list")
 @click.option("--port", default=8420, type=int)
-def webhook_list(port: int):
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def webhook_list(port: int, as_json: bool):
     """List configured webhooks."""
+    as_json = as_json or _json_mode
     import httpx
 
     try:
@@ -1581,16 +1710,23 @@ def webhook_list(port: int):
             f"http://localhost:{port}/dashboard/api/webhooks", timeout=5
         )
         if resp.status_code == 404:
-            click.echo("No webhook endpoints available.")
+            if as_json:
+                click.echo(_json.dumps({"webhooks": []}))
+            else:
+                click.echo("No webhook endpoints available.")
             return
         webhooks = resp.json()
-        if not webhooks:
+        hooks = webhooks if isinstance(webhooks, list) else webhooks.get("webhooks", [])
+        if as_json:
+            click.echo(_json.dumps({"webhooks": hooks}, indent=2, default=str))
+            return
+        if not hooks:
             click.echo("No webhooks configured.")
             return
-        click.echo(f"{'Name':<20} {'URL'}")
-        click.echo("-" * 50)
-        for wh in webhooks if isinstance(webhooks, list) else []:
-            click.echo(f"{wh.get('name', '?'):<20} {wh.get('url', '')}")
+        click.echo(f"{'Name':<20} {'Agent':<16} {'URL'}")
+        click.echo("-" * 60)
+        for wh in hooks:
+            click.echo(f"{wh.get('name', '?'):<20} {wh.get('agent', '?'):<16} {wh.get('url', '')}")
     except httpx.ConnectError:
         click.echo("Mesh is not running.", err=True)
         raise SystemExit(1)
@@ -1598,19 +1734,74 @@ def webhook_list(port: int):
         click.echo(f"Error: {e}", err=True)
 
 
-@webhook.command("test")
+@webhook.command("add")
+@click.argument("name")
+@click.option("--agent", required=True, help="Agent to handle webhook", shell_complete=_complete_agent_names)
+@click.option("--secret", default=None, help="HMAC secret for payload verification")
+@click.option("--port", default=8420, type=int)
+def webhook_add(name: str, agent: str, secret: str | None, port: int):
+    """Add a webhook endpoint.
+
+    \b
+    Examples:
+      openlegion webhook add deploy --agent coder
+      openlegion webhook add deploy --agent coder --secret mysecret
+    """
+    payload = {"name": name, "agent": agent}
+    if secret:
+        payload["secret"] = secret
+    data = _mesh_post(port, "/dashboard/api/webhooks", json=payload)
+    url = data.get("url", "")
+    click.echo(f"Webhook '{name}' created.")
+    if url:
+        click.echo(f"  URL: {url}")
+
+
+@webhook.command("remove")
 @click.argument("name")
 @click.option("--port", default=8420, type=int)
-def webhook_test(name: str, port: int):
-    """Send a test payload to a webhook."""
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def webhook_remove(name: str, port: int, yes: bool):
+    """Remove a webhook endpoint.
+
+    \b
+    Examples:
+      openlegion webhook remove deploy
+      openlegion webhook remove deploy -y
+    """
+    from urllib.parse import quote
+
+    if not yes:
+        click.confirm(f"Remove webhook '{name}'?", abort=True)
+    _mesh_delete(port, f"/dashboard/api/webhooks/{quote(name, safe='')}")
+    click.echo(f"Removed webhook '{name}'.")
+
+
+@webhook.command("test")
+@click.argument("name")
+@click.option("--payload", default='{"test": true, "source": "cli"}', help="JSON payload")
+@click.option("--port", default=8420, type=int)
+def webhook_test(name: str, payload: str, port: int):
+    """Send a test payload to a webhook.
+
+    \b
+    Examples:
+      openlegion webhook test deploy
+      openlegion webhook test deploy --payload '{"event": "push"}'
+    """
     from urllib.parse import quote
 
     import httpx
 
     try:
+        payload_data = _json.loads(payload)
+    except _json.JSONDecodeError:
+        _fail("Invalid JSON payload.")
+
+    try:
         resp = httpx.post(
             f"http://localhost:{port}/dashboard/api/webhooks/{quote(name, safe='')}/test",
-            json={"test": True, "source": "cli"},
+            json=payload_data,
             timeout=30,
         )
         if resp.status_code == 200:
@@ -1634,12 +1825,6 @@ def stop():
     """Stop the runtime and all agent containers."""
     import signal
     import time
-
-    try:
-        import docker
-    except ImportError:
-        click.echo("Docker SDK not installed. Install with: pip install docker", err=True)
-        sys.exit(1)
 
     host_stopped = False
 
@@ -1665,20 +1850,366 @@ def stop():
             pid_path.unlink(missing_ok=True)
 
     # Clean up any containers the host didn't get to
-    client = docker.from_env()
-    containers = client.containers.list(filters={"name": "openlegion_"})
-    if not containers:
+    try:
+        import docker
+
+        client = docker.from_env()
+        containers = client.containers.list(filters={"name": "openlegion_"})
+        if not containers:
+            if not host_stopped:
+                click.echo("No OpenLegion containers running.")
+            return
+        for container in containers:
+            try:
+                click.echo(f"Stopping {container.name}...")
+                container.stop(timeout=10)
+                container.remove()
+            except docker.errors.NotFound:
+                pass  # already removed
+        click.echo(f"Stopped {len(containers)} remaining container(s).")
+    except Exception as e:
         if not host_stopped:
-            click.echo("No OpenLegion containers running.")
+            click.echo(f"Could not connect to Docker: {e}")
+            click.echo("If agents are running in Docker, ensure Docker is available.")
+        else:
+            logger.debug("Docker cleanup skipped: %s", e)
+
+
+# ── detached-mode management commands ────────────────────────
+
+def _mesh_get(port: int, path: str, **kwargs) -> dict:
+    """GET a dashboard API endpoint, raising SystemExit on connection error."""
+    import httpx
+
+    try:
+        resp = httpx.get(f"http://localhost:{port}{path}", timeout=10, **kwargs)
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.ConnectError:
+        _fail("Mesh is not running. Start with: openlegion start")
+    except httpx.HTTPStatusError as e:
+        _fail(f"Error: HTTP {e.response.status_code}: {e.response.text}")
+
+
+def _mesh_post(port: int, path: str, **kwargs) -> dict:
+    """POST a dashboard API endpoint, raising SystemExit on connection error."""
+    import httpx
+
+    try:
+        resp = httpx.post(f"http://localhost:{port}{path}", timeout=30, **kwargs)
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.ConnectError:
+        _fail("Mesh is not running. Start with: openlegion start")
+    except httpx.HTTPStatusError as e:
+        _fail(f"Error: HTTP {e.response.status_code}: {e.response.text}")
+
+
+def _mesh_delete(port: int, path: str, **kwargs) -> dict:
+    """DELETE a dashboard API endpoint."""
+    import httpx
+
+    try:
+        resp = httpx.delete(f"http://localhost:{port}{path}", timeout=10, **kwargs)
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.ConnectError:
+        _fail("Mesh is not running. Start with: openlegion start")
+    except httpx.HTTPStatusError as e:
+        _fail(f"Error: HTTP {e.response.status_code}: {e.response.text}")
+
+
+@cli.command("costs")
+@click.option("--period", type=click.Choice(["today", "week", "month"]), default="today")
+@click.option("--port", default=8420, type=int)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def costs(period: str, port: int, as_json: bool):
+    """Show LLM cost breakdown by agent.
+
+    \b
+    Examples:
+      openlegion costs
+      openlegion costs --period week
+      openlegion costs --json
+    """
+    as_json = as_json or _json_mode
+    data = _mesh_get(port, f"/dashboard/api/costs?period={period}")
+    if as_json:
+        click.echo(_json.dumps(data, indent=2, default=str))
         return
-    for container in containers:
-        try:
-            click.echo(f"Stopping {container.name}...")
-            container.stop(timeout=10)
-            container.remove()
-        except docker.errors.NotFound:
-            pass  # already removed
-    click.echo(f"Stopped {len(containers)} remaining container(s).")
+    agents = data if isinstance(data, list) else data.get("agents", [])
+    if not agents:
+        click.echo(f"No costs recorded ({period}).")
+        return
+    click.echo(f"{'Agent':<16} {'Tokens':<12} {'Cost'}")
+    click.echo("-" * 40)
+    total_cost = 0.0
+    for a in agents:
+        cost = a.get("cost", 0)
+        total_cost += cost
+        click.echo(f"{a.get('agent', '?'):<16} {a.get('tokens', 0):<12} ${cost:.4f}")
+    click.echo("-" * 40)
+    click.echo(f"{'Total':<29} ${total_cost:.4f}")
+
+
+# ── blackboard ───────────────────────────────────────────────
+
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def blackboard(ctx):
+    """Manage the shared blackboard (list, get, set, delete)."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(blackboard_list)
+
+
+@blackboard.command("list")
+@click.option("--prefix", default="", help="Filter by key prefix")
+@click.option("--port", default=8420, type=int)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def blackboard_list(prefix: str, port: int, as_json: bool):
+    """List blackboard entries."""
+    as_json = as_json or _json_mode
+    data = _mesh_get(port, "/dashboard/api/blackboard", params={"prefix": prefix})
+    entries = data if isinstance(data, list) else data.get("entries", [])
+    if as_json:
+        click.echo(_json.dumps(entries, indent=2, default=str))
+        return
+    if not entries:
+        click.echo("Blackboard is empty." + (f" (prefix={prefix})" if prefix else ""))
+        return
+    click.echo(f"{'Key':<30} {'Written By':<16} {'Updated'}")
+    click.echo("-" * 65)
+    for e in entries:
+        key = e.get("key", "?")
+        if len(key) > 28:
+            key = key[:25] + "..."
+        click.echo(f"{key:<30} {e.get('written_by', '?'):<16} {e.get('updated_at', '?')}")
+
+
+@blackboard.command("get")
+@click.argument("key")
+@click.option("--port", default=8420, type=int)
+def blackboard_get(key: str, port: int):
+    """Get a blackboard entry by key."""
+    data = _mesh_get(port, f"/dashboard/api/blackboard/{key}")
+    click.echo(_json.dumps(data, indent=2, default=str))
+
+
+@blackboard.command("set")
+@click.argument("key")
+@click.argument("value")
+@click.option("--port", default=8420, type=int)
+def blackboard_set(key: str, value: str, port: int):
+    """Set a blackboard entry. VALUE is parsed as JSON, or stored as string."""
+    try:
+        parsed = _json.loads(value)
+    except _json.JSONDecodeError:
+        parsed = {"value": value}
+    _mesh_post(port, f"/dashboard/api/blackboard/{key}", json=parsed)
+    click.echo(f"Set blackboard key '{key}'.")
+
+
+@blackboard.command("delete")
+@click.argument("key")
+@click.option("--port", default=8420, type=int)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def blackboard_delete(key: str, port: int, yes: bool):
+    """Delete a blackboard entry."""
+    if not yes:
+        click.confirm(f"Delete blackboard key '{key}'?", abort=True)
+    _mesh_delete(port, f"/dashboard/api/blackboard/{key}")
+    click.echo(f"Deleted blackboard key '{key}'.")
+
+
+# ── cron ─────────────────────────────────────────────────────
+
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def cron(ctx):
+    """Manage cron jobs (list, delete, pause, resume, run)."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(cron_list)
+
+
+@cron.command("list")
+@click.option("--port", default=8420, type=int)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def cron_list(port: int, as_json: bool):
+    """List cron jobs."""
+    as_json = as_json or _json_mode
+    data = _mesh_get(port, "/dashboard/api/cron")
+    jobs = data if isinstance(data, list) else data.get("jobs", [])
+    if as_json:
+        click.echo(_json.dumps(jobs, indent=2, default=str))
+        return
+    if not jobs:
+        click.echo("No cron jobs configured.")
+        return
+    click.echo(f"{'ID':<14} {'Agent':<16} {'Schedule':<16} {'Enabled'}")
+    click.echo("-" * 55)
+    for j in jobs:
+        enabled = "yes" if j.get("enabled", True) else "no"
+        click.echo(f"{j.get('id', '?'):<14} {j.get('agent', '?'):<16} {j.get('schedule', '?'):<16} {enabled}")
+
+
+@cron.command("delete")
+@click.argument("job_id")
+@click.option("--port", default=8420, type=int)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def cron_delete(job_id: str, port: int, yes: bool):
+    """Delete a cron job by ID."""
+    if not yes:
+        click.confirm(f"Delete cron job '{job_id}'?", abort=True)
+    _mesh_delete(port, f"/dashboard/api/cron/{job_id}")
+    click.echo(f"Deleted cron job '{job_id}'.")
+
+
+@cron.command("pause")
+@click.argument("job_id")
+@click.option("--port", default=8420, type=int)
+def cron_pause(job_id: str, port: int):
+    """Pause a cron job."""
+    _mesh_post(port, f"/dashboard/api/cron/{job_id}/pause")
+    click.echo(f"Paused cron job '{job_id}'.")
+
+
+@cron.command("resume")
+@click.argument("job_id")
+@click.option("--port", default=8420, type=int)
+def cron_resume(job_id: str, port: int):
+    """Resume a paused cron job."""
+    _mesh_post(port, f"/dashboard/api/cron/{job_id}/resume")
+    click.echo(f"Resumed cron job '{job_id}'.")
+
+
+@cron.command("run")
+@click.argument("job_id")
+@click.option("--port", default=8420, type=int)
+def cron_run(job_id: str, port: int):
+    """Trigger a cron job immediately."""
+    _mesh_post(port, f"/dashboard/api/cron/{job_id}/run")
+    click.echo(f"Triggered cron job '{job_id}'.")
+
+
+# ── workflow ─────────────────────────────────────────────────
+
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def workflow(ctx):
+    """Manage workflows (list, run)."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(workflow_list)
+
+
+@workflow.command("list")
+@click.option("--port", default=8420, type=int)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def workflow_list(port: int, as_json: bool):
+    """List configured workflows."""
+    as_json = as_json or _json_mode
+    data = _mesh_get(port, "/dashboard/api/workflows")
+    workflows = data if isinstance(data, list) else data.get("workflows", [])
+    if as_json:
+        click.echo(_json.dumps(workflows, indent=2, default=str))
+        return
+    if not workflows:
+        click.echo("No workflows configured.")
+        return
+    click.echo(f"{'Name':<20} {'Trigger':<16} {'Steps':<8} {'Timeout'}")
+    click.echo("-" * 55)
+    for w in workflows:
+        steps = len(w.get("steps", []))
+        click.echo(
+            f"{w.get('name', '?'):<20} {w.get('trigger', '?'):<16} "
+            f"{steps:<8} {w.get('timeout', '?')}s"
+        )
+
+
+@workflow.command("run")
+@click.argument("name")
+@click.option("--port", default=8420, type=int)
+@click.option("--payload", default="{}", help="JSON payload")
+def workflow_run(name: str, port: int, payload: str):
+    """Trigger a workflow by name.
+
+    \b
+    Examples:
+      openlegion workflow run my-workflow
+      openlegion workflow run my-workflow --payload '{"key": "value"}'
+    """
+    try:
+        payload_data = _json.loads(payload)
+    except _json.JSONDecodeError:
+        _fail("Invalid JSON payload.")
+    data = _mesh_post(port, f"/dashboard/api/workflows/{name}/run", json=payload_data)
+    eid = data.get("execution_id", "?")
+    click.echo(f"Workflow '{name}' started (execution_id: {eid}).")
+
+
+# ── debug traces ─────────────────────────────────────────────
+
+@cli.command("debug")
+@click.argument("trace_id", required=False, default=None)
+@click.option("--port", default=8420, type=int)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def debug(trace_id: str | None, port: int, as_json: bool):
+    """View request traces for debugging.
+
+    \b
+    Examples:
+      openlegion debug                # list recent traces
+      openlegion debug <trace-id>     # show specific trace
+    """
+    as_json = as_json or _json_mode
+    if trace_id:
+        data = _mesh_get(port, f"/dashboard/api/traces/{trace_id}")
+        events = data if isinstance(data, list) else data.get("events", [])
+        if as_json:
+            click.echo(_json.dumps(events, indent=2, default=str))
+            return
+        if not events:
+            click.echo(f"No events for trace {trace_id}.")
+            return
+        for e in events:
+            ts = e.get("timestamp", "?")
+            click.echo(f"  [{ts}] {e.get('source', '?')} > {e.get('event_type', '?')}: {e.get('detail', '')}")
+    else:
+        data = _mesh_get(port, "/dashboard/api/traces")
+        traces = data if isinstance(data, list) else data.get("traces", [])
+        if as_json:
+            click.echo(_json.dumps(traces, indent=2, default=str))
+            return
+        if not traces:
+            click.echo("No recent traces.")
+            return
+        click.echo(f"{'Trace ID':<24} {'Agent':<16} {'Type':<16} {'Status'}")
+        click.echo("-" * 70)
+        for t in traces:
+            click.echo(
+                f"{t.get('trace_id', '?'):<24} {t.get('agent', '?'):<16} "
+                f"{t.get('event_type', '?'):<16} {t.get('status', '?')}"
+            )
+
+
+# ── queue ────────────────────────────────────────────────────
+
+@cli.command("queue")
+@click.option("--port", default=8420, type=int)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def queue(port: int, as_json: bool):
+    """Show agent task queues."""
+    as_json = as_json or _json_mode
+    data = _mesh_get(port, "/dashboard/api/queues")
+    queues = data if isinstance(data, dict) else {}
+    if as_json:
+        click.echo(_json.dumps(queues, indent=2, default=str))
+        return
+    if not queues:
+        click.echo("All queues empty.")
+        return
+    for agent_id, items in queues.items():
+        count = len(items) if isinstance(items, list) else items
+        click.echo(f"  {agent_id}: {count} task(s)")
 
 
 @cli.command("completion", hidden=True)

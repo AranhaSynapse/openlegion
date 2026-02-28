@@ -249,9 +249,39 @@ class REPLSession:
         else:
             click.echo("\n  Use /add when you're ready to create an agent.\n")
 
+    def _build_prompt_session(self):
+        """Try to create a prompt_toolkit PromptSession for enhanced input."""
+        try:
+            from prompt_toolkit import PromptSession
+            from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+            from prompt_toolkit.completion import WordCompleter
+            from prompt_toolkit.history import InMemoryHistory
+
+            # Build word list from commands and agent names
+            words = list(self._commands.keys())
+            words.extend(f"@{n}" for n in self.ctx.agents)
+            completer = WordCompleter(words, sentence=True)
+            history = InMemoryHistory()
+            # Pre-populate history from readline history file
+            if self._history_file.exists():
+                try:
+                    for line in self._history_file.read_text().splitlines():
+                        if line.strip():
+                            history.append_string(line.strip())
+                except OSError:
+                    pass
+            return PromptSession(
+                completer=completer,
+                auto_suggest=AutoSuggestFromHistory(),
+                history=history,
+            )
+        except ImportError:
+            return None
+
     def run(self) -> None:
         """Main REPL loop."""
         self._inline_setup()
+        pt_session = self._build_prompt_session()
         try:
             while True:
                 try:
@@ -264,10 +294,15 @@ class REPLSession:
                         click.echo(f"Now chatting with '{self.current}'.")
                     if self.current:
                         prompt_prefix = f"[{self._active_project}] " if self._active_project else ""
-                        user_input = input(prompt_prefix + user_prompt(self.current)).strip()
+                        prompt_str = prompt_prefix + user_prompt(self.current)
                     else:
                         prompt_prefix = f"[{self._active_project}] " if self._active_project else ""
-                        user_input = input(prompt_prefix + "openlegion> ").strip()
+                        prompt_str = prompt_prefix + "openlegion> "
+
+                    if pt_session is not None:
+                        user_input = pt_session.prompt(prompt_str).strip()
+                    else:
+                        user_input = input(prompt_str).strip()
                 except EOFError:
                     break
 

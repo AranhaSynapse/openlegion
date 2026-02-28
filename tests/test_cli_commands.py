@@ -2469,7 +2469,7 @@ class TestChannelsRemoveInteractive:
     def test_interactive_picker(self, tmp_path):
         config_file = tmp_path / "mesh.yaml"
         config_file.write_text(yaml.dump({
-            "channels": {"telegram_bot": {"enabled": True}},
+            "channels": {"telegram": {"enabled": True}},
         }))
 
         with patch("src.cli.config.CONFIG_FILE", config_file):
@@ -2507,3 +2507,182 @@ class TestRestartCompleter:
         with patch.object(readline, "get_line_buffer", return_value="/restart c"):
             result = completer.complete("c", 0)
             assert result == "coder "
+
+
+# ── WU3: stop crash when Docker unavailable ──────────────────
+
+
+class TestStopNoDocker:
+    """stop should not crash when Docker is unavailable."""
+
+    def test_stop_no_docker(self, tmp_path):
+        # No PID file, no Docker → should exit cleanly
+        with (
+            patch("src.cli.config.PROJECT_ROOT", tmp_path),
+            patch("src.cli.main.cli_config.PROJECT_ROOT", tmp_path),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["stop"])
+            assert result.exit_code == 0, result.output
+            assert "Could not connect to Docker" in result.output or "No OpenLegion" in result.output
+
+
+# ── WU4: agent remove stops containers ──────────────────────
+
+
+class TestAgentRemoveStopsContainer:
+    """agent remove should attempt to stop the container."""
+
+    def test_remove_calls_container_stop(self, tmp_path):
+        agents_file = tmp_path / "agents.yaml"
+        agents_file.write_text(yaml.dump({"agents": {"mybot": {"role": "test"}}}))
+        perms_file = tmp_path / "permissions.json"
+        perms_file.write_text(json.dumps({"permissions": {}}))
+
+        mock_container = type("Container", (), {"stop": lambda self, **k: None, "remove": lambda self: None})()
+        mock_client = type("Client", (), {"containers": type("C", (), {"get": lambda self, name: mock_container})()})()
+
+        with (
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+            patch("src.cli.config.PERMISSIONS_FILE", perms_file),
+            patch("src.cli.config._get_agent_project", return_value=None),
+            patch("docker.from_env", return_value=mock_client),
+        ):
+            from src.cli.config import _remove_agent
+            _remove_agent("mybot", stop_container=True)
+            # Agent should be gone from config
+            with open(agents_file) as f:
+                data = yaml.safe_load(f)
+            assert "mybot" not in data.get("agents", {})
+
+
+# ── WU8: project remove alias ────────────────────────────────
+
+
+class TestProjectRemoveAlias:
+    """project remove should work as alias for project delete."""
+
+    def test_project_remove_exists(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["project", "remove", "--help"])
+        assert result.exit_code == 0
+        assert "Delete a project" in result.output
+
+
+# ── WU9: --json global flag ──────────────────────────────────
+
+
+class TestJsonGlobalFlag:
+    """--json global flag should be accepted."""
+
+    def test_json_flag_with_agent_list(self, tmp_path):
+        agents_file = tmp_path / "agents.yaml"
+        agents_file.write_text(yaml.dump({"agents": {"bot1": {"role": "test"}}}))
+        with (
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+            patch("src.cli.config.CONFIG_FILE", tmp_path / "mesh.yaml"),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["--json", "agent", "list"])
+            assert result.exit_code == 0, result.output
+            data = json.loads(result.output)
+            assert "agents" in data
+
+
+# ── WU10: new CLI commands ───────────────────────────────────
+
+
+class TestNewCLICommands:
+    """Verify new detached-mode commands exist and produce output."""
+
+    def test_costs_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["costs", "--help"])
+        assert result.exit_code == 0
+        assert "period" in result.output
+
+    def test_blackboard_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["blackboard", "--help"])
+        assert result.exit_code == 0
+
+    def test_cron_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["cron", "--help"])
+        assert result.exit_code == 0
+
+    def test_workflow_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["workflow", "--help"])
+        assert result.exit_code == 0
+
+    def test_debug_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["debug", "--help"])
+        assert result.exit_code == 0
+
+    def test_queue_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["queue", "--help"])
+        assert result.exit_code == 0
+
+
+# ── WU12: --verbose/--quiet flags ────────────────────────────
+
+
+class TestVerboseQuietFlags:
+    """--verbose and --quiet flags should be accepted."""
+
+    def test_verbose_flag_accepted(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["-v", "--help"])
+        assert result.exit_code == 0
+
+    def test_quiet_flag_accepted(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["-q", "--help"])
+        assert result.exit_code == 0
+
+
+# ── WU16: shell completion ───────────────────────────────────
+
+
+class TestShellCompletion:
+    """Shell completion functions return valid results."""
+
+    def test_complete_agent_names(self, tmp_path):
+        agents_file = tmp_path / "agents.yaml"
+        agents_file.write_text(yaml.dump({"agents": {"coder": {}, "researcher": {}}}))
+        with (
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+            patch("src.cli.config.CONFIG_FILE", tmp_path / "mesh.yaml"),
+        ):
+            from src.cli.main import _complete_agent_names
+            result = _complete_agent_names(None, None, "c")
+            assert "coder" in result
+            assert "researcher" not in result
+
+    def test_complete_channel_types(self):
+        from src.cli.main import _complete_channel_types
+        result = _complete_channel_types(None, None, "t")
+        assert "telegram" in result
+        assert "discord" not in result
+
+
+# ── WU17: webhook add/remove ─────────────────────────────────
+
+
+class TestWebhookCommands:
+    """Webhook add and remove commands exist."""
+
+    def test_webhook_add_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["webhook", "add", "--help"])
+        assert result.exit_code == 0
+        assert "--agent" in result.output
+
+    def test_webhook_remove_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["webhook", "remove", "--help"])
+        assert result.exit_code == 0
+        assert "--yes" in result.output

@@ -49,6 +49,7 @@ def create_dashboard_router(
     transport: Any = None,
     runtime: Any = None,
     router: Any = None,
+    webhook_manager: Any = None,
 ) -> APIRouter:
     """Create the dashboard FastAPI router."""
     api_router = APIRouter(prefix="/dashboard")
@@ -1087,6 +1088,60 @@ def create_dashboard_router(
             for eid in orchestrator.active_executions
         ]
         return {"workflows": wf_list, "active": [a for a in active if a]}
+
+    @api_router.post("/api/workflows/{name}/run")
+    async def api_workflow_run(name: str, request: Request) -> dict:
+        """Trigger a workflow by name."""
+        if orchestrator is None:
+            raise HTTPException(status_code=503, detail="Orchestrator not available")
+        if name not in orchestrator.workflows:
+            raise HTTPException(status_code=404, detail=f"Workflow '{name}' not found")
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        execution_id = await orchestrator.trigger_workflow(name, payload=body)
+        return {"started": True, "execution_id": execution_id, "workflow": name}
+
+    # ── Webhooks ──────────────────────────────────────────────
+
+    @api_router.get("/api/webhooks")
+    async def api_webhooks_list() -> dict:
+        if webhook_manager is None:
+            return {"webhooks": []}
+        hooks = webhook_manager.list_hooks() if hasattr(webhook_manager, "list_hooks") else []
+        return {"webhooks": hooks}
+
+    @api_router.post("/api/webhooks")
+    async def api_webhooks_create(request: Request) -> dict:
+        if webhook_manager is None:
+            raise HTTPException(status_code=503, detail="Webhook manager not available")
+        body = await request.json()
+        name = body.get("name", "")
+        agent = body.get("agent", "")
+        if not name or not agent:
+            raise HTTPException(status_code=400, detail="name and agent are required")
+        secret = body.get("secret")
+        hook = webhook_manager.add_hook(name=name, agent=agent, secret=secret)
+        return {"created": True, "name": name, "url": hook.get("url", "") if isinstance(hook, dict) else ""}
+
+    @api_router.delete("/api/webhooks/{name}")
+    async def api_webhooks_delete(name: str) -> dict:
+        if webhook_manager is None:
+            raise HTTPException(status_code=503, detail="Webhook manager not available")
+        if hasattr(webhook_manager, "remove_hook"):
+            webhook_manager.remove_hook(name)
+        return {"removed": True, "name": name}
+
+    @api_router.post("/api/webhooks/{name}/test")
+    async def api_webhooks_test(name: str, request: Request) -> dict:
+        if webhook_manager is None:
+            raise HTTPException(status_code=503, detail="Webhook manager not available")
+        body = await request.json()
+        if hasattr(webhook_manager, "test_hook"):
+            result = await webhook_manager.test_hook(name, payload=body)
+            return {"tested": True, "name": name, "result": result}
+        raise HTTPException(status_code=404, detail=f"Webhook '{name}' not found")
 
     # ── Agent Workspace (proxy to agent) ─────────────────────
 
