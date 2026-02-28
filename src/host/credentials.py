@@ -419,11 +419,17 @@ class CredentialVault:
         if api_key is None:
             return None, {}
         if model.startswith("anthropic/") and self._is_anthropic_oauth(api_key):
-            # OAuth tokens must be sent as Authorization: Bearer, not x-api-key.
-            # Return a sentinel so litellm won't put the real token in x-api-key.
+            # OAuth tokens must be sent ONLY as Authorization: Bearer.
+            # Litellm passes api_key to the Anthropic SDK which sets it as
+            # x-api-key.  The API validates x-api-key first and rejects
+            # invalid values before checking Authorization: Bearer.
+            # Fix: return a sentinel api_key (so guards pass) and override
+            # x-api-key to empty in extra_headers — the SDK merges
+            # extra_headers with priority over client defaults.
             return _ANTHROPIC_OAUTH_API_KEY_SENTINEL, {
                 "Authorization": f"Bearer {api_key}",
                 "anthropic-beta": _ANTHROPIC_OAUTH_BETAS,
+                "x-api-key": "",
             }
         return api_key, {}
 
