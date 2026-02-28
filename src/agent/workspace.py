@@ -2,12 +2,12 @@
 
 Layout:
   /data/workspace/
-  ├── PROJECT.md      # Shared fleet context (mounted read-only from host)
-  ├── AGENTS.md       # Operating instructions (loaded into system prompt)
-  ├── SOUL.md         # Per-agent identity, personality, tone
-  ├── USER.md         # User context, preferences
-  ├── MEMORY.md       # Curated long-term memory (auto + manual)
-  ├── HEARTBEAT.md    # Autonomous task rules (checked on heartbeat)
+  ├── PROJECT.md        # Shared fleet context (mounted read-only from host)
+  ├── INSTRUCTIONS.md   # Operating procedures, workflow rules, domain knowledge
+  ├── SOUL.md           # Per-agent identity, personality, tone
+  ├── USER.md           # User context, preferences
+  ├── MEMORY.md         # Curated long-term memory (auto + manual)
+  ├── HEARTBEAT.md      # Autonomous task rules (checked on heartbeat)
   ├── memory/
   │   ├── 2026-02-18.md   # Today's session log
   │   └── 2026-02-17.md   # Yesterday's log
@@ -18,7 +18,7 @@ Layout:
 All files are plain Markdown. Human-readable, git-versionable.
 PROJECT.md is shared across all agents — it defines what the fleet
 is building, the current priority, and hard constraints. Identity
-files (SOUL.md, AGENTS.md, USER.md) are per-agent.
+files (SOUL.md, INSTRUCTIONS.md, USER.md) are per-agent.
 """
 
 from __future__ import annotations
@@ -33,17 +33,35 @@ from src.shared.utils import setup_logging
 logger = setup_logging("agent.workspace")
 
 _SCAFFOLD_FILES: dict[str, str] = {
-    "AGENTS.md": (
-        "# Agent Instructions\n\n"
-        "Add operating instructions here. This file is loaded into your system prompt.\n"
+    "INSTRUCTIONS.md": (
+        "# Instructions\n\n"
+        "Operating procedures, workflow rules, and domain knowledge.\n"
+        "This file is loaded into your system prompt on every turn.\n\n"
+        "## How to Use This File\n"
+        "- Add step-by-step procedures for recurring tasks\n"
+        "- Record tool usage patterns that work well\n"
+        "- Note domain-specific rules or constraints\n"
+        "- Keep it focused on *what to do* — for *who you are*, use SOUL.md\n"
     ),
     "SOUL.md": (
         "# Identity\n\n"
-        "Define personality, tone, and behavioral guidelines here.\n"
+        "Personality, tone, and behavioral guidelines.\n"
+        "This shapes how you communicate and approach problems.\n\n"
+        "## How to Use This File\n"
+        "- Define your communication style and tone\n"
+        "- Set behavioral principles (e.g. be concise, show reasoning)\n"
+        "- Note what makes your responses distinctive\n"
+        "- Keep it focused on *who you are* — for *what to do*, use INSTRUCTIONS.md\n"
     ),
     "USER.md": (
         "# User Context\n\n"
-        "Record user preferences, background, and important context here.\n"
+        "Your user's preferences, working style, and important context.\n"
+        "This file is loaded into your system prompt on every turn.\n\n"
+        "## How to Use This File\n"
+        "- Record communication preferences (e.g. concise vs detailed)\n"
+        "- Note project context and domain knowledge\n"
+        "- Track corrections and preferred approaches\n"
+        "- Keep it focused on *your user* — for *your behavior*, use SOUL.md\n"
     ),
     "MEMORY.md": (
         "# Long-Term Memory\n\n"
@@ -75,7 +93,7 @@ INTROSPECT_PERM_KEYS = (
     "can_publish", "can_subscribe", "allowed_apis",
     "allowed_credentials",
 )
-_MAX_AGENTS = 8_000
+_MAX_INSTRUCTIONS = 8_000
 _MAX_SOUL = 4_000
 _MAX_USER = 4_000
 _MAX_MEMORY = 16_000
@@ -93,7 +111,7 @@ _MAX_LEARNINGS_SIZE = 50_000
 class WorkspaceManager:
     """Reads and writes the agent's persistent workspace files."""
 
-    PROMPT_FILES = ("PROJECT.md", "AGENTS.md", "SOUL.md", "USER.md")
+    PROMPT_FILES = ("PROJECT.md", "INSTRUCTIONS.md", "SOUL.md", "USER.md")
     MEMORY_FILE = "MEMORY.md"
     HEARTBEAT_FILE = "HEARTBEAT.md"
     DAILY_DIR = "memory"
@@ -111,13 +129,21 @@ class WorkspaceManager:
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / self.DAILY_DIR).mkdir(exist_ok=True)
         (self.root / self.LEARNINGS_DIR).mkdir(exist_ok=True)
+
+        # Migration: AGENTS.md → INSTRUCTIONS.md
+        old_agents = self.root / "AGENTS.md"
+        new_instructions = self.root / "INSTRUCTIONS.md"
+        if old_agents.exists() and not new_instructions.exists():
+            old_agents.rename(new_instructions)
+            logger.info("Migrated AGENTS.md → INSTRUCTIONS.md")
+
         for filename, default_content in _SCAFFOLD_FILES.items():
             path = self.root / filename
             if not path.exists():
-                # Seed AGENTS.md from template instructions on first creation
-                if filename == "AGENTS.md" and self._initial_instructions:
+                # Seed INSTRUCTIONS.md from template instructions on first creation
+                if filename == "INSTRUCTIONS.md" and self._initial_instructions:
                     content = (
-                        "# Agent Instructions\n\n"
+                        "# Instructions\n\n"
                         + self._initial_instructions.strip()
                         + "\n"
                     )
@@ -129,7 +155,7 @@ class WorkspaceManager:
     # ── Reading ──────────────────────────────────────────────
 
     def load_prompt_context(self) -> str:
-        """Load PROJECT.md, AGENTS.md, SOUL.md, USER.md into the system prompt."""
+        """Load PROJECT.md, INSTRUCTIONS.md, SOUL.md, USER.md into the system prompt."""
         parts: list[str] = []
         for filename in self.PROMPT_FILES:
             content = self._read_file(filename)
@@ -156,14 +182,14 @@ class WorkspaceManager:
     def get_bootstrap_content(self) -> str:
         """Load workspace files for system prompt with per-file and total caps.
 
-        Loads AGENTS.md, SOUL.md, USER.md, MEMORY.md with individual size
-        limits. Appends truncation notice when a file is capped. Enforces
+        Loads INSTRUCTIONS.md, SOUL.md, USER.md, MEMORY.md with individual
+        size limits. Appends truncation notice when a file is capped. Enforces
         a total cap across all files.
 
         Daily logs are NOT included — agents access them via memory_search.
         """
         caps = {
-            "AGENTS.md": _MAX_AGENTS,
+            "INSTRUCTIONS.md": _MAX_INSTRUCTIONS,
             "SOUL.md": _MAX_SOUL,
             "USER.md": _MAX_USER,
             "MEMORY.md": _MAX_MEMORY,
@@ -230,7 +256,7 @@ class WorkspaceManager:
             f.write(f"\n{content}\n")
 
     # Files agents are allowed to update themselves
-    AGENT_WRITABLE = frozenset({"HEARTBEAT.md", "USER.md"})
+    AGENT_WRITABLE = frozenset({"HEARTBEAT.md", "USER.md", "SOUL.md", "INSTRUCTIONS.md"})
     _MAX_WRITABLE_SIZE = 32_000  # 32KB cap for agent-writable files
     _MAX_BACKUPS_PER_FILE = 20
 

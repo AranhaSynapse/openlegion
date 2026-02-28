@@ -73,7 +73,7 @@ class TestChatWithWorkspace:
 
     @pytest.mark.asyncio
     async def test_system_prompt_includes_workspace_files(self):
-        (Path(self._tmpdir) / "AGENTS.md").write_text("Always respond in haiku.")
+        (Path(self._tmpdir) / "INSTRUCTIONS.md").write_text("Always respond in haiku.")
         (Path(self._tmpdir) / "SOUL.md").write_text("You are a poet.")
         loop = _make_loop_with_workspace(self._tmpdir)
 

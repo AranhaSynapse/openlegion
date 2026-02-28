@@ -529,23 +529,30 @@ async def read_agent_history(agent_id: str, *, mesh_client=None) -> dict:
     description=(
         "Update one of your writable workspace files to get better over time. "
         "These files persist across sessions and shape your future behavior.\n\n"
-        "- HEARTBEAT.md: refine your autonomous rules — drop checks that "
-        "are wasteful, add ones that proved useful, adjust priorities based "
-        "on what you've learned about your role.\n"
-        "- USER.md: build up user context — record their preferences, "
-        "communication style, project context, and important facts so you "
-        "serve them better in future sessions.\n\n"
+        "- SOUL.md: your identity — communication style, tone, behavioral "
+        "principles. Refine based on user feedback about how you interact.\n"
+        "- INSTRUCTIONS.md: your operating manual — procedures, workflow "
+        "rules, tool patterns, domain knowledge. Update when you discover "
+        "better approaches or learn new domain constraints.\n"
+        "- USER.md: your user's context — their preferences, communication "
+        "style, project background, and important facts so you serve them "
+        "better in future sessions.\n"
+        "- HEARTBEAT.md: your autonomous rules — what to check and do on "
+        "periodic wakeups. Drop wasteful checks, add useful ones.\n\n"
         "Update these when you discover something lasting, not every turn. "
         "Read the current content first (via read_file) to avoid losing "
         "existing information — merge new knowledge in, don't overwrite blindly. "
-        "SOUL.md and AGENTS.md are read-only (human-controlled). "
         "A backup is saved automatically."
     ),
     parameters={
         "filename": {
             "type": "string",
-            "enum": ["HEARTBEAT.md", "USER.md"],
-            "description": "File to update: 'HEARTBEAT.md' or 'USER.md'",
+            "enum": ["SOUL.md", "INSTRUCTIONS.md", "USER.md", "HEARTBEAT.md"],
+            "description": (
+                "File to update: SOUL.md (identity/tone), INSTRUCTIONS.md "
+                "(procedures/rules), USER.md (user prefs), or HEARTBEAT.md "
+                "(autonomous rules)"
+            ),
         },
         "content": {
             "type": "string",
@@ -574,9 +581,15 @@ async def update_workspace(
             agent_id = getattr(mesh_client, "agent_id", "agent")
             if old_content.strip() == content.strip():
                 summary = f"[{agent_id}] Re-saved {filename} (no changes)."
-            elif not old_content.strip() or old_content.strip().startswith(
-                ("# Heartbeat Rules\n\nYou are woken", "# User Context\n\nRecord user")
-            ):
+            elif not old_content.strip() or old_content.strip().startswith((
+                "# Heartbeat Rules\n\nYou are woken",
+                "# User Context\n\nRecord user",
+                "# User Context\n\nYour user",
+                "# Identity\n\nDefine personality",
+                "# Identity\n\nPersonality, tone",
+                "# Agent Instructions\n\nAdd operating",
+                "# Instructions\n\nOperating procedures",
+            )):
                 summary = f"[{agent_id}] Initialized {filename} with custom content."
             else:
                 summary = f"[{agent_id}] Updated {filename} based on what I've learned."

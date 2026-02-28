@@ -1306,7 +1306,9 @@ def create_dashboard_router(
 
     # ── Agent Workspace (proxy to agent) ─────────────────────
 
-    _WORKSPACE_ALLOWLIST = frozenset({"SOUL.md", "HEARTBEAT.md", "USER.md", "AGENTS.md", "MEMORY.md"})
+    _WORKSPACE_ALLOWLIST = frozenset({
+        "SOUL.md", "HEARTBEAT.md", "USER.md", "INSTRUCTIONS.md", "AGENTS.md", "MEMORY.md",
+    })
 
     @api_router.get("/api/agents/{agent_id}/workspace")
     async def api_agent_workspace(agent_id: str) -> dict:

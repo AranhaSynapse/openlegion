@@ -17,7 +17,7 @@ Layer 4: Learnings                <- Self-improvement through failure tracking
   |  Auto-injected into system prompt each session
   |
 Layer 3: Workspace Files          <- Durable, human-readable storage
-  |  AGENTS.md, SOUL.md, USER.md  (loaded into system prompt)
+  |  INSTRUCTIONS.md, SOUL.md, USER.md  (loaded into system prompt)
   |  SYSTEM.md                    (auto-generated architecture guide + runtime snapshot)
   |  MEMORY.md                    (curated long-term facts)
   |  HEARTBEAT.md                 (autonomous monitoring rules)
@@ -78,7 +78,7 @@ Persistent markdown files stored on the agent's `/data/workspace` volume.
 
 | File | Purpose | When Loaded |
 |------|---------|-------------|
-| `AGENTS.md` | Fleet context (other agents, their roles) | System prompt |
+| `INSTRUCTIONS.md` | Operating procedures, workflow rules, domain knowledge | System prompt |
 | `SOUL.md` | Agent personality and behavioral guidelines | System prompt |
 | `USER.md` | User preferences and working style | System prompt |
 | `MEMORY.md` | Curated long-term facts | System prompt |

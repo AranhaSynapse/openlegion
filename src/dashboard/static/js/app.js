@@ -14,8 +14,8 @@ const _IDENTITY_TABS = [
 
 const _IDENTITY_FILE_MAP = {
   identity: [
-    { file: 'SOUL.md', label: 'Soul', cap: 4000, access: 'user', desc: 'Core personality and behavioral guidelines.' },
-    { file: 'AGENTS.md', label: 'Instructions', cap: 8000, access: 'user', desc: 'Operating instructions for the agent.' },
+    { file: 'SOUL.md', label: 'Soul', cap: 4000, access: 'both', desc: 'Core personality and behavioral guidelines.' },
+    { file: 'INSTRUCTIONS.md', label: 'Instructions', cap: 8000, access: 'both', desc: 'Operating procedures, workflow rules, domain knowledge.' },
   ],
   memory: [
     { file: 'MEMORY.md', label: 'Memory', cap: 16000, access: 'agent', desc: 'Long-term facts from conversations.' },

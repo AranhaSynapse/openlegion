@@ -100,7 +100,7 @@ The agent detail view features a tabbed **Agent Identity** panel for viewing and
 | Tab | File | Cap | Description |
 |-----|------|-----|-------------|
 | **Soul** | `SOUL.md` | 4,000 chars | Personality, tone, and behavioral guidelines |
-| **Instructions** | `AGENTS.md` | 8,000 chars | Operating instructions loaded into the system prompt |
+| **Instructions** | `INSTRUCTIONS.md` | 8,000 chars | Operating procedures, workflow rules, domain knowledge |
 | **Preferences** | `USER.md` | 4,000 chars | User preferences, background, and working style |
 | **Heartbeat** | `HEARTBEAT.md` | No cap | Autonomous monitoring and heartbeat rules |
 | **Memory** | `MEMORY.md` | 16,000 chars | Curated long-term facts and important information |

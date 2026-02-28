@@ -365,7 +365,7 @@ structured output and optional blackboard promotions.
 ### Chat Mode (`chat`)
 
 Accepts a user message. On the first message, loads workspace context
-(PROJECT.md if in a project, AGENTS.md, SOUL.md, USER.md, MEMORY.md, SYSTEM.md) into the system prompt,
+(PROJECT.md if in a project, INSTRUCTIONS.md, SOUL.md, USER.md, MEMORY.md, SYSTEM.md) into the system prompt,
 injects a live Runtime Context block (permissions, budget, fleet, cron),
 and searches memory for relevant facts. Executes tool calls in a bounded loop
 (max 30 rounds per turn, 200 total rounds per session) and runs context compaction when needed.
@@ -456,7 +456,7 @@ Layer 4: Learnings                ← Self-improvement through failure tracking
   │  Auto-injected into system prompt each session
   │
 Layer 3: Workspace Files          ← Durable, human-readable storage
-  │  AGENTS.md, SOUL.md, USER.md  (loaded into system prompt)
+  │  INSTRUCTIONS.md, SOUL.md, USER.md  (loaded into system prompt)
   │  SYSTEM.md                    (auto-generated architecture guide + runtime snapshot)
   │  MEMORY.md                    (curated long-term facts)
   │  HEARTBEAT.md                 (autonomous monitoring rules)

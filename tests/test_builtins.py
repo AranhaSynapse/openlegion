@@ -146,6 +146,10 @@ class TestFileToolWorkspaceGuard:
         result = self._ft.write_file(path="workspace/AGENTS.md", content="hacked")
         assert "error" in result
 
+    def test_write_instructions_md_blocked(self):
+        result = self._ft.write_file(path="workspace/INSTRUCTIONS.md", content="hacked")
+        assert "error" in result
+
     def test_write_heartbeat_md_blocked(self):
         result = self._ft.write_file(path="workspace/HEARTBEAT.md", content="hacked")
         assert "error" in result
@@ -200,15 +204,41 @@ class TestUpdateWorkspaceTool:
         assert "workspace_manager" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_blocks_read_only_files(self):
+    async def test_blocks_memory_md(self):
+        """MEMORY.md is system-managed — cannot be written via update_workspace."""
         from src.agent.builtins.mesh_tool import update_workspace
         ws = self._make_ws()
-        for name in ("SOUL.md", "AGENTS.md", "MEMORY.md"):
-            result = await update_workspace(
-                filename=name, content="hacked",
-                workspace_manager=ws, mesh_client=None,
-            )
-            assert "error" in result, f"Expected error for {name}"
+        result = await update_workspace(
+            filename="MEMORY.md", content="hacked",
+            workspace_manager=ws, mesh_client=None,
+        )
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_writes_soul_md(self):
+        from src.agent.builtins.mesh_tool import update_workspace
+        ws = self._make_ws()
+        result = await update_workspace(
+            filename="SOUL.md", content="# Identity\nI am a pirate.",
+            workspace_manager=ws, mesh_client=None,
+        )
+        assert result.get("updated") is True
+        from pathlib import Path
+        content = (Path(self._tmpdir) / "SOUL.md").read_text()
+        assert "pirate" in content
+
+    @pytest.mark.asyncio
+    async def test_writes_instructions_md(self):
+        from src.agent.builtins.mesh_tool import update_workspace
+        ws = self._make_ws()
+        result = await update_workspace(
+            filename="INSTRUCTIONS.md", content="# Instructions\nAlways use JSON.",
+            workspace_manager=ws, mesh_client=None,
+        )
+        assert result.get("updated") is True
+        from pathlib import Path
+        content = (Path(self._tmpdir) / "INSTRUCTIONS.md").read_text()
+        assert "Always use JSON" in content
 
     @pytest.mark.asyncio
     async def test_writes_heartbeat_md(self):

@@ -1203,6 +1203,9 @@
                             <span x-show="section.access === 'user'"
                               class="text-[10px] px-1 py-0 rounded-full bg-blue-900/40 text-blue-400 border border-blue-800/30"
                               title="Only you can edit this file">User</span>
+                            <span x-show="section.access === 'both'"
+                              class="text-[10px] px-1 py-0 rounded-full bg-teal-900/40 text-teal-400 border border-teal-800/30"
+                              title="Both you and the agent can edit this file">Shared</span>
                             <span x-show="section.access === 'agent'"
                               class="text-[10px] px-1 py-0 rounded-full bg-purple-900/40 text-purple-400 border border-purple-800/30"
                               title="The agent can update this file">Agent</span>
