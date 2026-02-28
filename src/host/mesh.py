@@ -38,13 +38,16 @@ class Blackboard:
     """
 
     def __init__(self, db_path: str = "blackboard.db", event_bus=None):
+        import fnmatch as _fnmatch
         import threading
+        self._fnmatch = _fnmatch
         self.db = sqlite3.connect(db_path, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA busy_timeout=30000")
         self._write_lock = threading.Lock()
         self._event_bus = event_bus
         self._last_ttl_gc: float = 0.0
+        self._watchers: dict[str, list[str]] = {}  # agent_id -> list of glob patterns
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -106,6 +109,54 @@ class Blackboard:
 
         if self._event_bus:
             # Truncate value preview for dashboard display
+            preview = value_json[:200] if len(value_json) > 200 else value_json
+            self._event_bus.emit("blackboard_write", agent=written_by,
+                data={"key": key, "version": new_version, "value_preview": preview,
+                      "written_by": written_by})
+
+        return BlackboardEntry(
+            key=key,
+            value=value,
+            written_by=written_by,
+            workflow_id=workflow_id,
+            ttl=ttl,
+            version=new_version,
+        )
+
+    def write_if_version(
+        self,
+        key: str,
+        value: dict,
+        written_by: str,
+        expected_version: int,
+        workflow_id: str | None = None,
+        ttl: int | None = None,
+    ) -> BlackboardEntry | None:
+        """Atomic compare-and-swap: write only if current version matches.
+
+        Returns the updated ``BlackboardEntry`` on success, or ``None`` if
+        the version has changed (conflict).  Used for task claiming — only
+        one agent can win the CAS race.
+        """
+        value_json = json.dumps(value, default=str)
+
+        with self._write_lock:
+            cursor = self.db.execute(
+                "UPDATE entries SET "
+                "value = ?, written_by = ?, workflow_id = ?, "
+                "updated_at = datetime('now'), ttl = ?, version = version + 1 "
+                "WHERE key = ? AND version = ? "
+                "RETURNING version",
+                (value_json, written_by, workflow_id, ttl, key, expected_version),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None  # version mismatch — CAS failed
+            new_version = row[0]
+            self._log_event("cas_write", key, written_by, value_json)
+            self.db.commit()
+
+        if self._event_bus:
             preview = value_json[:200] if len(value_json) > 200 else value_json
             self._event_bus.emit("blackboard_write", agent=written_by,
                 data={"key": key, "version": new_version, "value_preview": preview,
@@ -227,6 +278,42 @@ class Blackboard:
 
     def close(self) -> None:
         self.db.close()
+
+    # ── Blackboard Watchers ─────────────────────────────────────
+
+    def add_watch(self, agent_id: str, pattern: str) -> None:
+        """Register a glob pattern watch for an agent."""
+        if agent_id not in self._watchers:
+            self._watchers[agent_id] = []
+        if pattern not in self._watchers[agent_id]:
+            self._watchers[agent_id].append(pattern)
+
+    def remove_watch(self, agent_id: str, pattern: str | None = None) -> None:
+        """Remove a specific watch pattern, or all watches for an agent."""
+        if pattern is None:
+            self._watchers.pop(agent_id, None)
+        elif agent_id in self._watchers:
+            self._watchers[agent_id] = [
+                p for p in self._watchers[agent_id] if p != pattern
+            ]
+            if not self._watchers[agent_id]:
+                del self._watchers[agent_id]
+
+    def remove_agent_watches(self, agent_id: str) -> None:
+        """Remove all watches for an agent (cleanup on deregister)."""
+        self._watchers.pop(agent_id, None)
+
+    def get_watchers_for_key(self, key: str, exclude: str | None = None) -> list[str]:
+        """Return agent IDs watching a key, excluding the writer to prevent self-notify."""
+        matched: list[str] = []
+        for agent_id, patterns in self._watchers.items():
+            if agent_id == exclude:
+                continue
+            for pattern in patterns:
+                if self._fnmatch.fnmatch(key, pattern):
+                    matched.append(agent_id)
+                    break
+        return matched
 
 
 class PubSub:
@@ -376,6 +463,7 @@ class MessageRouter:
         permissions: PermissionMatrix,
         agent_registry: dict[str, str],
         trace_store: Any = None,
+        agent_projects: dict[str, str] | None = None,
     ):
         import threading
         self.permissions = permissions
@@ -383,6 +471,7 @@ class MessageRouter:
         self.agent_roles: dict[str, str] = {}
         self.message_log: deque[dict] = deque(maxlen=10_000)
         self._capabilities_cache: dict[str, list[str]] = {}
+        self._agent_projects: dict[str, str] = agent_projects or {}
         self._registry_lock = threading.Lock()
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
@@ -403,6 +492,23 @@ class MessageRouter:
 
     async def route(self, message: AgentMessage) -> dict:
         """Route a message. Resolves capability-based addressing. Enforces permissions."""
+        # Cross-project message blocking
+        if self._agent_projects:
+            from_project = self._agent_projects.get(message.from_agent)
+            to_project = self._agent_projects.get(message.to)
+            system_agents = {"mesh", "orchestrator"}
+            if (
+                from_project and to_project
+                and from_project != to_project
+                and message.from_agent not in system_agents
+                and message.to not in system_agents
+            ):
+                logger.warning(
+                    "Cross-project messaging blocked: %s (%s) -> %s (%s)",
+                    message.from_agent, from_project, message.to, to_project,
+                )
+                return {"error": "Cross-project messaging not allowed"}
+
         if not self.permissions.can_message(message.from_agent, message.to):
             logger.warning(f"Permission denied: {message.from_agent} -> {message.to}")
             return {"error": f"{message.from_agent} cannot message {message.to}"}

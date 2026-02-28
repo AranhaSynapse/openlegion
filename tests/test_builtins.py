@@ -3358,3 +3358,145 @@ class TestBrowserNavigateCaptchaEdgeCases:
         assert "error" not in result
         assert "captcha_solved" not in result
         assert "captcha_detected" not in result
+
+
+# ── Coordination Tools Tests (subscribe_event, watch_blackboard, claim_task) ──
+
+
+class TestSubscribeEventTool:
+    @pytest.mark.asyncio
+    async def test_subscribe_event_success(self):
+        from src.agent.builtins.mesh_tool import subscribe_event
+
+        mock_client = AsyncMock()
+        mock_client.subscribe_topic = AsyncMock(return_value={"subscribed": True})
+        result = await subscribe_event(topic="research_complete", mesh_client=mock_client)
+        assert result["subscribed"] is True
+        assert result["topic"] == "research_complete"
+        mock_client.subscribe_topic.assert_awaited_once_with("research_complete")
+
+    @pytest.mark.asyncio
+    async def test_subscribe_event_no_mesh_client(self):
+        from src.agent.builtins.mesh_tool import subscribe_event
+
+        result = await subscribe_event(topic="test", mesh_client=None)
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_subscribe_event_error(self):
+        from src.agent.builtins.mesh_tool import subscribe_event
+
+        mock_client = AsyncMock()
+        mock_client.subscribe_topic = AsyncMock(side_effect=RuntimeError("fail"))
+        result = await subscribe_event(topic="test", mesh_client=mock_client)
+        assert "error" in result
+
+
+class TestWatchBlackboardTool:
+    @pytest.mark.asyncio
+    async def test_watch_blackboard_success(self):
+        from src.agent.builtins.mesh_tool import watch_blackboard
+
+        mock_client = AsyncMock()
+        mock_client.is_standalone = False
+        mock_client.watch_blackboard = AsyncMock(return_value={"watching": True})
+        result = await watch_blackboard(pattern="tasks/*", mesh_client=mock_client)
+        assert result["watching"] is True
+        assert result["pattern"] == "tasks/*"
+        mock_client.watch_blackboard.assert_awaited_once_with("tasks/*")
+
+    @pytest.mark.asyncio
+    async def test_watch_blackboard_standalone(self):
+        from src.agent.builtins.mesh_tool import watch_blackboard
+
+        mock_client = AsyncMock()
+        mock_client.is_standalone = True
+        result = await watch_blackboard(pattern="tasks/*", mesh_client=mock_client)
+        assert "error" in result
+        assert "not assigned" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_watch_blackboard_no_mesh_client(self):
+        from src.agent.builtins.mesh_tool import watch_blackboard
+
+        result = await watch_blackboard(pattern="tasks/*", mesh_client=None)
+        assert "error" in result
+
+
+class TestClaimTaskTool:
+    @pytest.mark.asyncio
+    async def test_claim_task_success(self):
+        from src.agent.builtins.mesh_tool import claim_task
+
+        mock_client = AsyncMock()
+        mock_client.is_standalone = False
+        mock_client.read_blackboard = AsyncMock(return_value={
+            "key": "tasks/t1", "value": {"status": "pending"}, "version": 1,
+        })
+        mock_client.claim_blackboard = AsyncMock(return_value={
+            "key": "tasks/t1", "version": 2,
+        })
+        result = await claim_task(
+            key="tasks/t1",
+            claim_value='{"status": "claimed"}',
+            mesh_client=mock_client,
+        )
+        assert result["claimed"] is True
+        assert result["version"] == 2
+
+    @pytest.mark.asyncio
+    async def test_claim_task_conflict(self):
+        from src.agent.builtins.mesh_tool import claim_task
+
+        mock_client = AsyncMock()
+        mock_client.is_standalone = False
+        mock_client.read_blackboard = AsyncMock(return_value={
+            "key": "tasks/t1", "value": {"status": "pending"}, "version": 1,
+        })
+        mock_client.claim_blackboard = AsyncMock(return_value=None)
+        result = await claim_task(
+            key="tasks/t1",
+            claim_value='{"status": "claimed"}',
+            mesh_client=mock_client,
+        )
+        assert result["claimed"] is False
+        assert "conflict" in result["reason"].lower()
+
+    @pytest.mark.asyncio
+    async def test_claim_task_key_not_found(self):
+        from src.agent.builtins.mesh_tool import claim_task
+
+        mock_client = AsyncMock()
+        mock_client.is_standalone = False
+        mock_client.read_blackboard = AsyncMock(return_value=None)
+        result = await claim_task(
+            key="tasks/nope",
+            claim_value='{"status": "claimed"}',
+            mesh_client=mock_client,
+        )
+        assert result["claimed"] is False
+        assert "does not exist" in result["reason"]
+
+    @pytest.mark.asyncio
+    async def test_claim_task_standalone(self):
+        from src.agent.builtins.mesh_tool import claim_task
+
+        mock_client = AsyncMock()
+        mock_client.is_standalone = True
+        result = await claim_task(
+            key="tasks/t1",
+            claim_value='{"status": "claimed"}',
+            mesh_client=mock_client,
+        )
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_claim_task_no_mesh_client(self):
+        from src.agent.builtins.mesh_tool import claim_task
+
+        result = await claim_task(
+            key="tasks/t1",
+            claim_value='{"status": "claimed"}',
+            mesh_client=None,
+        )
+        assert "error" in result

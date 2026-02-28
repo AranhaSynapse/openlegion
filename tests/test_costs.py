@@ -131,6 +131,51 @@ class TestBudgetOverrunWarning:
             mock_logger.warning.assert_not_called()
 
 
+class TestProjectCostAggregation:
+    """Project-level cost tracking and budget enforcement."""
+
+    def setup_method(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.db_path = os.path.join(self._tmpdir, "costs.db")
+        self.tracker = CostTracker(db_path=self.db_path)
+
+    def teardown_method(self):
+        self.tracker.close()
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_project_spend_aggregates_members(self):
+        """get_project_spend sums spend across all member agents."""
+        self.tracker.set_project_budget(
+            "teamA", members=["alice", "bob"], daily_usd=50.0, monthly_usd=500.0,
+        )
+        self.tracker.track("alice", "openai/gpt-4o-mini", 1000, 500)
+        self.tracker.track("bob", "openai/gpt-4o-mini", 2000, 1000)
+
+        result = self.tracker.get_project_spend("teamA", "today")
+        assert result["project"] == "teamA"
+        assert result["total_tokens"] == 4500
+        assert result["total_cost"] > 0
+        assert len(result["agents"]) == 2
+        alice_spend = next(a for a in result["agents"] if a["agent"] == "alice")
+        bob_spend = next(a for a in result["agents"] if a["agent"] == "bob")
+        assert alice_spend["tokens"] == 1500
+        assert bob_spend["tokens"] == 3000
+
+    def test_project_spend_no_budget_configured(self):
+        """get_project_spend returns error when no budget is set."""
+        result = self.tracker.get_project_spend("unknown", "today")
+        assert "error" in result
+
+    def test_project_budget_limits(self):
+        """set_project_budget stores limits correctly."""
+        self.tracker.set_project_budget(
+            "proj", members=["a1"], daily_usd=100.0, monthly_usd=2000.0,
+        )
+        result = self.tracker.get_project_spend("proj", "today")
+        assert result["daily_limit"] == 100.0
+        assert result["monthly_limit"] == 2000.0
+
+
 class TestCostTrackerWithVault:
     """Verify CostTracker integrates with CredentialVault."""
 

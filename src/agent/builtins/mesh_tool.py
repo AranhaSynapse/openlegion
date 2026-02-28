@@ -213,6 +213,102 @@ async def publish_event(
 
 
 @skill(
+    name="subscribe_event",
+    description=(
+        "Subscribe to a pub/sub topic at runtime. Once subscribed, events "
+        "published to this topic by other agents will arrive as steer "
+        "messages between your tool rounds — you don't need to poll. "
+        "Use this to react to coordination signals like 'research_complete' "
+        "or 'deploy_ready'."
+    ),
+    parameters={
+        "topic": {
+            "type": "string",
+            "description": "Event topic to subscribe to (e.g. 'research_complete')",
+        },
+    },
+)
+async def subscribe_event(topic: str, *, mesh_client=None) -> dict:
+    if mesh_client is None:
+        return {"error": "No mesh_client available"}
+    try:
+        result = await mesh_client.subscribe_topic(topic)
+        return {"subscribed": True, "topic": topic, **result}
+    except Exception as e:
+        return {"error": f"Failed to subscribe to '{topic}': {e}"}
+
+
+@skill(
+    name="watch_blackboard",
+    description=(
+        "Watch blackboard keys matching a glob pattern. When any matching "
+        "key is written by another agent, you'll receive a notification "
+        "between tool rounds — no polling needed. Use this to react "
+        "when shared state changes (e.g. watch 'tasks/*' to know when "
+        "new tasks appear)."
+    ),
+    parameters={
+        "pattern": {
+            "type": "string",
+            "description": "Glob pattern for keys to watch (e.g. 'tasks/*', 'context/research_*')",
+        },
+    },
+)
+async def watch_blackboard(pattern: str, *, mesh_client=None) -> dict:
+    if mesh_client is None:
+        return {"error": "No mesh_client available"}
+    if mesh_client.is_standalone:
+        return {"error": _STANDALONE_ERROR}
+    try:
+        result = await mesh_client.watch_blackboard(pattern)
+        return {"watching": True, "pattern": pattern, **result}
+    except Exception as e:
+        return {"error": f"Failed to watch '{pattern}': {e}"}
+
+
+@skill(
+    name="claim_task",
+    description=(
+        "Atomically claim a task from the shared blackboard. Reads the current "
+        "entry, then attempts a compare-and-swap write with your claim value. "
+        "If another agent claimed it first, returns {claimed: false}. Use this "
+        "to prevent duplicate work when multiple agents might pick up the same task."
+    ),
+    parameters={
+        "key": {
+            "type": "string",
+            "description": "Blackboard key of the task to claim (e.g. 'tasks/pending/research_acme')",
+        },
+        "claim_value": {
+            "type": "string",
+            "description": "JSON string of the claim value (e.g. '{\"status\": \"claimed\", \"claimed_by\": \"me\"}')",
+        },
+    },
+)
+async def claim_task(key: str, claim_value: str, *, mesh_client=None) -> dict:
+    if mesh_client is None:
+        return {"error": "No mesh_client available"}
+    if mesh_client.is_standalone:
+        return {"error": _STANDALONE_ERROR}
+    try:
+        parsed = json.loads(claim_value) if isinstance(claim_value, str) else claim_value
+    except json.JSONDecodeError:
+        parsed = {"text": claim_value}
+    try:
+        # Read current entry to get its version
+        entry = await mesh_client.read_blackboard(key)
+        if entry is None:
+            return {"claimed": False, "reason": f"Key '{key}' does not exist"}
+        current_version = entry.get("version", 1)
+        result = await mesh_client.claim_blackboard(key, parsed, current_version)
+        if result is None:
+            return {"claimed": False, "reason": "Version conflict — another agent claimed it first"}
+        return {"claimed": True, "key": key, "version": result.get("version", 0)}
+    except Exception as e:
+        return {"error": f"Failed to claim '{key}': {e}"}
+
+
+@skill(
     name="save_artifact",
     description=(
         "Save a named output file to your workspace and register it on the "

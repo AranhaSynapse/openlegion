@@ -205,6 +205,52 @@ class CostTracker:
             "by_model": by_model,
         }
 
+    # ── Project-level budget enforcement ──────────────────────────
+
+    def set_project_budget(
+        self,
+        project: str,
+        members: list[str],
+        daily_usd: float = 50.0,
+        monthly_usd: float = 1000.0,
+    ) -> None:
+        """Set an aggregate budget for a project (sum of member agents)."""
+        if not hasattr(self, "_project_budgets"):
+            self._project_budgets: dict[str, dict] = {}
+        self._project_budgets[project] = {
+            "members": members,
+            "daily_usd": daily_usd,
+            "monthly_usd": monthly_usd,
+        }
+
+    def get_project_spend(self, project: str, period: str = "today") -> dict:
+        """Aggregate spend across all member agents for a project."""
+        pbudget = getattr(self, "_project_budgets", {}).get(project)
+        if pbudget is None:
+            return {"project": project, "error": "No project budget configured"}
+        members = pbudget["members"]
+        total_cost = 0.0
+        total_tokens = 0
+        agent_breakdown = []
+        for member in members:
+            spend = self.get_spend(member, period)
+            total_cost += spend.get("total_cost", 0)
+            total_tokens += spend.get("total_tokens", 0)
+            agent_breakdown.append({
+                "agent": member,
+                "cost": spend.get("total_cost", 0),
+                "tokens": spend.get("total_tokens", 0),
+            })
+        return {
+            "project": project,
+            "period": period,
+            "total_cost": round(total_cost, 4),
+            "total_tokens": total_tokens,
+            "daily_limit": pbudget["daily_usd"],
+            "monthly_limit": pbudget["monthly_usd"],
+            "agents": agent_breakdown,
+        }
+
     def get_all_agents_spend(self, period: str = "today") -> list[dict]:
         since = _period_to_since(period)
         rows = self.db.execute(
