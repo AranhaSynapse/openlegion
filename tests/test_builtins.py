@@ -1743,47 +1743,48 @@ class TestBuiltinDiscovery:
         assert "browser_navigate" in registry.skills
         assert "browser_snapshot" in registry.skills
         assert "browser_reset" in registry.skills
-        assert "memory_recall" in registry.skills
+        assert "memory_search" in registry.skills
+        assert "category" in registry.skills["memory_search"]["parameters"]
 
 
 # ── memory_tool ────────────────────────────────────────────────
 
 
-class TestMemoryRecall:
+class TestMemorySearchWithCategory:
     @pytest.mark.asyncio
-    async def test_memory_recall_basic(self, tmp_path):
-        """memory_recall calls search_hierarchical and returns results."""
-        from src.agent.builtins.memory_tool import memory_recall
+    async def test_memory_search_with_category_basic(self, tmp_path):
+        """memory_search with category searches only the structured fact DB."""
+        from src.agent.builtins.memory_tool import memory_search
         from src.agent.memory import MemoryStore
 
         store = MemoryStore(db_path=str(tmp_path / "recall.db"))
         await store.store_fact("user_lang", "Python")
         await store.store_fact("user_editor", "Vim")
 
-        result = await memory_recall("user preferences", max_results=5, memory_store=store)
+        result = await memory_search("user preferences", max_results=5, memory_store=store)
         assert result["count"] >= 1
         assert len(result["results"]) >= 1
         store.close()
 
     @pytest.mark.asyncio
-    async def test_memory_recall_with_category_filter(self, tmp_path):
+    async def test_memory_search_with_category_filter(self, tmp_path):
         """category param filters results (without embeddings, uses text field)."""
-        from src.agent.builtins.memory_tool import memory_recall
+        from src.agent.builtins.memory_tool import memory_search
         from src.agent.memory import MemoryStore
 
         store = MemoryStore(db_path=str(tmp_path / "recall_cat.db"))
         await store.store_fact("user_lang", "Python", category="preference")
         await store.store_fact("project_name", "OpenLegion", category="fact")
 
-        result = await memory_recall("Python", category="preference", max_results=5, memory_store=store)
+        result = await memory_search("Python", category="preference", max_results=5, memory_store=store)
         for r in result["results"]:
             assert r["category"] == "preference"
         store.close()
 
     @pytest.mark.asyncio
-    async def test_memory_recall_category_filter_with_auto_categorize(self, tmp_path):
+    async def test_memory_search_category_filter_with_auto_categorize(self, tmp_path):
         """category filter works with auto-categorized facts (embed_fn + categorize_fn)."""
-        from src.agent.builtins.memory_tool import memory_recall
+        from src.agent.builtins.memory_tool import memory_search
         from src.agent.memory import MemoryStore
 
         store = MemoryStore(
@@ -1796,19 +1797,46 @@ class TestMemoryRecall:
         await store.store_fact("project_name", "OpenLegion is the project")
 
         # Filter by auto-assigned category
-        result = await memory_recall("Python", category="preferences", max_results=5, memory_store=store)
+        result = await memory_search("Python", category="preferences", max_results=5, memory_store=store)
         assert result["count"] >= 1, "Should find preference-categorized facts"
         for r in result["results"]:
             assert r["category"] == "preferences"
         store.close()
 
     @pytest.mark.asyncio
-    async def test_memory_recall_no_store(self):
-        """memory_recall without memory_store returns error."""
-        from src.agent.builtins.memory_tool import memory_recall
+    async def test_memory_search_category_no_store(self):
+        """memory_search with category but no memory_store returns error."""
+        from src.agent.builtins.memory_tool import memory_search
 
-        result = await memory_recall("anything", memory_store=None)
+        result = await memory_search("anything", category="test", memory_store=None)
         assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_memory_search_category_no_store_with_workspace(self):
+        """memory_search with category + workspace but no memory_store returns error, not workspace results."""
+        from src.agent.builtins.memory_tool import memory_search
+
+        mock_ws = MagicMock()
+        mock_ws.search.return_value = [{"file": "MEMORY.md", "snippet": "something"}]
+
+        result = await memory_search("anything", category="test", workspace_manager=mock_ws, memory_store=None)
+        assert "error" in result
+        # Should NOT fall through to workspace search
+        mock_ws.search.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_memory_search_category_no_matches(self, tmp_path):
+        """memory_search with category returns empty results when no facts match, not an error."""
+        from src.agent.builtins.memory_tool import memory_search
+        from src.agent.memory import MemoryStore
+
+        store = MemoryStore(db_path=str(tmp_path / "no_match.db"))
+        await store.store_fact("user_lang", "Python", category="preference")
+
+        result = await memory_search("Python", category="nonexistent_category", max_results=5, memory_store=store)
+        assert "error" not in result
+        assert result["count"] == 0
+        store.close()
 
     @pytest.mark.asyncio
     async def test_memory_search_combined_sources(self, tmp_path):
@@ -1927,18 +1955,74 @@ class TestMemorySave:
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_save_then_recall(self, tmp_path):
-        """Facts saved via memory_save are findable via memory_recall."""
-        from src.agent.builtins.memory_tool import memory_recall, memory_save
+    async def test_save_then_search(self, tmp_path):
+        """Facts saved via memory_save are findable via memory_search."""
+        from src.agent.builtins.memory_tool import memory_save, memory_search
         from src.agent.memory import MemoryStore
 
         store = MemoryStore(db_path=str(tmp_path / "save_recall.db"))
 
         await memory_save("user timezone: America/New_York", memory_store=store)
-        result = await memory_recall("timezone", max_results=5, memory_store=store)
+        result = await memory_search("timezone", max_results=5, memory_store=store)
         assert result["count"] >= 1
         assert any("New_York" in r["value"] for r in result["results"])
         store.close()
+
+
+class TestSetCronHeartbeat:
+    @pytest.mark.asyncio
+    async def test_set_cron_heartbeat_creates_new(self):
+        """set_cron(heartbeat=True) creates a heartbeat job when none exists."""
+        from src.agent.builtins.mesh_tool import set_cron
+
+        mock_client = AsyncMock()
+        mock_client.list_cron.return_value = []
+        mock_client.create_cron.return_value = {"id": "hb-1"}
+
+        result = await set_cron(schedule="every 30m", heartbeat=True, mesh_client=mock_client)
+        assert result["created"] is True
+        assert result["type"] == "heartbeat"
+        mock_client.create_cron.assert_called_once_with(
+            schedule="every 30m", message="heartbeat", heartbeat=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_cron_heartbeat_updates_existing(self):
+        """set_cron(heartbeat=True) updates existing heartbeat job."""
+        from src.agent.builtins.mesh_tool import set_cron
+
+        mock_client = AsyncMock()
+        mock_client.list_cron.return_value = [{"id": "hb-1", "heartbeat": True}]
+        mock_client.update_cron.return_value = {"id": "hb-1"}
+
+        result = await set_cron(schedule="every 1h", heartbeat=True, mesh_client=mock_client)
+        assert result["updated"] is True
+        assert result["type"] == "heartbeat"
+        mock_client.update_cron.assert_called_once_with("hb-1", schedule="every 1h")
+
+    @pytest.mark.asyncio
+    async def test_set_cron_heartbeat_custom_message(self):
+        """set_cron(heartbeat=True, message='check') uses provided message."""
+        from src.agent.builtins.mesh_tool import set_cron
+
+        mock_client = AsyncMock()
+        mock_client.list_cron.return_value = []
+        mock_client.create_cron.return_value = {"id": "hb-2"}
+
+        await set_cron(schedule="every 5m", message="check", heartbeat=True, mesh_client=mock_client)
+        mock_client.create_cron.assert_called_once_with(
+            schedule="every 5m", message="check", heartbeat=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_cron_regular_requires_message(self):
+        """set_cron without heartbeat requires a non-empty message."""
+        from src.agent.builtins.mesh_tool import set_cron
+
+        mock_client = AsyncMock()
+        result = await set_cron(schedule="every 1h", message="", mesh_client=mock_client)
+        assert "error" in result
+        assert "message" in result["error"].lower()
 
 
 class TestSearchWithFallback:

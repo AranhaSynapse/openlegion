@@ -1,7 +1,7 @@
 """Credential-blind vault tools for agents.
 
-Agents can generate, capture, list, and check credentials without ever
-seeing the actual secret values. Values are stored in the mesh vault and
+Agents can generate, capture, and list credentials without ever seeing
+the actual secret values. Values are stored in the mesh vault and
 referenced via opaque ``$CRED{name}`` handles.
 """
 
@@ -142,23 +142,3 @@ async def vault_list(*, mesh_client=None) -> dict:
         return {"credentials": names, "count": len(names)}
     except Exception as e:
         return {"error": f"Failed to list credentials: {e}"}
-
-
-@skill(
-    name="vault_status",
-    description="Check if a credential exists in the vault by name.",
-    parameters={
-        "name": {"type": "string", "description": "Credential name to check"},
-    },
-)
-async def vault_status(name: str, *, mesh_client=None) -> dict:
-    """Check if a credential exists."""
-    if not mesh_client:
-        return {"error": "Vault tools require mesh connectivity"}
-    if not name:
-        return {"error": "name is required"}
-    try:
-        result = await mesh_client.vault_status(name)
-        return {"name": name, "exists": result.get("exists", False)}
-    except Exception as e:
-        return {"error": f"Failed to check credential: {e}"}
