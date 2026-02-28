@@ -141,7 +141,7 @@ class TestAgentEdit:
             assert agents_cfg["agents"]["mybot"]["model"] == "anthropic/claude-sonnet-4-6"
 
     def test_edit_description_flag(self, tmp_path):
-        """--description flag updates agents.yaml role field."""
+        """--role flag updates agents.yaml role field."""
         config_file = tmp_path / "mesh.yaml"
         agents_file = tmp_path / "agents.yaml"
 
@@ -162,13 +162,43 @@ class TestAgentEdit:
             runner = CliRunner()
             result = runner.invoke(
                 cli,
-                ["agent", "edit", "mybot", "--description", "Web research specialist"],
+                ["agent", "edit", "mybot", "--role", "Web research specialist"],
             )
             assert result.exit_code == 0, result.output
             assert "description updated" in result.output
 
             agents_cfg = yaml.safe_load(agents_file.read_text())
             assert agents_cfg["agents"]["mybot"]["role"] == "Web research specialist"
+
+    def test_edit_description_flag_compat(self, tmp_path):
+        """--description (hidden compat) still updates agents.yaml role field."""
+        config_file = tmp_path / "mesh.yaml"
+        agents_file = tmp_path / "agents.yaml"
+
+        config_file.write_text(yaml.dump({
+            "mesh": {"host": "0.0.0.0", "port": 8420},
+        }))
+        agents_file.write_text(yaml.dump({
+            "agents": {"mybot": {
+                "role": "test",
+                "model": "openai/gpt-4.1",
+            }},
+        }))
+
+        with (
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                ["agent", "edit", "mybot", "--description", "Legacy flag test"],
+            )
+            assert result.exit_code == 0, result.output
+            assert "description updated" in result.output
+
+            agents_cfg = yaml.safe_load(agents_file.read_text())
+            assert agents_cfg["agents"]["mybot"]["role"] == "Legacy flag test"
 
     def test_edit_interactive(self, tmp_path):
         """Interactive menu flow picks model via property selector."""
@@ -649,10 +679,22 @@ class TestREPLBlackboard:
         bb.write("test/del", {"x": 1}, written_by="cli")
         repl = self._make_repl(bb)
 
-        repl._cmd_blackboard("del test/del")
+        with patch("src.cli.repl.click.confirm", return_value=True):
+            repl._cmd_blackboard("del test/del")
         out = capsys.readouterr().out
         assert "Deleted: test/del" in out
         assert bb.read("test/del") is None
+        bb.close()
+
+    def test_delete_cancelled(self, tmp_path, capsys):
+        from src.host.mesh import Blackboard
+        bb = Blackboard(db_path=str(tmp_path / "bb.db"))
+        bb.write("test/keep", {"x": 1}, written_by="cli")
+        repl = self._make_repl(bb)
+
+        with patch("src.cli.repl.click.confirm", return_value=False):
+            repl._cmd_blackboard("del test/keep")
+        assert bb.read("test/keep") is not None
         bb.close()
 
     def test_delete_history_blocked(self, tmp_path, capsys):
@@ -661,7 +703,8 @@ class TestREPLBlackboard:
         bb.write("history/x", {"x": 1}, written_by="cli")
         repl = self._make_repl(bb)
 
-        repl._cmd_blackboard("del history/x")
+        with patch("src.cli.repl.click.confirm", return_value=True):
+            repl._cmd_blackboard("del history/x")
         out = capsys.readouterr().out
         assert "Error" in out
         bb.close()
@@ -2150,3 +2193,153 @@ class TestREPLLogs:
             out = capsys.readouterr().out
             assert "bad" in out
             assert "ok" not in out
+
+
+class TestAgentAddWithRole:
+    """agent add --role skips the interactive description prompt."""
+
+    def test_add_agent_with_role_flag(self, tmp_path):
+        config_file = tmp_path / "mesh.yaml"
+        agents_file = tmp_path / "agents.yaml"
+        perms_file = tmp_path / "permissions.json"
+        project_root = tmp_path
+
+        config_file.write_text(yaml.dump({
+            "mesh": {"host": "0.0.0.0", "port": 8420},
+            "llm": {"default_model": "openai/gpt-4.1"},
+        }))
+        perms_file.write_text(json.dumps({"permissions": {}}))
+
+        with (
+            patch("src.cli.config.CONFIG_FILE", config_file),
+            patch("src.cli.config.AGENTS_FILE", agents_file),
+            patch("src.cli.config.PERMISSIONS_FILE", perms_file),
+            patch("src.cli.config.PROJECT_ROOT", project_root),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                ["agent", "add", "mybot", "--role", "Code reviewer"],
+                input="\n",  # model selection only
+            )
+            assert result.exit_code == 0, result.output
+            assert "mybot" in result.output
+            agents_cfg = yaml.safe_load(agents_file.read_text())
+            assert agents_cfg["agents"]["mybot"]["role"] == "Code reviewer"
+
+
+class TestChannelsRemoveConfirmation:
+    """channels remove prompts for confirmation and supports interactive picker."""
+
+    def test_channels_remove_with_confirmation(self, tmp_path):
+        config_file = tmp_path / "mesh.yaml"
+        config_file.write_text(yaml.dump({
+            "channels": {"telegram_bot": {"enabled": True}},
+        }))
+
+        with patch("src.cli.config.CONFIG_FILE", config_file):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                ["channels", "remove", "telegram"],
+                input="y\n",
+            )
+            assert result.exit_code == 0, result.output
+            assert "Removed" in result.output
+
+    def test_channels_remove_abort(self, tmp_path):
+        config_file = tmp_path / "mesh.yaml"
+        config_file.write_text(yaml.dump({
+            "channels": {"telegram_bot": {"enabled": True}},
+        }))
+
+        with patch("src.cli.config.CONFIG_FILE", config_file):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                ["channels", "remove", "telegram"],
+                input="n\n",
+            )
+            assert result.exit_code != 0  # click.confirm abort
+
+    def test_channels_remove_yes_flag(self, tmp_path):
+        config_file = tmp_path / "mesh.yaml"
+        config_file.write_text(yaml.dump({
+            "channels": {"telegram_bot": {"enabled": True}},
+        }))
+
+        with patch("src.cli.config.CONFIG_FILE", config_file):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                ["channels", "remove", "telegram", "-y"],
+            )
+            assert result.exit_code == 0, result.output
+            assert "Removed" in result.output
+
+
+class TestCronDeleteConfirmation:
+    """Cron delete requires confirmation."""
+
+    def test_cron_delete_confirmed(self, tmp_path, capsys):
+        from src.cli.repl import REPLSession
+        from src.host.cron import CronScheduler
+
+        sched = CronScheduler(config_path=str(tmp_path / "cron.json"))
+        job = sched.add_job(agent="bot", schedule="every 5m", message="check")
+        ctx = _MockCtx(cron_scheduler=sched)
+        repl = REPLSession(ctx)
+
+        with patch("src.cli.repl.click.confirm", return_value=True):
+            repl._cmd_cron(f"del {job.id}")
+        out = capsys.readouterr().out
+        assert "Deleted" in out
+
+    def test_cron_delete_cancelled(self, tmp_path, capsys):
+        from src.cli.repl import REPLSession
+        from src.host.cron import CronScheduler
+
+        sched = CronScheduler(config_path=str(tmp_path / "cron.json"))
+        job = sched.add_job(agent="bot", schedule="every 5m", message="check")
+        ctx = _MockCtx(cron_scheduler=sched)
+        repl = REPLSession(ctx)
+
+        with patch("src.cli.repl.click.confirm", return_value=False):
+            repl._cmd_cron(f"del {job.id}")
+        out = capsys.readouterr().out
+        assert "Deleted" not in out
+        # Job should still exist
+        assert job.id in sched.jobs
+
+
+class TestTracesAlias:
+    """/traces dispatches to the same handler as /debug."""
+
+    def test_traces_alias_registered(self):
+        from src.cli.repl import REPLSession
+
+        repl = REPLSession(_MockCtx())
+        assert "/traces" in repl._commands
+        assert repl._commands["/traces"][0] == repl._commands["/debug"][0]
+
+
+class TestRestartCommand:
+    """/restart command in REPL."""
+
+    def test_restart_no_agent(self, capsys):
+        from src.cli.repl import REPLSession
+
+        repl = REPLSession(_MockCtx())
+        repl.current = None
+        repl._cmd_restart("")
+        out = capsys.readouterr().out
+        assert "No active agent" in out
+
+    def test_restart_unknown_agent(self, capsys):
+        from src.cli.repl import REPLSession
+
+        ctx = _MockCtx(agent_urls={"bot": "http://bot:8400"})
+        repl = REPLSession(ctx)
+        repl._cmd_restart("ghost")
+        out = capsys.readouterr().out
+        assert "not found" in out

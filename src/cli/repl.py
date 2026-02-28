@@ -120,6 +120,7 @@ class REPLSession:
             ("/add",              "Add a new agent"),
             ("/edit [name]",      "Change agent settings"),
             ("/remove [name]",    "Remove an agent"),
+            ("/restart [name]",   "Restart an agent container"),
         ]),
         ("Projects", [
             ("/project [list|use|info]",       "Manage project context"),
@@ -130,7 +131,7 @@ class REPLSession:
             ("/workflow [list|run]",            "List or trigger workflows"),
             ("/costs",                         "Show spend, context, and model health"),
             ("/cron [list|del|pause|resume|run]", "Manage cron jobs"),
-            ("/debug [trace]",                 "Show recent request traces"),
+            ("/traces [id]",                   "Show recent request traces"),
             ("/credential [add|list|remove]",  "Manage credentials"),
             ("/logs [--level]",                "Show recent runtime logs"),
             ("/addkey [service]",              "Store a credential"),
@@ -152,6 +153,7 @@ class REPLSession:
             "/add":        (self._cmd_add,        "Add a new agent"),
             "/edit":       (self._cmd_edit,       "Change agent settings"),
             "/remove":     (self._cmd_remove,     "Remove an agent"),
+            "/restart":    (self._cmd_restart,    "Restart an agent container"),
             "/status":     (self._cmd_status,     "Show agents, models, and state"),
             "/broadcast":  (self._cmd_broadcast,  "Send to all agents"),
             "/steer":      (self._cmd_steer,      "Redirect busy agent"),
@@ -160,6 +162,7 @@ class REPLSession:
             "/workflow":   (self._cmd_workflow,   "List or trigger workflows"),
             "/costs":      (self._cmd_costs,      "Show spend, context, and model health"),
             "/debug":      (self._cmd_debug,      "Show recent request traces"),
+            "/traces":     (self._cmd_debug,      "Show recent request traces"),
             "/cron":       (self._cmd_cron,       "Manage cron jobs"),
             "/credential": (self._cmd_credential, "Manage credentials (add/list/remove)"),
             "/addkey":     (self._cmd_addkey,     "Store a credential"),
@@ -642,6 +645,8 @@ class REPLSession:
                 click.echo("Usage: /cron delete <job_id>")
                 return
             job_id = parts[1].strip()
+            if not click.confirm(f"Delete cron job '{job_id}'?"):
+                return
             if self.ctx.cron_scheduler.remove_job(job_id):
                 click.echo(f"  Deleted cron job: {job_id}")
             else:
@@ -796,6 +801,8 @@ class REPLSession:
                 click.echo("Usage: /blackboard del <key>")
                 return
             key = _project_key(rest)
+            if not click.confirm(f"Delete blackboard entry '{key}'?"):
+                return
             try:
                 self.ctx.blackboard.delete(key, deleted_by="cli")
                 click.echo(f"  Deleted: {key}")
@@ -912,11 +919,7 @@ class REPLSession:
         from src.host.credentials import SYSTEM_CREDENTIAL_PROVIDERS, is_system_credential
         if service.lower() in SYSTEM_CREDENTIAL_PROVIDERS and not service.lower().endswith("_api_key"):
             service = f"{service}_api_key"
-        inline_parts = arg.split(None, 1) if arg.strip() else []
-        if len(inline_parts) > 1:
-            key_value = inline_parts[1]
-        else:
-            key_value = click.prompt(f"  {service} key", hide_input=True)
+        key_value = click.prompt(f"  {service} key", hide_input=True)
         if not key_value:
             click.echo("No key provided.")
             return
@@ -1075,6 +1078,17 @@ class REPLSession:
             # Model, description, system prompt — restart the container.
             self._restart_agent(name)
 
+    def _cmd_restart(self, arg: str) -> None:
+        """Restart an agent container."""
+        name = arg.strip() if arg.strip() else self.current
+        if name is None:
+            click.echo("No active agent. Use /add to create one first.")
+            return
+        if name not in self.ctx.agents:
+            click.echo(f"Agent '{name}' not found.")
+            return
+        self._restart_agent(name)
+
     def _restart_agent(self, name: str) -> None:
         """Stop and restart an agent container with fresh config."""
         from src.host.transport import HttpTransport
@@ -1196,7 +1210,7 @@ class REPLSession:
             for cmd, desc in commands:
                 click.echo(f"    {cmd:<34} {desc}")
             click.echo()
-        click.echo("  Aliases: /exit = /quit, /agents = /status\n")
+        click.echo("  Aliases: /exit = /quit, /agents = /status, /debug = /traces\n")
 
     # ── Message sending ─────────────────────────────────────
 
