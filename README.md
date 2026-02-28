@@ -123,7 +123,7 @@ OpenLegion was designed from day one assuming agents will be compromised.
 
 ## What It Does
 
-OpenLegion is an open-source **autonomous AI agent framework** for running multi-agent
+OpenLegion is an **autonomous AI agent framework** for running multi-agent
 fleets in isolated Docker containers. Each agent gets its own memory, tools, schedule,
 and budget — coordinated through deterministic YAML workflows with no LLM routing layer.
 
