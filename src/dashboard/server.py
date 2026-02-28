@@ -747,13 +747,7 @@ def create_dashboard_router(
             provider = service.replace("_api_key", "")
             credential_vault.add_credential(f"{provider}_api_base", base_url, system=is_system)
         tier = "system" if is_system else "agent"
-        result: dict = {"stored": True, "service": service, "tier": tier}
-        # Detect Anthropic OAuth token
-        from src.host.credentials import _ANTHROPIC_OAUTH_PREFIX
-        if service.lower() == "anthropic_api_key" and key.startswith(_ANTHROPIC_OAUTH_PREFIX):
-            result["auth_type"] = "oauth"
-            result["note"] = "OAuth token saved. No prompt caching or 1M context; subscription rate limits apply."
-        return result
+        return {"stored": True, "service": service, "tier": tier}
 
     @api_router.delete("/api/credentials/{name}")
     async def api_remove_credential(name: str) -> dict:
@@ -1112,10 +1106,7 @@ def create_dashboard_router(
     @api_router.get("/api/settings")
     async def api_settings() -> dict:
         from src.host.costs import MODEL_COSTS
-        from src.host.credentials import (
-            _ANTHROPIC_OAUTH_PREFIX,
-            SYSTEM_CREDENTIAL_PROVIDERS,
-        )
+        from src.host.credentials import SYSTEM_CREDENTIAL_PROVIDERS
 
         cred_names = credential_vault.list_credential_names() if credential_vault else []
         agent_cred_names = credential_vault.list_agent_credential_names() if credential_vault else []
@@ -1125,17 +1116,12 @@ def create_dashboard_router(
 
         # Filtered models: only providers with credentials
         available_provider_models: dict[str, list[str]] = {}
-        anthropic_auth_mode = "api_key"
         if credential_vault:
             active_providers = credential_vault.get_providers_with_credentials()
             available_provider_models = {
                 p: models for p, models in _PROVIDER_MODELS.items()
                 if p in active_providers
             }
-            # Detect Anthropic auth mode
-            ant_key = credential_vault.system_credentials.get("anthropic_api_key", "")
-            if ant_key.startswith(_ANTHROPIC_OAUTH_PREFIX):
-                anthropic_auth_mode = "oauth"
 
         return {
             "credentials": {"names": cred_names, "count": len(cred_names)},
@@ -1145,7 +1131,6 @@ def create_dashboard_router(
             "model_costs": {k: {"input_per_1k": v[0], "output_per_1k": v[1]} for k, v in MODEL_COSTS.items()},
             "provider_models": _PROVIDER_MODELS,
             "available_provider_models": available_provider_models,
-            "anthropic_auth_mode": anthropic_auth_mode,
         }
 
     # ── Messages log ─────────────────────────────────────────

@@ -2480,19 +2480,14 @@ function dashboard() {
       try {
         const body = { service, key: this.credKey.trim() };
         if (this.credService === '__custom__' && this.credTier === 'system') body.tier = 'system';
-        // Skip base_url for Anthropic OAuth tokens
-        const isOAuth = this.credService === 'anthropic' && this.credKey.trim().startsWith('sk-ant-oat');
-        if (this.credBaseUrl.trim() && !isOAuth) body.base_url = this.credBaseUrl.trim();
+        if (this.credBaseUrl.trim()) body.base_url = this.credBaseUrl.trim();
         const resp = await fetch(`${window.__config.apiBase}/credentials`, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(body),
         });
         if (resp.ok) {
           const data = await resp.json();
-          const msg = data.note
-            ? `Credential stored: ${data.service} (${data.tier} tier). ${data.note}`
-            : `Credential stored: ${data.service} (${data.tier} tier)`;
-          this.showToast(msg);
+          this.showToast(`Credential stored: ${data.service} (${data.tier} tier)`);
           this.credService = '';
           this.credCustomService = '';
           this.credKey = '';
@@ -2528,16 +2523,14 @@ function dashboard() {
       if (!this.onboardProvider || !this.onboardKey.trim()) return;
       try {
         const body = { service: this.onboardProvider, key: this.onboardKey.trim() };
-        // Skip base_url for Anthropic OAuth tokens (they use the default endpoint)
-        const isOAuth = this.onboardProvider === 'anthropic' && this.onboardKey.trim().startsWith('sk-ant-oat');
-        if (this.onboardBaseUrl.trim() && !isOAuth) body.base_url = this.onboardBaseUrl.trim();
+        if (this.onboardBaseUrl.trim()) body.base_url = this.onboardBaseUrl.trim();
         const resp = await fetch(`${window.__config.apiBase}/credentials`, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(body),
         });
         if (resp.ok) {
           const data = await resp.json();
-          this.showToast(data.note ? `Credential saved. ${data.note}` : 'API key saved');
+          this.showToast('API key saved');
           this.onboardProvider = '';
           this.onboardKey = '';
           this.onboardBaseUrl = '';

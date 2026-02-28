@@ -105,17 +105,6 @@ def _remove_from_env(env_key: str, env_file: str = "") -> None:
 SYSTEM_PREFIX = "OPENLEGION_SYSTEM_"
 AGENT_PREFIX = "OPENLEGION_CRED_"
 
-# ── Anthropic OAuth constants ──────────────────────────────
-_ANTHROPIC_OAUTH_PREFIX = "sk-ant-oat"
-_ANTHROPIC_OAUTH_BETAS = (
-    "claude-code-20250219,"
-    "interleaved-thinking-2025-05-14,"
-    "fine-grained-tool-streaming-2025-05-14"
-)
-_ANTHROPIC_OAUTH_BETAS_FULL = f"oauth-2025-04-20,{_ANTHROPIC_OAUTH_BETAS}"
-_ANTHROPIC_OAUTH_USER_AGENT = "claude-cli/2.1.62"
-_ANTHROPIC_OAUTH_APP_HEADER = "cli"
-
 # System credential patterns — used by is_system_credential() for
 # defense-in-depth permission checks and by CLI/dashboard for
 # auto-detecting LLM provider keys.  Derived from _PROVIDER_KEY_MAP.
@@ -406,32 +395,15 @@ class CredentialVault:
                 return self.system_credentials.get(key_name)
         return None
 
-    @staticmethod
-    def _is_anthropic_oauth(credential: str) -> bool:
-        """Return True if the credential is an Anthropic OAuth setup token."""
-        return credential.startswith(_ANTHROPIC_OAUTH_PREFIX)
-
     def _get_auth_for_model(self, model: str) -> tuple[str | None, dict[str, str]]:
         """Resolve API key and any extra auth headers for a model.
 
-        For Anthropic OAuth tokens (``sk-ant-oat*``), the real token is
-        returned as ``api_key``.  Litellm's built-in OAuth detection
-        (``common_utils.get_anthropic_headers``) recognises the
-        ``sk-ant-oat`` prefix and automatically sets
-        ``Authorization: Bearer`` instead of ``x-api-key``.
-
-        For all models the second element is extra headers to merge into
-        the request (empty for non-OAuth, identity headers for OAuth).
+        Returns ``(api_key, extra_headers)``.  The second element is
+        currently always empty — reserved for future use.
         """
         api_key = self._get_api_key_for_model(model)
         if api_key is None:
             return None, {}
-        if model.startswith("anthropic/") and self._is_anthropic_oauth(api_key):
-            return api_key, {
-                "user-agent": _ANTHROPIC_OAUTH_USER_AGENT,
-                "x-app": _ANTHROPIC_OAUTH_APP_HEADER,
-                "anthropic-beta": _ANTHROPIC_OAUTH_BETAS_FULL,
-            }
         return api_key, {}
 
     def get_providers_with_credentials(self) -> set[str]:
