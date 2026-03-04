@@ -1045,11 +1045,28 @@ def create_mesh_app(
         except Exception:
             return None
 
+    def _reject_agent_tokens(request: Request) -> None:
+        """Block agent Bearer tokens from accessing VNC/dashboard-only routes.
+
+        Dashboard users are authenticated by Caddy's forward_auth (session
+        cookie) — they never send Bearer tokens.  Agent containers always
+        send Bearer tokens.  Rejecting tokens here prevents agents from
+        accessing VNC even though they can reach the mesh port.
+        """
+        if _auth_tokens:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+                for expected in _auth_tokens.values():
+                    if hmac.compare_digest(token, expected):
+                        raise HTTPException(403, "Agent access denied")
+
     @app.get("/vnc/{path:path}")
     async def vnc_http_proxy(path: str, request: Request):
         """Reverse-proxy HTTP requests to KasmVNC (static files)."""
         import httpx
 
+        _reject_agent_tokens(request)
         port = _get_vnc_port()
         if port is None:
             raise HTTPException(502, "Browser service not available")
@@ -1075,6 +1092,17 @@ def create_mesh_app(
     @app.websocket("/vnc/{path:path}")
     async def vnc_ws_proxy(websocket: WebSocket, path: str):
         """Reverse-proxy WebSocket connections to KasmVNC."""
+        # Block agent tokens (could arrive as query param on WebSocket)
+        if _auth_tokens:
+            token = websocket.query_params.get("token", "")
+            auth_header = websocket.headers.get("authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = token or auth_header[7:]
+            if token:
+                for expected in _auth_tokens.values():
+                    if hmac.compare_digest(token, expected):
+                        await websocket.close(code=1008, reason="Agent access denied")
+                        return
         port = _get_vnc_port()
         if port is None:
             await websocket.close(code=1011, reason="Browser service not available")
