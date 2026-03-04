@@ -14,6 +14,13 @@ from pathlib import Path
 
 from src.browser.redaction import CredentialRedactor
 from src.browser.stealth import build_launch_options
+from src.browser.timing import (
+    action_delay,
+    keystroke_delay,
+    navigation_jitter,
+    scroll_increment,
+    scroll_pause,
+)
 from src.shared.utils import setup_logging
 
 logger = setup_logging("browser.service")
@@ -32,6 +39,7 @@ _MAX_SNAPSHOT_ELEMENTS = 200
 
 _BLOCKED_URL_SCHEMES = frozenset({"file", "javascript", "data", "blob"})
 _MAX_WAIT_MS = 10000  # 10 seconds max wait after navigation
+_MAX_SCROLL_PX = 10000  # 10000 pixels max per scroll call
 _AGENT_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 
 
@@ -245,7 +253,7 @@ class BrowserManager:
             try:
                 await inst.page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 if wait_ms > 0:
-                    await asyncio.sleep(wait_ms / 1000)
+                    await asyncio.sleep(wait_ms / 1000 + navigation_jitter())
                 title = await inst.page.title()
                 current_url = inst.page.url
                 # Extract body text for the agent (truncated to prevent huge payloads)
@@ -336,7 +344,7 @@ class BrowserManager:
                     await inst.page.click(selector, timeout=5000)
                 else:
                     return {"success": False, "error": "Must provide ref or selector"}
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(action_delay())
                 return {"success": True, "data": {"clicked": ref or selector}}
             except Exception as e:
                 return {"success": False, "error": str(e)}
@@ -355,12 +363,14 @@ class BrowserManager:
                     if clear:
                         await locator.fill(text)
                     else:
-                        await locator.press_sequentially(text)
+                        await locator.click(timeout=5000)
+                        await self._type_with_variance(inst.page, text)
                 elif selector:
                     if clear:
                         await inst.page.fill(selector, text)
                     else:
-                        await inst.page.locator(selector).press_sequentially(text)
+                        await inst.page.click(selector, timeout=5000)
+                        await self._type_with_variance(inst.page, text)
                 else:
                     return {"success": False, "error": "Must provide ref or selector"}
 
@@ -397,6 +407,63 @@ class BrowserManager:
                 png_bytes = await inst.page.screenshot(full_page=full_page)
                 b64 = base64.b64encode(png_bytes).decode()
                 return {"success": True, "data": {"image_base64": b64, "format": "png"}}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+    async def _type_with_variance(self, page, text: str) -> None:
+        """Type text character-by-character with human-like inter-key delays."""
+        for char in text:
+            await page.keyboard.press(char)
+            await asyncio.sleep(keystroke_delay(char))
+
+    async def scroll(self, agent_id: str, direction: str = "down",
+                     amount: int = 0, ref: str | None = None) -> dict:
+        """Smooth-scroll the page in randomized increments.
+
+        Args:
+            direction: "up" or "down"
+            amount: total pixels to scroll (0 = one viewport height)
+            ref: element ref to scroll into view instead of pixel scrolling
+        """
+        if direction not in ("up", "down"):
+            return {"success": False, "error": f"Invalid direction: {direction!r} (use 'up' or 'down')"}
+
+        inst = await self.get_or_start(agent_id)
+        inst.touch()
+        async with inst.lock:
+            try:
+                # Scroll element into view
+                if ref:
+                    if ref not in inst.refs:
+                        return {"success": False, "error": f"Ref '{ref}' not found in snapshot"}
+                    locator = self._locator_from_ref(inst, ref)
+                    if locator:
+                        await locator.scroll_into_view_if_needed(timeout=5000)
+                        return {"success": True, "data": {"scrolled_to_ref": ref}}
+                    return {"success": False, "error": f"Ref '{ref}' not found"}
+
+                # Pixel-based scrolling
+                if amount <= 0:
+                    vp = inst.page.viewport_size
+                    amount = vp["height"] if vp else 800
+                amount = min(amount, _MAX_SCROLL_PX)
+
+                sign = -1 if direction == "up" else 1
+                scrolled = 0
+                while scrolled < amount:
+                    step = min(scroll_increment(), amount - scrolled)
+                    delta = step * sign
+                    await inst.page.evaluate(
+                        f"window.scrollBy({{top: {delta}, behavior: 'smooth'}})"
+                    )
+                    scrolled += step
+                    if scrolled < amount:
+                        await asyncio.sleep(scroll_pause())
+
+                return {
+                    "success": True,
+                    "data": {"direction": direction, "pixels": scrolled},
+                }
             except Exception as e:
                 return {"success": False, "error": str(e)}
 

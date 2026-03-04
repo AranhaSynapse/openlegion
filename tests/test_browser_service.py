@@ -264,21 +264,21 @@ class TestTypeTextClearBehavior:
         mock_page.fill.assert_called_once_with("input", "hello")
 
     @pytest.mark.asyncio
-    async def test_clear_false_uses_press_sequentially(self):
-        """clear=False should use press_sequentially() to append text."""
+    async def test_clear_false_uses_type_with_variance(self):
+        """clear=False should click then type char-by-char with variance."""
         from src.browser.service import BrowserManager, CamoufoxInstance
         mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
 
-        mock_page = MagicMock()
-        mock_locator = MagicMock()
-        mock_locator.press_sequentially = AsyncMock()
-        mock_page.locator.return_value = mock_locator
+        mock_page = AsyncMock()
+        mock_page.click = AsyncMock()
+        mock_page.keyboard = AsyncMock()
+        mock_page.keyboard.press = AsyncMock()
         inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
         mgr._instances["a1"] = inst
 
-        await mgr.type_text("a1", selector="input", text="appended", clear=False)
-        mock_page.locator.assert_called_once_with("input")
-        mock_locator.press_sequentially.assert_called_once_with("appended")
+        await mgr.type_text("a1", selector="input", text="ab", clear=False)
+        mock_page.click.assert_called_once_with("input", timeout=5000)
+        assert mock_page.keyboard.press.await_count == 2
 
 
 class TestCamoufoxInstanceLock:
@@ -805,16 +805,19 @@ class TestTypeTextWithRef:
         mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
 
         mock_page = MagicMock()
-        mock_locator = MagicMock()
-        mock_locator.press_sequentially = AsyncMock()
+        mock_locator = AsyncMock()
+        mock_locator.click = AsyncMock()
         mock_page.get_by_role.return_value = mock_locator
+        mock_page.keyboard = AsyncMock()
+        mock_page.keyboard.press = AsyncMock()
         inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
         inst.refs = {"e0": {"role": "textbox", "name": "Email"}}
         mgr._instances["a1"] = inst
 
-        result = await mgr.type_text("a1", ref="e0", text="appended", clear=False)
+        result = await mgr.type_text("a1", ref="e0", text="ab", clear=False)
         assert result["success"] is True
-        mock_locator.press_sequentially.assert_called_once_with("appended")
+        mock_locator.click.assert_called_once_with(timeout=5000)
+        assert mock_page.keyboard.press.await_count == 2
 
     @pytest.mark.asyncio
     async def test_type_by_ref_credential_tracks_ref(self):
@@ -906,3 +909,234 @@ class TestSolveCaptcha:
         result = await mgr.solve_captcha("a1")
         assert result["success"] is True
         assert result["data"]["captcha_found"] is True
+
+
+class TestHumanTiming:
+    """Validate timing helper distributions stay within expected ranges."""
+
+    def test_action_delay_range(self):
+        from src.browser.timing import action_delay
+        samples = [action_delay() for _ in range(1000)]
+        assert all(0.15 <= s <= 0.50 for s in samples)
+        mean = sum(samples) / len(samples)
+        assert 0.25 <= mean <= 0.35
+
+    def test_navigation_jitter_range(self):
+        from src.browser.timing import navigation_jitter
+        samples = [navigation_jitter() for _ in range(1000)]
+        assert all(0.0 <= s <= 0.50 for s in samples)
+        mean = sum(samples) / len(samples)
+        assert 0.12 <= mean <= 0.28
+
+    def test_keystroke_delay_alpha(self):
+        from src.browser.timing import keystroke_delay
+        samples = [keystroke_delay("a") for _ in range(1000)]
+        assert all(0.04 <= s <= 0.20 for s in samples)
+        mean = sum(samples) / len(samples)
+        assert 0.06 <= mean <= 0.10
+
+    def test_keystroke_delay_symbol_slower(self):
+        from src.browser.timing import keystroke_delay
+        alpha = [keystroke_delay("a") for _ in range(1000)]
+        symbol = [keystroke_delay("@") for _ in range(1000)]
+        assert sum(symbol) / len(symbol) > sum(alpha) / len(alpha)
+
+    def test_scroll_pause_range(self):
+        from src.browser.timing import scroll_pause
+        samples = [scroll_pause() for _ in range(1000)]
+        assert all(0.03 <= s <= 0.15 for s in samples)
+
+    def test_scroll_increment_range(self):
+        from src.browser.timing import scroll_increment
+        samples = [scroll_increment() for _ in range(1000)]
+        assert all(80 <= s <= 200 for s in samples)
+        mean = sum(samples) / len(samples)
+        assert 120 <= mean <= 160
+
+
+class TestScroll:
+    """Tests for BrowserManager.scroll()."""
+
+    @pytest.mark.asyncio
+    async def test_scroll_down_default(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = AsyncMock()
+        mock_page.viewport_size = {"width": 1280, "height": 720}
+        mock_page.evaluate = AsyncMock()
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        mgr._instances["a1"] = inst
+
+        result = await mgr.scroll("a1", direction="down")
+        assert result["success"] is True
+        assert result["data"]["direction"] == "down"
+        assert result["data"]["pixels"] >= 720
+        assert mock_page.evaluate.await_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_scroll_up(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = AsyncMock()
+        mock_page.viewport_size = {"width": 1280, "height": 720}
+        mock_page.evaluate = AsyncMock()
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        mgr._instances["a1"] = inst
+
+        result = await mgr.scroll("a1", direction="up", amount=200)
+        assert result["success"] is True
+        assert result["data"]["direction"] == "up"
+        # Verify negative scroll values were used
+        calls = mock_page.evaluate.call_args_list
+        for call in calls:
+            js = call[0][0]
+            assert "top: -" in js
+
+    @pytest.mark.asyncio
+    async def test_scroll_to_ref(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = MagicMock()
+        mock_locator = AsyncMock()
+        mock_locator.scroll_into_view_if_needed = AsyncMock()
+        mock_page.get_by_role.return_value = mock_locator
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        inst.refs = {"e3": {"role": "button", "name": "Submit"}}
+        mgr._instances["a1"] = inst
+
+        result = await mgr.scroll("a1", ref="e3")
+        assert result["success"] is True
+        assert result["data"]["scrolled_to_ref"] == "e3"
+        mock_locator.scroll_into_view_if_needed.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_scroll_missing_ref(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = AsyncMock()
+        mock_page.viewport_size = {"width": 1280, "height": 720}
+        mock_page.evaluate = AsyncMock()
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        inst.refs = {"e0": {"role": "button", "name": "OK"}}
+        mgr._instances["a1"] = inst
+
+        result = await mgr.scroll("a1", ref="e99")
+        assert result["success"] is False
+        assert "not found" in result["error"]
+        # Must NOT fall through to pixel scrolling
+        mock_page.evaluate.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_scroll_invalid_direction(self):
+        from src.browser.service import BrowserManager
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        result = await mgr.scroll("a1", direction="left")
+        assert result["success"] is False
+        assert "Invalid direction" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_scroll_amount_capped(self):
+        from src.browser.service import _MAX_SCROLL_PX, BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = AsyncMock()
+        mock_page.viewport_size = {"width": 1280, "height": 720}
+        mock_page.evaluate = AsyncMock()
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        mgr._instances["a1"] = inst
+
+        result = await mgr.scroll("a1", amount=999999)
+        assert result["success"] is True
+        assert result["data"]["pixels"] <= _MAX_SCROLL_PX
+
+    @pytest.mark.asyncio
+    async def test_scroll_no_viewport(self):
+        """When viewport_size is None, should fallback to 800px."""
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = AsyncMock()
+        mock_page.viewport_size = None
+        mock_page.evaluate = AsyncMock()
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        mgr._instances["a1"] = inst
+
+        result = await mgr.scroll("a1")
+        assert result["success"] is True
+        assert result["data"]["pixels"] >= 800
+
+    @pytest.mark.asyncio
+    async def test_scroll_error_handling(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = AsyncMock()
+        mock_page.viewport_size = {"width": 1280, "height": 720}
+        mock_page.evaluate = AsyncMock(side_effect=Exception("page closed"))
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        mgr._instances["a1"] = inst
+
+        result = await mgr.scroll("a1")
+        assert result["success"] is False
+        assert "page closed" in result["error"]
+
+
+class TestClickRandomDelay:
+    """Verify click delay is not a fixed 0.3s."""
+
+    @pytest.mark.asyncio
+    async def test_click_delay_varies(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        delays = []
+
+        async def capture_sleep(t):
+            delays.append(t)
+
+        mock_page = AsyncMock()
+        mock_page.click = AsyncMock()
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        mgr._instances["a1"] = inst
+
+        with patch("src.browser.service.asyncio.sleep", side_effect=capture_sleep):
+            for _ in range(10):
+                await mgr.click("a1", selector="#btn")
+
+        # All delays should be in action_delay range, not exactly 0.3
+        assert all(0.15 <= d <= 0.50 for d in delays)
+        # At least some variance (not all identical)
+        assert len(set(f"{d:.4f}" for d in delays)) > 1
+
+
+class TestTypeWithVariance:
+    """Verify per-char keyboard.press calls with varying delays."""
+
+    @pytest.mark.asyncio
+    async def test_type_with_variance_calls_per_char(self):
+        from src.browser.service import BrowserManager
+
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+        mock_page = AsyncMock()
+        mock_page.keyboard = AsyncMock()
+        mock_page.keyboard.press = AsyncMock()
+
+        delays = []
+
+        async def capture_sleep(t):
+            delays.append(t)
+
+        with patch("src.browser.service.asyncio.sleep", side_effect=capture_sleep):
+            await mgr._type_with_variance(mock_page, "Hi!")
+
+        # 3 chars → 3 press calls, 3 sleep calls
+        assert mock_page.keyboard.press.await_count == 3
+        chars_pressed = [c[0][0] for c in mock_page.keyboard.press.call_args_list]
+        assert chars_pressed == ["H", "i", "!"]
+        assert len(delays) == 3
+        assert all(0.04 <= d <= 0.20 for d in delays)
