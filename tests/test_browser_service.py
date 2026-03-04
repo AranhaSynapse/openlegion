@@ -516,8 +516,9 @@ class TestLRUEviction:
     @pytest.mark.asyncio
     async def test_lru_eviction(self):
         """When max concurrent is reached, least recently used should be stopped."""
-        from src.browser.service import BrowserManager, CamoufoxInstance
         import time
+
+        from src.browser.service import BrowserManager, CamoufoxInstance
 
         mgr = BrowserManager(profiles_dir="/tmp/test_profiles", max_concurrent=2)
 
@@ -552,8 +553,9 @@ class TestIdleCleanup:
 
     @pytest.mark.asyncio
     async def test_cleanup_idle_stops_timed_out(self):
-        from src.browser.service import BrowserManager, CamoufoxInstance
         import time
+
+        from src.browser.service import BrowserManager, CamoufoxInstance
 
         mgr = BrowserManager(profiles_dir="/tmp/test_profiles", idle_timeout_minutes=1)
 
