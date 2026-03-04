@@ -7,6 +7,7 @@ BrowserForge fingerprint generation.
 from __future__ import annotations
 
 import os
+from urllib.parse import urlparse
 
 from src.shared.utils import setup_logging
 
@@ -29,7 +30,9 @@ def get_proxy_config() -> dict | None:
         config["username"] = proxy_user
     if proxy_pass:
         config["password"] = proxy_pass
-    logger.info("Proxy configured: %s", proxy_url.split("@")[-1] if "@" in proxy_url else proxy_url)
+    parsed = urlparse(proxy_url)
+    safe_url = f"{parsed.scheme}://{parsed.hostname}:{parsed.port}" if parsed.port else f"{parsed.scheme}://{parsed.hostname}"
+    logger.info("Proxy configured: %s", safe_url)
     return config
 
 

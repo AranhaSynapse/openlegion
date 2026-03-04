@@ -124,8 +124,10 @@ class BrowserManager:
         """Start the shared Playwright instance if not running."""
         if self._playwright is None:
             from playwright.async_api import async_playwright
-            self._pw_context = async_playwright()
-            self._playwright = await self._pw_context.start()
+            ctx = async_playwright()
+            pw = await ctx.start()
+            self._pw_context = ctx
+            self._playwright = pw
         return self._playwright
 
     async def _start_browser(self, agent_id: str) -> CamoufoxInstance:
