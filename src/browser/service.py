@@ -2,7 +2,7 @@
 
 Manages lazy-started Camoufox browser instances, one per agent.
 Each agent gets its own persistent profile, fingerprint, and
-browser context on a shared Xvfb display.
+browser context on a shared Xvnc display.
 """
 
 from __future__ import annotations
@@ -200,13 +200,14 @@ class BrowserManager:
             inst = self._instances.get(agent_id)
             if not inst:
                 return False
-        try:
-            await inst.page.bring_to_front()
-            inst.touch()
-            return True
-        except Exception as e:
-            logger.debug("Focus failed for '%s': %s", agent_id, e)
-            return False
+        async with inst.lock:
+            try:
+                await inst.page.bring_to_front()
+                inst.touch()
+                return True
+            except Exception as e:
+                logger.debug("Focus failed for '%s': %s", agent_id, e)
+                return False
 
     # ── Browser operations ──────────────────────────────────
 
@@ -326,12 +327,14 @@ class BrowserManager:
                     if not locator:
                         return {"success": False, "error": f"Ref '{ref}' not found"}
                     if clear:
-                        await locator.fill("")
-                    await locator.fill(text)
+                        await locator.fill(text)
+                    else:
+                        await locator.press_sequentially(text)
                 elif selector:
                     if clear:
-                        await inst.page.fill(selector, "")
-                    await inst.page.fill(selector, text)
+                        await inst.page.fill(selector, text)
+                    else:
+                        await inst.page.locator(selector).press_sequentially(text)
                 else:
                     return {"success": False, "error": "Must provide ref or selector"}
 

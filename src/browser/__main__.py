@@ -3,8 +3,9 @@
 Starts KasmVNC (Xvnc + web client), Openbox WM, and the FastAPI
 browser command server.
 
-KasmVNC's vncserver starts its own Xvnc process which serves as both
-the X server and VNC server. No separate Xvfb is needed.
+Uses Xvnc directly (not the vncserver wrapper) for full control over
+flags. Xvnc serves as combined X server + VNC server + web client host.
+No separate Xvfb is needed.
 """
 
 from __future__ import annotations
@@ -32,31 +33,35 @@ _IDLE_TIMEOUT = int(os.environ.get("IDLE_TIMEOUT_MINUTES", "30"))
 
 
 def _start_kasmvnc() -> subprocess.Popen:
-    """Start KasmVNC (Xvnc + web client) on the configured display.
+    """Start KasmVNC Xvnc — combined X server + VNC server + web server.
 
-    KasmVNC's vncserver starts its own Xvnc process which handles both
-    the X11 display and VNC serving. No separate Xvfb needed.
+    Uses Xvnc directly with:
+    - ``-sslOnly 0``: disable TLS (access control via Docker port mapping)
+    - ``-SecurityTypes None``: no VNC authentication
+    - ``-disableBasicAuth``: no HTTP basic auth on the web client
+    - ``-httpd``: serve the KasmVNC web client files
+    - ``-AlwaysShared``: allow multiple VNC viewers
     """
-    passwd_dir = os.path.expanduser("~/.vnc")
-    os.makedirs(passwd_dir, exist_ok=True)
-    passwd_proc = subprocess.run(
-        ["bash", "-c", "echo -e 'password\\npassword\\nn' | vncpasswd"],
-        capture_output=True,
-    )
-    if passwd_proc.returncode != 0:
-        logger.warning("vncpasswd setup may have failed: %s", passwd_proc.stderr.decode(errors="replace"))
-
     cmd = [
-        "vncserver", _DISPLAY,
-        "-websocketPort", str(_VNC_PORT),
+        "Xvnc", _DISPLAY,
         "-geometry", "1920x1080",
         "-depth", "24",
+        "-websocketPort", str(_VNC_PORT),
+        "-httpd", "/usr/share/kasmvnc/www",
+        "-sslOnly", "0",
         "-SecurityTypes", "None",
+        "-disableBasicAuth",
+        "-AlwaysShared",
+        "-interface", "0.0.0.0",
     ]
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(0.5)
+    if proc.poll() is not None:
+        raise RuntimeError(
+            f"Xvnc exited immediately (code {proc.returncode})"
+        )
     os.environ["DISPLAY"] = _DISPLAY
-    time.sleep(1)
-    logger.info("KasmVNC started on display %s, port %d (pid=%d)", _DISPLAY, _VNC_PORT, proc.pid)
+    logger.info("KasmVNC Xvnc started on display %s, web on :%d", _DISPLAY, _VNC_PORT)
     return proc
 
 
