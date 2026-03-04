@@ -13,10 +13,11 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from jinja2 import Environment, FileSystemLoader
 
+from src.dashboard.auth import verify_session_cookie
 from src.shared.utils import sanitize_for_prompt, setup_logging
 
 if TYPE_CHECKING:
@@ -79,7 +80,16 @@ def create_dashboard_router(
     _max_projects = int(os.environ.get("OPENLEGION_MAX_PROJECTS", "0"))
     _projects_disabled = _max_projects == 0 and "OPENLEGION_MAX_PROJECTS" in os.environ
 
-    api_router = APIRouter(prefix="/dashboard")
+    def _verify_dashboard_auth(request: Request) -> None:
+        """Verify the ol_session cookie on dashboard API requests."""
+        error = verify_session_cookie(request.cookies.get("ol_session", ""))
+        if error is not None:
+            raise HTTPException(401, error)
+
+    api_router = APIRouter(
+        prefix="/dashboard",
+        dependencies=[Depends(_verify_dashboard_auth)],
+    )
 
     jinja_env = Environment(
         loader=FileSystemLoader(str(_TEMPLATES_DIR)),

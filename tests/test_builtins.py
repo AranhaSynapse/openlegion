@@ -5,6 +5,7 @@ import os
 import shutil
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlparse
 
 import pytest
 
@@ -374,13 +375,13 @@ class TestHttpTool:
         mock_response.status_code = 200
         mock_response.text = '{"ok": true}'
         mock_response.headers = {"content-type": "application/json"}
-        mock_response.is_closed = False
 
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=mock_response)
+        captured = {}
+        async def _capture_request(client, method, url, headers, content, timeout):
+            captured.update(method=method, url=url, headers=headers, content=content)
+            return mock_response
 
-        with patch("src.agent.builtins.http_tool._get_client", return_value=mock_client), \
-             patch("src.agent.builtins.http_tool._is_private_url", return_value=False):
+        with patch("src.agent.builtins.http_tool._request_with_pinned_dns", side_effect=_capture_request):
             result = await http_request(
                 url="https://api.github.com/user",
                 headers={"Authorization": "Bearer $CRED{github_token}"},
@@ -388,9 +389,7 @@ class TestHttpTool:
             )
 
         mock_mesh.vault_resolve.assert_called_once_with("github_token")
-        # Verify the resolved value was sent, not the handle
-        call_kwargs = mock_client.request.call_args
-        assert call_kwargs.kwargs["headers"]["Authorization"] == "Bearer secret-token-123"
+        assert captured["headers"]["Authorization"] == "Bearer secret-token-123"
         assert result["status_code"] == 200
 
     @pytest.mark.asyncio
@@ -435,11 +434,10 @@ class TestHttpTool:
         mock_response.text = "ok"
         mock_response.headers = {}
 
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=mock_response)
+        async def _mock_pinned(client, method, url, headers, content, timeout):
+            return mock_response
 
-        with patch("src.agent.builtins.http_tool._get_client", return_value=mock_client), \
-             patch("src.agent.builtins.http_tool._is_private_url", return_value=False):
+        with patch("src.agent.builtins.http_tool._request_with_pinned_dns", side_effect=_mock_pinned):
             result = await http_request(
                 url="https://example.com",
                 headers={"Accept": "application/json"},
@@ -461,20 +459,20 @@ class TestHttpTool:
         mock_response.text = "ok"
         mock_response.headers = {}
 
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=mock_response)
+        captured = {}
+        async def _capture_request(client, method, url, headers, content, timeout):
+            captured.update(url=url)
+            return mock_response
 
-        with patch("src.agent.builtins.http_tool._get_client", return_value=mock_client), \
-             patch("src.agent.builtins.http_tool._is_private_url", return_value=False):
+        with patch("src.agent.builtins.http_tool._request_with_pinned_dns", side_effect=_capture_request):
             await http_request(
                 url="https://api.example.com/data?key=$CRED{api_key}",
                 mesh_client=mock_mesh,
             )
 
         mock_mesh.vault_resolve.assert_called_once_with("api_key")
-        call_kwargs = mock_client.request.call_args
-        assert "my-api-key" in call_kwargs.kwargs["url"]
-        assert "$CRED" not in call_kwargs.kwargs["url"]
+        assert "my-api-key" in captured["url"]
+        assert "$CRED" not in captured["url"]
 
     @pytest.mark.asyncio
     async def test_cred_handle_in_body(self):
@@ -491,10 +489,12 @@ class TestHttpTool:
         mock_response.text = "ok"
         mock_response.headers = {}
 
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=mock_response)
+        captured = {}
+        async def _capture_request(client, method, url, headers, content, timeout):
+            captured.update(content=content)
+            return mock_response
 
-        with patch("src.agent.builtins.http_tool._get_client", return_value=mock_client):
+        with patch("src.agent.builtins.http_tool._request_with_pinned_dns", side_effect=_capture_request):
             await http_request(
                 url="https://8.8.8.8/api",
                 method="POST",
@@ -503,9 +503,8 @@ class TestHttpTool:
             )
 
         mock_mesh.vault_resolve.assert_called_once_with("my_token")
-        call_kwargs = mock_client.request.call_args
-        assert "secret-value" in call_kwargs.kwargs["content"]
-        assert "$CRED" not in call_kwargs.kwargs["content"]
+        assert "secret-value" in captured["content"]
+        assert "$CRED" not in captured["content"]
 
     @pytest.mark.asyncio
     async def test_response_body_redacted(self):
@@ -519,14 +518,13 @@ class TestHttpTool:
 
         mock_response = AsyncMock()
         mock_response.status_code = 200
-        # API echoes back the token in its response
         mock_response.text = '{"token": "secret-token-123", "user": "alice"}'
         mock_response.headers = {"content-type": "application/json"}
 
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=mock_response)
+        async def _mock_pinned(client, method, url, headers, content, timeout):
+            return mock_response
 
-        with patch("src.agent.builtins.http_tool._get_client", return_value=mock_client):
+        with patch("src.agent.builtins.http_tool._request_with_pinned_dns", side_effect=_mock_pinned):
             result = await http_request(
                 url="https://8.8.8.8/api",
                 headers={"Authorization": "Bearer $CRED{token}"},
@@ -551,17 +549,15 @@ class TestHttpTool:
         mock_response = AsyncMock()
         mock_response.status_code = 200
         mock_response.text = "ok"
-        # Server echoes the credential in a response header
         mock_response.headers = {
             "content-type": "application/json",
             "x-api-key": "secret-key-abc",
         }
 
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=mock_response)
+        async def _mock_pinned(client, method, url, headers, content, timeout):
+            return mock_response
 
-        with patch("src.agent.builtins.http_tool._get_client", return_value=mock_client), \
-             patch("src.agent.builtins.http_tool._is_private_url", return_value=False):
+        with patch("src.agent.builtins.http_tool._request_with_pinned_dns", side_effect=_mock_pinned):
             result = await http_request(
                 url="https://api.example.com?key=$CRED{api_key}",
                 mesh_client=mock_mesh,
@@ -580,13 +576,10 @@ class TestHttpTool:
         mock_mesh = AsyncMock()
         mock_mesh.vault_resolve = AsyncMock(return_value="super-secret-key")
 
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(
-            side_effect=Exception("Connection failed to https://api.example.com?key=super-secret-key")
-        )
+        async def _fail_pinned(client, method, url, headers, content, timeout):
+            raise Exception("Connection failed to https://api.example.com?key=super-secret-key")
 
-        with patch("src.agent.builtins.http_tool._get_client", return_value=mock_client), \
-             patch("src.agent.builtins.http_tool._is_private_url", return_value=False):
+        with patch("src.agent.builtins.http_tool._request_with_pinned_dns", side_effect=_fail_pinned):
             result = await http_request(
                 url="https://api.example.com?key=$CRED{key}",
                 mesh_client=mock_mesh,
@@ -635,15 +628,179 @@ class TestHttpTool:
         mock_response.text = '{"data": "normal response"}'
         mock_response.headers = {"content-type": "application/json"}
 
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=mock_response)
+        async def _mock_pinned(client, method, url, headers, content, timeout):
+            return mock_response
 
-        with patch("src.agent.builtins.http_tool._get_client", return_value=mock_client), \
-             patch("src.agent.builtins.http_tool._is_private_url", return_value=False):
+        with patch("src.agent.builtins.http_tool._request_with_pinned_dns", side_effect=_mock_pinned):
             result = await http_request(url="https://example.com")
 
         assert result["body"] == '{"data": "normal response"}'
         assert result["headers"] == {"content-type": "application/json"}
+
+    @pytest.mark.asyncio
+    async def test_dns_pinning_blocks_private_ip(self):
+        """_resolve_and_pin blocks requests to private IPs after DNS resolution."""
+        from src.agent.builtins.http_tool import _resolve_and_pin
+
+        # Direct private IP should be blocked
+        with pytest.raises(ValueError, match="SSRF"):
+            _resolve_and_pin("http://127.0.0.1/secret")
+
+        with pytest.raises(ValueError, match="SSRF"):
+            _resolve_and_pin("http://10.0.0.1/internal")
+
+    @pytest.mark.asyncio
+    async def test_dns_pinning_blocks_rebinding(self):
+        """DNS resolution to a private IP is blocked even when hostname looks public."""
+        from unittest.mock import patch
+
+        from src.agent.builtins.http_tool import _resolve_and_pin
+
+        # Mock DNS to resolve to a private IP (simulating DNS rebinding)
+        fake_dns = [(2, 1, 6, '', ('192.168.1.1', 80))]
+        with patch("src.agent.builtins.http_tool.socket.getaddrinfo", return_value=fake_dns):
+            with pytest.raises(ValueError, match="SSRF"):
+                _resolve_and_pin("http://evil.example.com/steal")
+
+    @pytest.mark.asyncio
+    async def test_redirect_revalidates_dns(self):
+        """Redirects re-resolve DNS and block if target is private."""
+        from unittest.mock import AsyncMock, patch
+
+        from src.agent.builtins.http_tool import _request_with_pinned_dns
+
+        # First request returns a redirect to a private IP
+        redirect_response = AsyncMock()
+        redirect_response.status_code = 302
+        redirect_response.headers = {"location": "http://169.254.169.254/metadata"}
+        redirect_response.request = AsyncMock()
+
+        mock_client = AsyncMock()
+
+        # Mock _send_pinned_request: first call succeeds, redirect target blocked
+        call_count = 0
+        async def _mock_send(client, method, url, headers, content, timeout):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return redirect_response
+            raise ValueError("SSRF protection: requests to private/internal addresses are blocked")
+
+        with patch("src.agent.builtins.http_tool._send_pinned_request", side_effect=_mock_send):
+            with pytest.raises(ValueError, match="SSRF"):
+                await _request_with_pinned_dns(
+                    mock_client, "GET", "https://evil.example.com",
+                    {}, None, 30,
+                )
+
+    @pytest.mark.asyncio
+    async def test_max_redirects_enforced(self):
+        """Exceeding max redirects raises an error."""
+        from unittest.mock import AsyncMock, patch
+
+        from src.agent.builtins.http_tool import _request_with_pinned_dns
+
+        redirect_response = AsyncMock()
+        redirect_response.status_code = 302
+        redirect_response.headers = {"location": "https://example.com/loop"}
+        redirect_response.request = AsyncMock()
+
+        async def _always_redirect(client, method, url, headers, content, timeout):
+            return redirect_response
+
+        with patch("src.agent.builtins.http_tool._send_pinned_request", side_effect=_always_redirect):
+            with pytest.raises(Exception, match="redirect"):
+                await _request_with_pinned_dns(
+                    AsyncMock(), "GET", "https://example.com/start",
+                    {}, None, 30,
+                )
+
+    @pytest.mark.asyncio
+    async def test_https_sni_set_correctly(self):
+        """HTTPS requests set SNI extension to original hostname."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from src.agent.builtins.http_tool import _send_pinned_request
+
+        mock_request = MagicMock()
+        mock_request.extensions = {}
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+
+        mock_client = AsyncMock()
+        mock_client.build_request = MagicMock(return_value=mock_request)
+        mock_client.send = AsyncMock(return_value=mock_response)
+
+        # Resolve to a public IP
+        fake_dns = [(2, 1, 6, '', ('93.184.216.34', 443))]
+        with patch("src.agent.builtins.http_tool.socket.getaddrinfo", return_value=fake_dns):
+            await _send_pinned_request(
+                mock_client, "GET", "https://example.com/path",
+                {}, None, 30,
+            )
+
+        # Verify SNI was set to the original hostname
+        assert mock_request.extensions["sni_hostname"] == b"example.com"
+        # Verify Host header was set
+        build_kwargs = mock_client.build_request.call_args
+        assert build_kwargs.kwargs["headers"]["Host"] == "example.com"
+
+    @pytest.mark.asyncio
+    async def test_dns_pinning_blocks_ipv4_mapped_ipv6(self):
+        """IPv4-mapped IPv6 addresses like ::ffff:127.0.0.1 are blocked."""
+        from src.agent.builtins.http_tool import _resolve_and_pin
+
+        with pytest.raises(ValueError, match="SSRF"):
+            _resolve_and_pin("http://[::ffff:127.0.0.1]/secret")
+
+    @pytest.mark.asyncio
+    async def test_is_blocked_ip_link_local(self):
+        """Link-local addresses (169.254.x.x) are blocked."""
+        import ipaddress
+        from src.agent.builtins.http_tool import _is_blocked_ip
+
+        assert _is_blocked_ip(ipaddress.ip_address("169.254.1.1")) is True
+
+    @pytest.mark.asyncio
+    async def test_is_blocked_ip_ipv6_loopback(self):
+        """IPv6 loopback (::1) is blocked."""
+        import ipaddress
+        from src.agent.builtins.http_tool import _is_blocked_ip
+
+        assert _is_blocked_ip(ipaddress.ip_address("::1")) is True
+
+    @pytest.mark.asyncio
+    async def test_is_blocked_ip_public_is_allowed(self):
+        """Public IPs are not blocked."""
+        import ipaddress
+        from src.agent.builtins.http_tool import _is_blocked_ip
+
+        assert _is_blocked_ip(ipaddress.ip_address("8.8.8.8")) is False
+        assert _is_blocked_ip(ipaddress.ip_address("93.184.216.34")) is False
+
+    @pytest.mark.asyncio
+    async def test_resolve_and_pin_rejects_non_http_scheme(self):
+        """Non-http/https schemes (file://, gopher://) are rejected."""
+        from src.agent.builtins.http_tool import _resolve_and_pin
+
+        with pytest.raises(ValueError, match="only http and https"):
+            _resolve_and_pin("file:///etc/passwd")
+
+        with pytest.raises(ValueError, match="only http and https"):
+            _resolve_and_pin("gopher://evil.com/steal")
+
+    @pytest.mark.asyncio
+    async def test_dns_failure_fails_closed(self):
+        """DNS resolution failure blocks the request (fail-closed)."""
+        from unittest.mock import patch
+        import socket
+
+        from src.agent.builtins.http_tool import _resolve_and_pin
+
+        with patch("src.agent.builtins.http_tool.socket.getaddrinfo", side_effect=socket.gaierror("NXDOMAIN")):
+            with pytest.raises(ValueError, match="DNS resolution failed"):
+                _resolve_and_pin("http://nonexistent.invalid/path")
 
 
 # ── browser_tool (thin HTTP client via mesh) ─────────────────
