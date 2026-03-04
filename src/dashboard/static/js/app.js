@@ -407,11 +407,11 @@ function dashboard() {
       this.confirmLoading = true;
       try {
         if (this.confirmModal.action) await this.confirmModal.action();
-        this.confirmModal = { open: false, title: '', message: '', action: null, destructive: false };
       } catch (e) {
-        this.showToast(`Error: ${e.message}`);
+        this.showToast(`Error: ${e.message || String(e)}`);
       } finally {
         this.confirmLoading = false;
+        this.confirmModal = { open: false, title: '', message: '', action: null, destructive: false };
       }
     },
 
@@ -1474,10 +1474,12 @@ function dashboard() {
       this.configSaving = true;
       try {
         await this.saveAgentConfig(agentId);
-        // saveAgentConfig already calls cancelConfigEdit + fetchAgentConfig
         await this.fetchAgentDetail(agentId);
-      } catch (e) { this.showToast(`Error: ${e.message}`); }
-      finally { this.configSaving = false; }
+      } catch (e) {
+        this.showToast(`Error: ${e.message || String(e)}`);
+      } finally {
+        this.configSaving = false;
+      }
     },
 
     async saveAgentConfig(agentId) {

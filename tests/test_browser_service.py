@@ -318,6 +318,18 @@ class TestStealthConfig:
         assert config["server"] == "http://proxy.example.com:8080"
         assert config["username"] == "user"
 
+    def test_proxy_url_logging_strips_credentials(self):
+        """Proxy URL with embedded credentials should not log the password."""
+        from src.browser.stealth import get_proxy_config
+        env = {"BROWSER_PROXY_URL": "http://user:s3cret@proxy.example.com:8080"}
+        with patch.dict("os.environ", env):
+            with patch("src.browser.stealth.logger") as mock_logger:
+                get_proxy_config()
+                log_msg = mock_logger.info.call_args[0][1]
+                assert "s3cret" not in log_msg
+                assert "user:" not in log_msg
+                assert "proxy.example.com" in log_msg
+
 
 class TestNavigate:
     """Tests for BrowserManager.navigate()."""
@@ -650,6 +662,208 @@ class TestAgentIdValidation:
 
         with pytest.raises(ValueError, match="Invalid agent_id"):
             await mgr.get_or_start("agent with spaces")
+
+
+class TestSnapshot:
+    """Tests for BrowserManager.snapshot()."""
+
+    @pytest.mark.asyncio
+    async def test_snapshot_empty_page(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = AsyncMock()
+        mock_page.accessibility = MagicMock()
+        mock_page.accessibility.snapshot = AsyncMock(return_value=None)
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        mgr._instances["a1"] = inst
+
+        result = await mgr.snapshot("a1")
+        assert result["success"] is True
+        assert result["data"]["snapshot"] == "(empty page)"
+        assert result["data"]["refs"] == {}
+
+    @pytest.mark.asyncio
+    async def test_snapshot_with_actionable_elements(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = AsyncMock()
+        tree = {
+            "role": "WebArea",
+            "name": "Test Page",
+            "children": [
+                {"role": "button", "name": "Submit"},
+                {"role": "textbox", "name": "Email", "value": "test@example.com"},
+                {"role": "heading", "name": "Welcome"},
+            ],
+        }
+        mock_page.accessibility = MagicMock()
+        mock_page.accessibility.snapshot = AsyncMock(return_value=tree)
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        mgr._instances["a1"] = inst
+
+        result = await mgr.snapshot("a1")
+        assert result["success"] is True
+        assert "e0" in result["data"]["refs"]
+        assert "e1" in result["data"]["refs"]
+        assert "e2" in result["data"]["refs"]
+        assert result["data"]["refs"]["e0"]["role"] == "button"
+        assert "Submit" in result["data"]["snapshot"]
+        # Refs stored on instance for click/type by ref
+        assert inst.refs == result["data"]["refs"]
+
+    @pytest.mark.asyncio
+    async def test_snapshot_credential_value_masked(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = AsyncMock()
+        tree = {
+            "role": "WebArea",
+            "name": "",
+            "children": [
+                {"role": "textbox", "name": "Password", "value": "s3cretPass!"},
+            ],
+        }
+        mock_page.accessibility = MagicMock()
+        mock_page.accessibility.snapshot = AsyncMock(return_value=tree)
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        inst.credential_filled_refs.add("e0")
+        mgr._instances["a1"] = inst
+
+        result = await mgr.snapshot("a1")
+        assert result["success"] is True
+        assert "****" in result["data"]["snapshot"]
+        assert "s3cretPass!" not in result["data"]["snapshot"]
+
+    @pytest.mark.asyncio
+    async def test_snapshot_no_interactive_elements(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = AsyncMock()
+        tree = {
+            "role": "WebArea",
+            "name": "Plain page",
+            "children": [
+                {"role": "generic", "name": "just text"},
+            ],
+        }
+        mock_page.accessibility = MagicMock()
+        mock_page.accessibility.snapshot = AsyncMock(return_value=tree)
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        mgr._instances["a1"] = inst
+
+        result = await mgr.snapshot("a1")
+        assert result["success"] is True
+        assert result["data"]["snapshot"] == "(no interactive elements)"
+
+    @pytest.mark.asyncio
+    async def test_snapshot_element_limit(self):
+        """Snapshot should stop adding refs after _MAX_SNAPSHOT_ELEMENTS."""
+        from src.browser.service import _MAX_SNAPSHOT_ELEMENTS, BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = AsyncMock()
+        # Create tree with more elements than the limit
+        children = [{"role": "button", "name": f"btn{i}"} for i in range(_MAX_SNAPSHOT_ELEMENTS + 10)]
+        tree = {"role": "WebArea", "name": "", "children": children}
+        mock_page.accessibility = MagicMock()
+        mock_page.accessibility.snapshot = AsyncMock(return_value=tree)
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        mgr._instances["a1"] = inst
+
+        result = await mgr.snapshot("a1")
+        assert result["success"] is True
+        assert len(result["data"]["refs"]) == _MAX_SNAPSHOT_ELEMENTS
+
+
+class TestTypeTextWithRef:
+    """Tests for type_text using ref-based element resolution."""
+
+    @pytest.mark.asyncio
+    async def test_type_by_ref_clear(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = MagicMock()
+        mock_locator = MagicMock()
+        mock_locator.fill = AsyncMock()
+        mock_page.get_by_role.return_value = mock_locator
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        inst.refs = {"e0": {"role": "textbox", "name": "Email"}}
+        mgr._instances["a1"] = inst
+
+        result = await mgr.type_text("a1", ref="e0", text="test@example.com", clear=True)
+        assert result["success"] is True
+        mock_locator.fill.assert_called_once_with("test@example.com")
+
+    @pytest.mark.asyncio
+    async def test_type_by_ref_no_clear(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = MagicMock()
+        mock_locator = MagicMock()
+        mock_locator.press_sequentially = AsyncMock()
+        mock_page.get_by_role.return_value = mock_locator
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        inst.refs = {"e0": {"role": "textbox", "name": "Email"}}
+        mgr._instances["a1"] = inst
+
+        result = await mgr.type_text("a1", ref="e0", text="appended", clear=False)
+        assert result["success"] is True
+        mock_locator.press_sequentially.assert_called_once_with("appended")
+
+    @pytest.mark.asyncio
+    async def test_type_by_ref_credential_tracks_ref(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = MagicMock()
+        mock_locator = MagicMock()
+        mock_locator.fill = AsyncMock()
+        mock_page.get_by_role.return_value = mock_locator
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        inst.refs = {"e0": {"role": "textbox", "name": "Password"}}
+        mgr._instances["a1"] = inst
+
+        await mgr.type_text("a1", ref="e0", text="secret123", is_credential=True)
+        assert "e0" in inst.credential_filled_refs
+        assert "secret123" in mgr.redactor._resolved_values.get("a1", set())
+
+    @pytest.mark.asyncio
+    async def test_type_no_ref_or_selector(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), AsyncMock())
+        mgr._instances["a1"] = inst
+
+        result = await mgr.type_text("a1", text="hello")
+        assert result["success"] is False
+        assert "Must provide" in result["error"]
+
+
+class TestEvaluateRedaction:
+    """Tests that evaluate results are redacted."""
+
+    @pytest.mark.asyncio
+    async def test_evaluate_redacts_credentials(self):
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mgr.redactor.track_resolved_value("a1", "mysecrettoken")
+        mock_page = AsyncMock()
+        mock_page.evaluate = AsyncMock(return_value="token is mysecrettoken")
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        mgr._instances["a1"] = inst
+
+        result = await mgr.evaluate("a1", "document.cookie")
+        assert result["success"] is True
+        assert "mysecrettoken" not in str(result["data"]["result"])
+        assert "[REDACTED]" in str(result["data"]["result"])
 
 
 class TestSolveCaptcha:
