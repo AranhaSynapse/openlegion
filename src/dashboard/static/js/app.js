@@ -241,6 +241,19 @@ function dashboard() {
     // Restart loading
     _restartingAgents: {},
 
+    // Loading states for double-submit prevention
+    bbWriteLoading: false,
+    cronRunLoading: {},
+    cronEditSaving: false,
+    workflowRunLoading: {},
+    credSaving: false,
+    onboardSaving: false,
+    channelConnecting: false,
+    webhookCreating: false,
+    webhookTesting: {},
+    broadcastSending: false,
+    confirmLoading: false,
+
     // Onboarding
     onboardProvider: '',
     onboardKey: '',
@@ -389,8 +402,16 @@ function dashboard() {
     },
 
     async executeConfirm() {
-      if (this.confirmModal.action) await this.confirmModal.action();
-      this.cancelConfirm();
+      if (this.confirmLoading) return;
+      this.confirmLoading = true;
+      try {
+        if (this.confirmModal.action) await this.confirmModal.action();
+        this.cancelConfirm();
+      } catch (e) {
+        this.showToast(`Error: ${e.message}`);
+      } finally {
+        this.confirmLoading = false;
+      }
     },
 
     // ── Computed ───────────────────────────────────────────
@@ -1624,9 +1645,11 @@ function dashboard() {
     // ── Blackboard write/delete ────────────────────────────
 
     async writeBlackboard() {
+      if (this.bbWriteLoading) return;
       if (!this.bbNewKey.trim()) return;
       let value;
       try { value = JSON.parse(this.bbNewValue); } catch (_) { this.showToast('Invalid JSON'); return; }
+      this.bbWriteLoading = true;
       try {
         const resp = await fetch(`${window.__config.apiBase}/blackboard/${this.bbNewKey}`, {
           method: 'PUT', headers: {'Content-Type': 'application/json'},
@@ -1638,6 +1661,7 @@ function dashboard() {
           this.fetchBlackboard();
         }
       } catch (e) { this.showToast(`Error: ${e.message}`); }
+      finally { this.bbWriteLoading = false; }
     },
 
     async deleteBlackboard(key) {
@@ -1673,27 +1697,36 @@ function dashboard() {
     },
 
     async runCronJob(jobId) {
+      if (this.cronRunLoading[jobId]) return;
+      this.cronRunLoading = { ...this.cronRunLoading, [jobId]: true };
       try {
         const resp = await fetch(`${window.__config.apiBase}/cron/${jobId}/run`, { method: 'POST' });
         if (resp.ok) this.showToast(`Job ${jobId} triggered`);
         this.fetchCronJobs();
       } catch (e) { console.warn('runCronJob failed:', e); }
+      finally { this.cronRunLoading = { ...this.cronRunLoading, [jobId]: false }; }
     },
 
     async pauseCronJob(jobId) {
+      if (this.cronRunLoading[jobId]) return;
+      this.cronRunLoading = { ...this.cronRunLoading, [jobId]: true };
       try {
         await fetch(`${window.__config.apiBase}/cron/${jobId}/pause`, { method: 'POST' });
         this.showToast(`Job ${jobId} paused`);
         this.fetchCronJobs();
       } catch (e) { console.warn('pauseCronJob failed:', e); }
+      finally { this.cronRunLoading = { ...this.cronRunLoading, [jobId]: false }; }
     },
 
     async resumeCronJob(jobId) {
+      if (this.cronRunLoading[jobId]) return;
+      this.cronRunLoading = { ...this.cronRunLoading, [jobId]: true };
       try {
         await fetch(`${window.__config.apiBase}/cron/${jobId}/resume`, { method: 'POST' });
         this.showToast(`Job ${jobId} resumed`);
         this.fetchCronJobs();
       } catch (e) { console.warn('resumeCronJob failed:', e); }
+      finally { this.cronRunLoading = { ...this.cronRunLoading, [jobId]: false }; }
     },
 
     async fetchWorkflows() {
@@ -1867,6 +1900,8 @@ function dashboard() {
     },
 
     async runWorkflow(name) {
+      if (this.workflowRunLoading[name]) return;
+      this.workflowRunLoading = { ...this.workflowRunLoading, [name]: true };
       try {
         const resp = await fetch(`${window.__config.apiBase}/workflows/${encodeURIComponent(name)}/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
         if (resp.ok) {
@@ -1877,6 +1912,7 @@ function dashboard() {
           this.showToast(`Failed to start workflow '${name}'`);
         }
       } catch (e) { console.warn('runWorkflow failed:', e); }
+      finally { this.workflowRunLoading = { ...this.workflowRunLoading, [name]: false }; }
     },
 
     async deleteCronJob(jobId) {
@@ -1943,7 +1979,9 @@ function dashboard() {
     },
 
     async saveCronEdit(jobId) {
+      if (this.cronEditSaving) return;
       if (!this.cronEditSchedule.trim()) { this.cancelCronEdit(); return; }
+      this.cronEditSaving = true;
       try {
         const resp = await fetch(`${window.__config.apiBase}/cron/${jobId}`, {
           method: 'PUT', headers: {'Content-Type': 'application/json'},
@@ -1958,6 +1996,7 @@ function dashboard() {
           this.showToast(`Error: ${err.detail || 'Update failed'}`);
         }
       } catch (e) { this.showToast(`Error: ${e.message}`); }
+      finally { this.cronEditSaving = false; }
     },
 
     // ── Settings fetcher ─────────────────────────────────
@@ -2350,6 +2389,7 @@ function dashboard() {
     },
 
     sendBroadcast() {
+      if (this.broadcastSending) return;
       const msg = (this.broadcastMessage || '').trim();
       if (!msg) return;
       const targets = this.broadcastTargets.map(a => a.id);
@@ -2373,6 +2413,7 @@ function dashboard() {
       if (sent === 0) {
         this.showToast('All targeted agents are busy');
       } else {
+        this.broadcastSending = true;
         this._broadcastPending = { targets: sentTargets, total: sent, completed: 0 };
         this.showToast(`Broadcast sent to ${sent} agent${sent !== 1 ? 's' : ''}`);
       }
@@ -2385,6 +2426,7 @@ function dashboard() {
       if (this._broadcastPending.completed >= this._broadcastPending.total) {
         this.showToast(`Broadcast complete — all ${this._broadcastPending.total} agents responded`);
         this._broadcastPending = null;
+        this.broadcastSending = false;
       }
     },
 
@@ -2546,11 +2588,13 @@ function dashboard() {
     },
 
     async addCredential() {
+      if (this.credSaving) return;
       const service = this.credService === '__custom__' ? this.credCustomService.trim() : this.credService.trim();
       if (!service || !this.credKey.trim()) return;
+      this.credSaving = true;
       this.showToast('Validating API key...');
-      if (!await this._validateCredential(service, this.credKey.trim(), this.credBaseUrl.trim())) return;
       try {
+        if (!await this._validateCredential(service, this.credKey.trim(), this.credBaseUrl.trim())) return;
         const body = { service, key: this.credKey.trim() };
         if (this.credService === '__custom__' && this.credTier === 'system') body.tier = 'system';
         if (this.credBaseUrl.trim()) body.base_url = this.credBaseUrl.trim();
@@ -2573,6 +2617,7 @@ function dashboard() {
           this.showToast(`Error: ${err.detail}`);
         }
       } catch (e) { this.showToast(`Error: ${e.message}`); }
+      finally { this.credSaving = false; }
     },
 
     async deleteCredential(name) {
@@ -2593,10 +2638,12 @@ function dashboard() {
     },
 
     async submitOnboardCredential() {
+      if (this.onboardSaving) return;
       if (!this.onboardProvider || !this.onboardKey.trim()) return;
+      this.onboardSaving = true;
       this.showToast('Validating API key...');
-      if (!await this._validateCredential(this.onboardProvider, this.onboardKey.trim(), this.onboardBaseUrl.trim())) return;
       try {
+        if (!await this._validateCredential(this.onboardProvider, this.onboardKey.trim(), this.onboardBaseUrl.trim())) return;
         const body = { service: this.onboardProvider, key: this.onboardKey.trim() };
         if (this.onboardBaseUrl.trim()) body.base_url = this.onboardBaseUrl.trim();
         const resp = await fetch(`${window.__config.apiBase}/credentials`, {
@@ -2615,6 +2662,7 @@ function dashboard() {
           this.showToast(`Error: ${err.detail}`);
         }
       } catch (e) { this.showToast(`Error: ${e.message}`); }
+      finally { this.onboardSaving = false; }
     },
 
     // ── Channels ──────────────────────────────────────────
@@ -2653,6 +2701,7 @@ function dashboard() {
     },
 
     async connectChannel() {
+      if (this.channelConnecting) return;
       const type = this.channelConnectType;
       const fields = this._channelFields(type);
       const missing = fields.filter(f => !this.channelTokens[f.key]?.trim());
@@ -2660,6 +2709,7 @@ function dashboard() {
         this.showToast(`Missing: ${missing.map(f => f.label).join(', ')}`);
         return;
       }
+      this.channelConnecting = true;
       try {
         const resp = await fetch(`${window.__config.apiBase}/channels/${type}/connect`, {
           method: 'POST',
@@ -2675,6 +2725,7 @@ function dashboard() {
           this.showToast(`Error: ${err.detail || 'Failed to connect'}`);
         }
       } catch (e) { this.showToast(`Error: ${e.message}`); }
+      finally { this.channelConnecting = false; }
     },
 
     disconnectChannel(type) {
@@ -2707,9 +2758,11 @@ function dashboard() {
     },
 
     async createWebhook() {
+      if (this.webhookCreating) return;
       const name = this.webhookFormName.trim();
       const agent = this.webhookFormAgent;
       if (!name || !agent) { this.showToast('Name and agent are required'); return; }
+      this.webhookCreating = true;
       try {
         const body = { name, agent };
         if (this.webhookFormSecret.trim()) body.secret = this.webhookFormSecret.trim();
@@ -2730,6 +2783,7 @@ function dashboard() {
           this.showToast(`Error: ${err.detail || 'Failed to create webhook'}`);
         }
       } catch (e) { this.showToast(`Error: ${e.message}`); }
+      finally { this.webhookCreating = false; }
     },
 
     async deleteWebhook(name) {
@@ -2748,6 +2802,8 @@ function dashboard() {
     },
 
     async testWebhook(name) {
+      if (this.webhookTesting[name]) return;
+      this.webhookTesting = { ...this.webhookTesting, [name]: true };
       try {
         const resp = await fetch(`${window.__config.apiBase}/webhooks/${encodeURIComponent(name)}/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
         if (resp.ok) {
@@ -2757,6 +2813,7 @@ function dashboard() {
           this.showToast(`Test failed: ${err.detail || 'Unknown error'}`);
         }
       } catch (e) { this.showToast(`Test failed: ${e.message}`); }
+      finally { this.webhookTesting = { ...this.webhookTesting, [name]: false }; }
     },
 
     // ── Agent drill-down ──────────────────────────────────

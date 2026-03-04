@@ -80,14 +80,15 @@
         <h3 class="text-lg font-semibold text-white" x-text="confirmModal.title"></h3>
         <p class="text-sm text-gray-400 mt-2" x-text="confirmModal.message"></p>
         <div class="flex justify-end gap-3 mt-6">
-          <button @click="cancelConfirm()"
-            class="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition-colors">
+          <button @click="cancelConfirm()" :disabled="confirmLoading"
+            class="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition-colors disabled:opacity-50">
             Cancel
           </button>
-          <button @click="executeConfirm()"
-            class="px-4 py-2 text-sm rounded-lg transition-colors font-medium"
+          <button @click="executeConfirm()" :disabled="confirmLoading"
+            class="px-4 py-2 text-sm rounded-lg transition-colors font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
             :class="confirmModal.destructive ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-indigo-600 hover:bg-indigo-500 text-white'">
-            Confirm
+            <svg x-show="confirmLoading" x-cloak class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            <span x-text="confirmLoading ? 'Working...' : 'Confirm'"></span>
           </button>
         </div>
       </div>
@@ -426,15 +427,17 @@
           <div class="flex items-center gap-3">
             <svg class="w-3.5 h-3.5 text-gray-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
             <input id="broadcast-input" type="text" x-model="broadcastMessage" @keydown.enter="sendBroadcast()"
+              :disabled="broadcastSending"
               class="dash-input flex-1 text-sm"
               :placeholder="activeProject
                 ? 'Broadcast to ' + broadcastTargets.length + ' ' + activeProject + ' agent' + (broadcastTargets.length !== 1 ? 's' : '') + '...'
                 : 'Broadcast to all ' + broadcastTargets.length + ' agents...'">
             <span x-show="_broadcastPending" class="text-[10px] text-indigo-400 font-mono shrink-0 whitespace-nowrap"
               x-text="_broadcastPending ? _broadcastPending.completed + '/' + _broadcastPending.total + ' done' : ''"></span>
-            <button @click="sendBroadcast()"
-              class="text-xs px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors shrink-0">
-              Send
+            <button @click="sendBroadcast()" :disabled="broadcastSending || !broadcastMessage.trim()"
+              class="text-xs px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors shrink-0 inline-flex items-center gap-1.5 disabled:opacity-50">
+              <svg x-show="broadcastSending" x-cloak class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              <span x-text="broadcastSending ? 'Sending...' : 'Send'"></span>
             </button>
           </div>
         </div>
@@ -595,7 +598,7 @@
                 <div class="text-sm font-medium text-gray-200 mb-2">Add an API key</div>
                 <div x-show="!settingsData?.has_llm_credentials" class="space-y-2">
                   <div class="flex flex-wrap gap-2">
-                    <select x-model="onboardProvider" class="dash-select text-xs w-40">
+                    <select x-model="onboardProvider" :disabled="onboardSaving" class="dash-select text-xs w-40">
                       <option value="">Provider...</option>
                       <option value="anthropic">Anthropic</option>
                       <option value="openai">OpenAI</option>
@@ -606,12 +609,15 @@
                       <option value="groq">Groq</option>
                       <option value="minimax">MiniMax</option>
                     </select>
-                    <input type="password" x-model="onboardKey" class="dash-input flex-1 min-w-[200px]" placeholder="API key">
+                    <input type="password" x-model="onboardKey" :disabled="onboardSaving" class="dash-input flex-1 min-w-[200px]" placeholder="API key">
                   </div>
                   <div class="flex flex-wrap gap-2 items-center">
-                    <input type="text" x-model="onboardBaseUrl" class="dash-input flex-1 min-w-[200px]" placeholder="Custom API base URL (optional)">
-                    <button @click="submitOnboardCredential()" :disabled="!onboardProvider || !onboardKey"
-                      class="text-xs px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors">Save</button>
+                    <input type="text" x-model="onboardBaseUrl" :disabled="onboardSaving" class="dash-input flex-1 min-w-[200px]" placeholder="Custom API base URL (optional)">
+                    <button @click="submitOnboardCredential()" :disabled="onboardSaving || !onboardProvider || !onboardKey"
+                      class="text-xs px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors inline-flex items-center gap-1.5">
+                      <svg x-show="onboardSaving" x-cloak class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                      <span x-text="onboardSaving ? 'Saving...' : 'Save'"></span>
+                    </button>
                   </div>
                 </div>
                 <div x-show="settingsData?.has_llm_credentials" class="text-xs text-emerald-400">API key configured</div>
@@ -755,13 +761,14 @@
         <div class="px-3 py-2.5 border-t border-gray-800 shrink-0" x-data="{ chatInput: '' }">
           <div class="flex gap-1.5 items-end">
             <textarea x-model="chatInput" id="chat-slide-input" rows="1"
+              :disabled="chatLoadingAgents[activeChatId]"
               @keydown.enter="if (!$event.shiftKey && chatInput.trim()) { $event.preventDefault(); if (isAgentBusy(activeChatId)) { steerAgent(activeChatId, chatInput); } else { sendChatTo(activeChatId, chatInput); } chatInput = ''; $el.style.height = 'auto'; }"
               @input="$el.style.height = 'auto'; $el.style.height = Math.min($el.scrollHeight, 120) + 'px'"
               class="dash-input flex-1 text-xs py-1.5 resize-none overflow-y-auto"
               style="max-height: 120px"
               :placeholder="isAgentBusy(activeChatId) ? 'Steer agent...' : 'Message...'"></textarea>
             <button @click="if (chatInput.trim()) { if (isAgentBusy(activeChatId)) { steerAgent(activeChatId, chatInput); } else { sendChatTo(activeChatId, chatInput); } chatInput = ''; const ta = document.getElementById('chat-slide-input'); if (ta) ta.style.height = 'auto'; }"
-              :disabled="!chatInput.trim()"
+              :disabled="!chatInput.trim() || chatLoadingAgents[activeChatId]"
               class="text-[10px] px-3 py-1.5 rounded text-white disabled:opacity-50 transition-colors shrink-0"
               :class="isAgentBusy(activeChatId) ? 'bg-amber-600 hover:bg-amber-500' : 'bg-indigo-600 hover:bg-indigo-500'"
               x-text="isAgentBusy(activeChatId) ? 'Steer' : 'Send'"></button>
@@ -1651,18 +1658,21 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label for="bb-new-key" class="text-xs text-gray-500 mb-1 block">Key</label>
-                <input id="bb-new-key" type="text" x-model="bbNewKey" placeholder="context/my_key" class="dash-input w-full">
+                <input id="bb-new-key" type="text" x-model="bbNewKey" :disabled="bbWriteLoading" placeholder="context/my_key" class="dash-input w-full">
               </div>
               <div>
                 <label for="bb-new-value" class="text-xs text-gray-500 mb-1 block">Value (JSON)</label>
-                <textarea id="bb-new-value" x-model="bbNewValue" class="dash-textarea w-full" rows="2" placeholder='{"key": "value"}'
+                <textarea id="bb-new-value" x-model="bbNewValue" :disabled="bbWriteLoading" class="dash-textarea w-full" rows="2" placeholder='{"key": "value"}'
                   :class="bbNewValue && !bbJsonValid.valid ? 'border-red-500/50' : ''"></textarea>
                 <div x-show="bbNewValue && !bbJsonValid.valid" x-cloak class="text-[10px] text-red-400 mt-1" x-text="bbJsonValid.error"></div>
               </div>
             </div>
             <div class="mt-3 flex gap-2">
-              <button @click="writeBlackboard()" class="text-xs px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
-                :disabled="!bbJsonValid.valid || !bbNewKey.trim()" :class="(!bbJsonValid.valid || !bbNewKey.trim()) && 'opacity-50 cursor-not-allowed'">Save</button>
+              <button @click="writeBlackboard()" class="text-xs px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors inline-flex items-center gap-1.5"
+                :disabled="bbWriteLoading || !bbJsonValid.valid || !bbNewKey.trim()" :class="(bbWriteLoading || !bbJsonValid.valid || !bbNewKey.trim()) && 'opacity-50 cursor-not-allowed'">
+                <svg x-show="bbWriteLoading" x-cloak class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                <span x-text="bbWriteLoading ? 'Saving...' : 'Save'"></span>
+              </button>
               <button @click="bbWriteMode = false" class="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors">Cancel</button>
             </div>
           </div>
@@ -1744,14 +1754,14 @@
         <div x-show="showCronForm" x-cloak x-transition class="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-4">
           <div class="text-xs text-gray-500 mb-2">New cron job</div>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
-            <select x-model="cronFormAgent" class="dash-select text-xs">
+            <select x-model="cronFormAgent" :disabled="cronCreating" class="dash-select text-xs">
               <option value="">Agent...</option>
               <template x-for="a in agents" :key="a.id">
                 <option :value="a.id" x-text="a.id"></option>
               </template>
             </select>
             <div>
-              <input type="text" x-model="cronFormSchedule" class="dash-input text-xs w-full" placeholder="every 15m">
+              <input type="text" x-model="cronFormSchedule" :disabled="cronCreating" class="dash-input text-xs w-full" placeholder="every 15m">
               <div class="flex gap-1 mt-1">
                 <button @click="cronFormSchedule = 'every 5m'" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-500">5m</button>
                 <button @click="cronFormSchedule = 'every 15m'" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-500">15m</button>
@@ -1759,7 +1769,7 @@
                 <button @click="cronFormSchedule = 'every 1d'" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-500">1d</button>
               </div>
             </div>
-            <textarea x-model="cronFormMessage" class="dash-textarea text-xs" rows="2" placeholder="Message to send..."></textarea>
+            <textarea x-model="cronFormMessage" :disabled="cronCreating" class="dash-textarea text-xs" rows="2" placeholder="Message to send..."></textarea>
           </div>
           <div class="flex justify-between">
             <button @click="showCronForm = false; cronFormAgent = ''; cronFormSchedule = 'every 15m'; cronFormMessage = ''" class="text-xs px-3 py-1.5 rounded border border-gray-700 hover:border-gray-600 text-gray-400 hover:text-gray-300 transition-colors">Cancel</button>
@@ -1807,10 +1817,11 @@
                           <div class="flex gap-1 items-center">
                             <span class="text-[10px] text-gray-500 w-8">Every</span>
                             <input type="number" min="1" step="1" x-model.number="cronEditAmount"
+                              :disabled="cronEditSaving"
                               @keyup.enter="saveCronInterval(job.id)"
                               @keyup.escape="cancelCronEdit()"
                               class="dash-input text-xs py-0.5 px-1.5 w-14 text-center">
-                            <select x-model="cronEditUnit" class="dash-select text-xs py-0.5 px-1"
+                            <select x-model="cronEditUnit" :disabled="cronEditSaving" class="dash-select text-xs py-0.5 px-1"
                               @keyup.enter="saveCronInterval(job.id)"
                               @keyup.escape="cancelCronEdit()">
                               <option value="s">sec</option>
@@ -1818,17 +1829,18 @@
                               <option value="h">hr</option>
                               <option value="d">day</option>
                             </select>
-                            <button @click="saveCronInterval(job.id)"
-                              class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">Set</button>
+                            <button @click="saveCronInterval(job.id)" :disabled="cronEditSaving"
+                              class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50" x-text="cronEditSaving ? '...' : 'Set'"></button>
                           </div>
                           <div class="flex gap-1 items-center">
                             <input type="text" x-model="cronEditCron"
+                              :disabled="cronEditSaving"
                               placeholder="0 9 * * 1-5"
                               @keyup.enter="saveCronExpression(job.id)"
                               @keyup.escape="cancelCronEdit()"
                               class="dash-input text-xs py-0.5 px-1.5 w-32 font-mono">
-                            <button @click="saveCronExpression(job.id)"
-                              class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">Set</button>
+                            <button @click="saveCronExpression(job.id)" :disabled="cronEditSaving"
+                              class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50" x-text="cronEditSaving ? '...' : 'Set'"></button>
                             <button @click="cancelCronEdit()"
                               class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors">X</button>
                           </div>
@@ -1849,11 +1861,11 @@
                       <td class="py-2.5 px-4 font-mono text-gray-300" x-text="job.run_count"></td>
                       <td class="py-2.5 px-4 font-mono" :class="job.error_count > 0 ? 'text-red-400' : 'text-gray-600'" x-text="job.error_count"></td>
                       <td class="py-2.5 px-4 flex gap-1">
-                        <button @click="runCronJob(job.id)" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-indigo-900/40 text-gray-400 hover:text-indigo-300 transition-colors">Run</button>
-                        <button x-show="job.enabled" @click="pauseCronJob(job.id)"
-                          class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-yellow-900/30 text-gray-400 hover:text-yellow-400 transition-colors">Pause</button>
-                        <button x-show="!job.enabled" @click="resumeCronJob(job.id)"
-                          class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-green-900/30 text-gray-400 hover:text-green-400 transition-colors">Resume</button>
+                        <button @click="runCronJob(job.id)" :disabled="cronRunLoading[job.id]" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-indigo-900/40 text-gray-400 hover:text-indigo-300 transition-colors disabled:opacity-50" x-text="cronRunLoading[job.id] ? '...' : 'Run'"></button>
+                        <button x-show="job.enabled" @click="pauseCronJob(job.id)" :disabled="cronRunLoading[job.id]"
+                          class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-yellow-900/30 text-gray-400 hover:text-yellow-400 transition-colors disabled:opacity-50" x-text="cronRunLoading[job.id] ? '...' : 'Pause'"></button>
+                        <button x-show="!job.enabled" @click="resumeCronJob(job.id)" :disabled="cronRunLoading[job.id]"
+                          class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-green-900/30 text-gray-400 hover:text-green-400 transition-colors disabled:opacity-50" x-text="cronRunLoading[job.id] ? '...' : 'Resume'"></button>
                         <button @click="deleteCronJob(job.id)"
                           class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-red-900/30 text-gray-400 hover:text-red-400 transition-colors">Delete</button>
                       </td>
@@ -1895,7 +1907,10 @@
                       <td class="px-4 py-2 text-gray-400 text-xs" x-text="wf.steps"></td>
                       <td class="px-4 py-2 text-gray-400 text-xs" x-text="wf.timeout + 's'"></td>
                       <td class="px-4 py-2 text-right">
-                        <button @click="runWorkflow(wf.name)" class="text-xs text-indigo-400 hover:text-indigo-300">Run</button>
+                        <button @click="runWorkflow(wf.name)" :disabled="workflowRunLoading[wf.name]" class="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 inline-flex items-center gap-1">
+                          <svg x-show="workflowRunLoading[wf.name]" x-cloak class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                          <span x-text="workflowRunLoading[wf.name] ? 'Running...' : 'Run'"></span>
+                        </button>
                       </td>
                     </tr>
                   </template>
@@ -1974,15 +1989,19 @@
                     <div>
                       <label class="block text-xs text-gray-400 mb-1" x-text="field.label"></label>
                       <input type="password" :placeholder="field.placeholder"
+                        :disabled="channelConnecting"
                         class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-indigo-500 focus:outline-none"
                         x-model="channelTokens[field.key]">
                     </div>
                   </template>
                   <div class="flex gap-2 pt-1">
-                    <button @click="cancelChannelConnect()"
-                      class="text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition-colors">Cancel</button>
-                    <button @click="connectChannel()"
-                      class="text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors">Connect</button>
+                    <button @click="cancelChannelConnect()" :disabled="channelConnecting"
+                      class="text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition-colors disabled:opacity-50">Cancel</button>
+                    <button @click="connectChannel()" :disabled="channelConnecting"
+                      class="text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors inline-flex items-center gap-1.5 disabled:opacity-50">
+                      <svg x-show="channelConnecting" x-cloak class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                      <span x-text="channelConnecting ? 'Connecting...' : 'Connect'"></span>
+                    </button>
                   </div>
                 </div>
               </template>
@@ -2022,7 +2041,7 @@
               <div x-show="showCredForm" x-transition>
                 <div class="text-xs text-gray-500 mb-2">New credential</div>
                 <div class="flex gap-2 mb-2">
-                  <select x-model="credService" class="dash-select text-xs w-40">
+                  <select x-model="credService" :disabled="credSaving" class="dash-select text-xs w-40">
                     <option value="">Service...</option>
                     <optgroup label="LLM Providers (system tier)">
                       <option value="anthropic">Anthropic</option>
@@ -2042,17 +2061,20 @@
                     </optgroup>
                     <option value="__custom__">Custom...</option>
                   </select>
-                  <input x-show="credService === '__custom__'" type="text" x-model="credCustomService" class="dash-input text-xs w-40" placeholder="credential_name">
-                  <select x-show="credService === '__custom__'" x-model="credTier" class="dash-select text-xs w-28">
+                  <input x-show="credService === '__custom__'" type="text" x-model="credCustomService" :disabled="credSaving" class="dash-input text-xs w-40" placeholder="credential_name">
+                  <select x-show="credService === '__custom__'" x-model="credTier" :disabled="credSaving" class="dash-select text-xs w-28">
                     <option value="agent">Agent tier</option>
                     <option value="system">System tier</option>
                   </select>
-                  <input type="password" x-model="credKey" class="dash-input flex-1" placeholder="API key or value">
+                  <input type="password" x-model="credKey" :disabled="credSaving" class="dash-input flex-1" placeholder="API key or value">
                 </div>
-                <input type="text" x-model="credBaseUrl" class="dash-input w-full mb-3" placeholder="Custom API base URL (optional)">
+                <input type="text" x-model="credBaseUrl" :disabled="credSaving" class="dash-input w-full mb-3" placeholder="Custom API base URL (optional)">
                 <div class="flex justify-between">
-                  <button @click="showCredForm = false; credService = ''; credKey = ''; credBaseUrl = ''; credCustomService = ''; credTier = 'agent'" class="text-xs px-3 py-1.5 rounded border border-gray-700 hover:border-gray-600 text-gray-400 hover:text-gray-300 transition-colors">Cancel</button>
-                  <button @click="addCredential()" class="text-xs px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">Save Credential</button>
+                  <button @click="showCredForm = false; credService = ''; credKey = ''; credBaseUrl = ''; credCustomService = ''; credTier = 'agent'" :disabled="credSaving" class="text-xs px-3 py-1.5 rounded border border-gray-700 hover:border-gray-600 text-gray-400 hover:text-gray-300 transition-colors disabled:opacity-50">Cancel</button>
+                  <button @click="addCredential()" :disabled="credSaving" class="text-xs px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors inline-flex items-center gap-1.5 disabled:opacity-50">
+                    <svg x-show="credSaving" x-cloak class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    <span x-text="credSaving ? 'Saving...' : 'Save Credential'"></span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -2075,8 +2097,8 @@
                     class="opacity-0 group-hover:opacity-100 focus:opacity-100 text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-all" title="Copy URL" aria-label="Copy webhook URL">
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                   </button>
-                  <button @click="testWebhook(wh.name)"
-                    class="opacity-0 group-hover:opacity-100 focus:opacity-100 text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-indigo-900/40 text-gray-400 hover:text-indigo-300 transition-all">Test</button>
+                  <button @click="testWebhook(wh.name)" :disabled="webhookTesting[wh.name]"
+                    class="opacity-0 group-hover:opacity-100 focus:opacity-100 text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-indigo-900/40 text-gray-400 hover:text-indigo-300 transition-all disabled:opacity-50" x-text="webhookTesting[wh.name] ? '...' : 'Test'"></button>
                   <button @click="deleteWebhook(wh.name)"
                     class="opacity-0 group-hover:opacity-100 focus:opacity-100 text-[10px] px-1.5 py-0.5 rounded bg-gray-800 hover:bg-red-900/30 text-gray-400 hover:text-red-400 transition-all">Delete</button>
                 </div>
@@ -2088,18 +2110,21 @@
               <div x-show="showWebhookForm" x-transition>
                 <div class="text-xs text-gray-500 mb-2">New webhook</div>
                 <div class="flex gap-2 mb-2">
-                  <input type="text" x-model="webhookFormName" class="dash-input text-xs flex-1" placeholder="Webhook name">
-                  <select x-model="webhookFormAgent" class="dash-select text-xs w-40">
+                  <input type="text" x-model="webhookFormName" :disabled="webhookCreating" class="dash-input text-xs flex-1" placeholder="Webhook name">
+                  <select x-model="webhookFormAgent" :disabled="webhookCreating" class="dash-select text-xs w-40">
                     <option value="">Agent...</option>
                     <template x-for="a in agents" :key="a.id">
                       <option :value="a.id" x-text="a.id"></option>
                     </template>
                   </select>
                 </div>
-                <input type="text" x-model="webhookFormSecret" class="dash-input w-full text-xs mb-3" placeholder="Secret (optional)">
+                <input type="text" x-model="webhookFormSecret" :disabled="webhookCreating" class="dash-input w-full text-xs mb-3" placeholder="Secret (optional)">
                 <div class="flex justify-between">
-                  <button @click="showWebhookForm = false; webhookFormName = ''; webhookFormAgent = ''; webhookFormSecret = ''" class="text-xs px-3 py-1.5 rounded border border-gray-700 hover:border-gray-600 text-gray-400 hover:text-gray-300 transition-colors">Cancel</button>
-                  <button @click="createWebhook()" class="text-xs px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">Create Webhook</button>
+                  <button @click="showWebhookForm = false; webhookFormName = ''; webhookFormAgent = ''; webhookFormSecret = ''" :disabled="webhookCreating" class="text-xs px-3 py-1.5 rounded border border-gray-700 hover:border-gray-600 text-gray-400 hover:text-gray-300 transition-colors disabled:opacity-50">Cancel</button>
+                  <button @click="createWebhook()" :disabled="webhookCreating" class="text-xs px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors inline-flex items-center gap-1.5 disabled:opacity-50">
+                    <svg x-show="webhookCreating" x-cloak class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    <span x-text="webhookCreating ? 'Creating...' : 'Create Webhook'"></span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -2168,19 +2193,20 @@
           <div class="space-y-3">
             <div>
               <label class="text-xs text-gray-500 mb-1 block">Name</label>
-              <input id="project-name-input" type="text" x-model="newProjectName" class="dash-input w-full"
+              <input id="project-name-input" type="text" x-model="newProjectName" :disabled="projectFormLoading" class="dash-input w-full"
                 placeholder="my-project" @keydown.enter="createProject()" pattern="[a-zA-Z0-9_-]+">
               <div class="text-[10px] mt-1 text-gray-600">Letters, numbers, hyphens, underscores.</div>
             </div>
             <div>
               <label class="text-xs text-gray-500 mb-1 block">Description</label>
-              <input type="text" x-model="newProjectDesc" class="dash-input w-full"
+              <input type="text" x-model="newProjectDesc" :disabled="projectFormLoading" class="dash-input w-full"
                 placeholder="Optional description" @keydown.enter="createProject()">
             </div>
           </div>
           <div class="flex gap-2 mt-4">
             <button @click="createProject()" :disabled="projectFormLoading || !newProjectName.trim()"
-              class="text-xs px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors">
+              class="text-xs px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors inline-flex items-center gap-1.5">
+              <svg x-show="projectFormLoading" x-cloak class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
               <span x-show="!projectFormLoading">Create Project</span>
               <span x-show="projectFormLoading">Creating...</span>
             </button>
@@ -2211,17 +2237,18 @@
             <div>
               <label class="text-xs text-gray-500 mb-1 block">Name</label>
               <input id="add-agent-name-input" type="text" x-model="addAgentForm.name"
+                :disabled="addAgentLoading"
                 class="dash-input w-full" :class="addAgentForm.name && !addAgentNameValid ? 'border-red-500 focus:border-red-500' : ''"
                 placeholder="my_agent" pattern="^[a-z][a-z0-9_]{0,29}$">
               <div class="text-[10px] mt-1" :class="addAgentForm.name && !addAgentNameValid ? 'text-red-400' : 'text-gray-600'">Lowercase letters, numbers, underscores. Max 30 chars.</div>
             </div>
             <div>
               <label class="text-xs text-gray-500 mb-1 block">Role</label>
-              <input type="text" x-model="addAgentForm.role" class="dash-input w-full" placeholder="assistant">
+              <input type="text" x-model="addAgentForm.role" :disabled="addAgentLoading" class="dash-input w-full" placeholder="assistant">
             </div>
             <div>
               <label class="text-xs text-gray-500 mb-1 block">Model</label>
-              <select x-model="addAgentForm.model" class="dash-select w-full">
+              <select x-model="addAgentForm.model" :disabled="addAgentLoading" class="dash-select w-full">
                 <option value="">Default</option>
                 <template x-for="m in availableModels" :key="m">
                   <option :value="m" x-text="m"></option>
@@ -2251,7 +2278,8 @@
           </div>
           <div class="flex gap-2 mt-4">
             <button @click="addAgent()" :disabled="addAgentLoading || (addAgentForm.name && !addAgentNameValid)"
-              class="text-xs px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors">
+              class="text-xs px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors inline-flex items-center gap-1.5">
+              <svg x-show="addAgentLoading" x-cloak class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
               <span x-show="!addAgentLoading">Add Agent</span>
               <span x-show="addAgentLoading">Adding...</span>
             </button>
