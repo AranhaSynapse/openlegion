@@ -1375,7 +1375,7 @@ def test_cleanup_removes_watchers(tmp_path):
 
 def test_vnc_http_proxy(tmp_path):
     """VNC HTTP proxy forwards requests to the browser container's KasmVNC port."""
-    from unittest.mock import AsyncMock, patch, MagicMock
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     bb = Blackboard(db_path=str(tmp_path / "bb.db"))
     pubsub = PubSub()
