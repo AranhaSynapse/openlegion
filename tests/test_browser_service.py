@@ -239,6 +239,41 @@ class TestBrowserManagerCredentialTracking:
         assert "secret-password" in mgr.redactor._resolved_values.get("a1", set())
 
 
+class TestTypeTextClearBehavior:
+    """Tests for type_text clear parameter."""
+
+    @pytest.mark.asyncio
+    async def test_clear_true_uses_fill(self):
+        """clear=True (default) should use fill() which replaces content."""
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = MagicMock()
+        mock_page.fill = AsyncMock()
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        mgr._instances["a1"] = inst
+
+        await mgr.type_text("a1", selector="input", text="hello", clear=True)
+        mock_page.fill.assert_called_once_with("input", "hello")
+
+    @pytest.mark.asyncio
+    async def test_clear_false_uses_press_sequentially(self):
+        """clear=False should use press_sequentially() to append text."""
+        from src.browser.service import BrowserManager, CamoufoxInstance
+        mgr = BrowserManager(profiles_dir="/tmp/test_profiles")
+
+        mock_page = MagicMock()
+        mock_locator = MagicMock()
+        mock_locator.press_sequentially = AsyncMock()
+        mock_page.locator.return_value = mock_locator
+        inst = CamoufoxInstance("a1", MagicMock(), MagicMock(), mock_page)
+        mgr._instances["a1"] = inst
+
+        await mgr.type_text("a1", selector="input", text="appended", clear=False)
+        mock_page.locator.assert_called_once_with("input")
+        mock_locator.press_sequentially.assert_called_once_with("appended")
+
+
 class TestCamoufoxInstanceLock:
     """Tests that CamoufoxInstance has a per-instance lock."""
 

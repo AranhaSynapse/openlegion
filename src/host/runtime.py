@@ -325,6 +325,18 @@ class DockerBackend(RuntimeBackend):
         self._browser_container = self.client.containers.run(self.BROWSER_IMAGE, **run_kwargs)
         self.browser_service_url = f"http://127.0.0.1:{api_port}"
         self.browser_vnc_url = f"http://127.0.0.1:{vnc_port}/index.html?autoconnect=true&path=&resize=scale"
+
+        # Wait for browser service API to be ready
+        import httpx as _httpx
+        for attempt in range(15):
+            try:
+                resp = _httpx.get(f"{self.browser_service_url}/browser/status", timeout=2)
+                if resp.status_code == 200:
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+
         logger.info("Started browser service at %s (VNC: %s)", self.browser_service_url, self.browser_vnc_url)
 
     def stop_browser_service(self) -> None:

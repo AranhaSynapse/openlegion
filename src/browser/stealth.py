@@ -56,7 +56,7 @@ def build_launch_options(
     options["persistent_context"] = True
     options["user_data_dir"] = profile_dir
 
-    # Set DISPLAY for Xvfb rendering
+    # Set DISPLAY for Xvnc rendering
     os.environ["DISPLAY"] = display
 
     return options
