@@ -42,10 +42,15 @@ def build_launch_options(
     Returns a dict of keyword arguments for camoufox.AsyncNewBrowser.
     """
     proxy = get_proxy_config()
+    from browserforge.fingerprints import Screen
+
     options: dict = {
         "headless": False,
         "humanize": True,
         "os": "linux",
+        # Pin screen/window to match Xvnc display so the browser fills the viewport
+        "screen": Screen(max_width=1920, max_height=1080),
+        "window": (1920, 1080),
     }
     if proxy:
         options["proxy"] = proxy
