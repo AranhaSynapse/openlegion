@@ -1054,6 +1054,12 @@ class TestBrowserNoMeshClient:
         result = await browser_solve_captcha(mesh_client=None)
         assert "error" in result
 
+    @pytest.mark.asyncio
+    async def test_scroll_no_mesh(self):
+        from src.agent.builtins.browser_tool import browser_scroll
+        result = await browser_scroll(mesh_client=None)
+        assert "error" in result
+
 
 # ── SkillRegistry discovers builtins ─────────────────────────
 
@@ -1071,6 +1077,7 @@ class TestBuiltinDiscovery:
         assert "browser_navigate" in registry.skills
         assert "browser_snapshot" in registry.skills
         assert "browser_reset" in registry.skills
+        assert "browser_scroll" in registry.skills
         assert "memory_search" in registry.skills
         assert "category" in registry.skills["memory_search"]["parameters"]
 
@@ -2087,6 +2094,51 @@ class TestBrowserSolveCaptchaHttpClient:
         mc.browser_command = AsyncMock(side_effect=Exception("service unavailable"))
 
         result = await browser_solve_captcha(mesh_client=mc)
+        assert "error" in result
+
+
+class TestBrowserScrollHttpClient:
+    """browser_scroll sends scroll command through mesh_client."""
+
+    @pytest.mark.asyncio
+    async def test_scroll_calls_browser_command(self):
+        from src.agent.builtins.browser_tool import browser_scroll
+
+        mc = AsyncMock()
+        mc.browser_command = AsyncMock(return_value={
+            "success": True,
+            "data": {"direction": "down", "pixels": 720},
+        })
+
+        result = await browser_scroll(direction="down", amount=720, mesh_client=mc)
+
+        mc.browser_command.assert_awaited_once_with(
+            "scroll", {"direction": "down", "amount": 720}
+        )
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_scroll_with_ref(self):
+        from src.agent.builtins.browser_tool import browser_scroll
+
+        mc = AsyncMock()
+        mc.browser_command = AsyncMock(return_value={
+            "success": True,
+            "data": {"scrolled_to_ref": "e5"},
+        })
+
+        result = await browser_scroll(ref="e5", mesh_client=mc)
+
+        mc.browser_command.assert_awaited_once_with(
+            "scroll", {"direction": "down", "amount": 0, "ref": "e5"}
+        )
+        assert result["data"]["scrolled_to_ref"] == "e5"
+
+    @pytest.mark.asyncio
+    async def test_scroll_no_mesh_client(self):
+        from src.agent.builtins.browser_tool import browser_scroll
+
+        result = await browser_scroll(mesh_client=None)
         assert "error" in result
 
 

@@ -107,6 +107,17 @@ def create_browser_app(manager: BrowserManager, lifespan=None) -> FastAPI:
         ok = await manager.focus(agent_id)
         return {"success": ok, "data": {"focused": ok}}
 
+    @app.post("/browser/{agent_id}/scroll")
+    async def scroll(agent_id: str, request: Request):
+        _verify_auth(request)
+        body = await request.json()
+        return await manager.scroll(
+            agent_id,
+            direction=body.get("direction", "down"),
+            amount=body.get("amount", 0),
+            ref=body.get("ref"),
+        )
+
     @app.post("/browser/{agent_id}/solve_captcha")
     async def solve_captcha(agent_id: str, request: Request):
         _verify_auth(request)

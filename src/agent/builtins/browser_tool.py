@@ -224,6 +224,42 @@ async def browser_type(
 
 
 @skill(
+    name="browser_scroll",
+    description=(
+        "Scroll the browser page. Supports scrolling by direction (up/down) "
+        "with an optional pixel amount, or scrolling a specific element into view "
+        "using a ref from browser_snapshot. Default scrolls down by one viewport height. "
+        "Call browser_snapshot after scrolling to see the updated page content."
+    ),
+    parameters={
+        "direction": {
+            "type": "string",
+            "description": "Scroll direction: 'up' or 'down' (default 'down')",
+            "default": "down",
+        },
+        "amount": {
+            "type": "integer",
+            "description": "Pixels to scroll (0 = one viewport height)",
+            "default": 0,
+        },
+        "ref": {
+            "type": "string",
+            "description": "Element ref from browser_snapshot to scroll into view (e.g. 'e5')",
+            "default": "",
+        },
+    },
+)
+async def browser_scroll(
+    direction: str = "down", amount: int = 0, ref: str = "", *, mesh_client=None,
+) -> dict:
+    """Scroll the page or scroll an element into view."""
+    params = {"direction": direction, "amount": amount}
+    if ref:
+        params["ref"] = ref
+    return await _browser_command(mesh_client, "scroll", params)
+
+
+@skill(
     name="browser_evaluate",
     description=(
         "Execute JavaScript in the browser page and return the result. "
