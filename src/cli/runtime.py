@@ -361,10 +361,10 @@ class RuntimeContext:
                     )
                     saved_extra_env = self.runtime.extra_env
                     self.runtime.stop_all()
-                    import platform as _platform
+                    from src.host.runtime import _should_use_host_network
                     self.runtime = DockerBackend(
                         mesh_host_port=mesh_port,
-                        use_host_network=_platform.system() == "Linux",
+                        use_host_network=_should_use_host_network(),
                         project_root=str(PROJECT_ROOT),
                     )
                     self.runtime.extra_env = saved_extra_env

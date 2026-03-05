@@ -74,7 +74,7 @@ def e2e_trigger_stack(tmp_path_factory):
 
     cost_tracker = CostTracker(db_path=str(tmp_dir / "costs.db"))
     vault = CredentialVault(cost_tracker=cost_tracker)
-    cm = ContainerManager(mesh_host_port=MESH_PORT, use_host_network=True)
+    cm = ContainerManager(mesh_host_port=MESH_PORT, use_host_network=False)
     router = MessageRouter(perms, {})
 
     # Dispatch function for webhooks/cron — will be finalized after agent starts

@@ -1031,6 +1031,16 @@ def create_mesh_app(
             await websocket.close(code=1013, reason="Event bus not configured")
             return
 
+        # Verify session cookie before accepting the WebSocket upgrade.
+        # Browsers send cookies with WebSocket upgrade requests, so we can
+        # use the same auth as the dashboard HTTP endpoints.
+        from src.dashboard.auth import verify_session_cookie
+        cookie_value = websocket.cookies.get("ol_session", "")
+        auth_error = verify_session_cookie(cookie_value)
+        if auth_error is not None:
+            await websocket.close(code=1008, reason=auth_error)
+            return
+
         # Lazily bind event loop on first WebSocket connect
         import asyncio
         event_bus.set_loop(asyncio.get_running_loop())

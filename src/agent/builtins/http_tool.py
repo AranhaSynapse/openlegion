@@ -2,6 +2,10 @@
 
 Supports ``$CRED{name}`` handles in URLs, headers, and body — resolved
 via the mesh vault at execution time so the agent never sees raw secrets.
+
+DNS rebinding protection: DNS is resolved once and the resolved IP is
+pinned for the actual connection.  Redirects are followed manually with
+DNS re-validation at each hop.
 """
 
 from __future__ import annotations
@@ -10,35 +14,22 @@ import asyncio
 import ipaddress
 import re
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
 from src.agent.skills import skill
 
 _MAX_BODY = 50_000
+_MAX_REDIRECTS = 5
 
 _CRED_HANDLE_RE = re.compile(r"\$CRED\{([^}]+)\}")
 
 # Shared client for connection pooling across tool invocations.
-# Avoids repeated TCP handshakes and TLS negotiation.
+# Redirects are followed manually (follow_redirects=False) so we can
+# re-validate DNS at each hop to prevent DNS rebinding attacks.
 _client: httpx.AsyncClient | None = None
 _client_lock = asyncio.Lock()
-
-
-async def _check_redirect_ssrf(request: httpx.Request) -> None:
-    """Event hook: validate every redirect target against SSRF rules.
-
-    httpx AsyncClient calls this *before* following each redirect, so an
-    attacker cannot bounce through a public URL into a private network.
-    Runs DNS check in executor to avoid blocking the event loop.
-    """
-    loop = asyncio.get_running_loop()
-    if await loop.run_in_executor(None, _is_private_url, str(request.url)):
-        raise httpx.TooManyRedirects(
-            "SSRF protection: redirect to private/internal address blocked",
-            request=request,
-        )
 
 
 async def _get_client() -> httpx.AsyncClient:
@@ -48,10 +39,8 @@ async def _get_client() -> httpx.AsyncClient:
     async with _client_lock:
         if _client is None or _client.is_closed:
             _client = httpx.AsyncClient(
-                follow_redirects=True,
-                max_redirects=5,
+                follow_redirects=False,
                 limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
-                event_hooks={"request": [_check_redirect_ssrf]},
             )
         return _client
 
@@ -77,26 +66,169 @@ def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return False
 
 
-def _is_private_url(url: str) -> bool:
-    """Reject requests to private IP ranges, loopback, link-local, and reserved addresses."""
+def _resolve_and_pin(url: str) -> tuple[str, str, str]:
+    """Resolve DNS for *url*, validate all IPs, return pinned connection info.
+
+    Returns ``(pinned_url, original_hostname, resolved_ip)`` where
+    *pinned_url* has the hostname replaced with the resolved IP and
+    *original_hostname* is preserved for the Host header / SNI.
+
+    Raises ``ValueError`` if any resolved IP is blocked or DNS fails.
+    """
     parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("SSRF protection: only http and https schemes are allowed")
     hostname = parsed.hostname
+    port = parsed.port
     if not hostname:
-        return True  # Reject malformed URLs
+        raise ValueError("SSRF protection: malformed URL")
+
+    # If hostname is already an IP literal, validate directly
     try:
         ip = ipaddress.ip_address(hostname)
-        return _is_blocked_ip(ip)
-    except ValueError:
-        # It's a hostname — resolve to check the actual IP
-        try:
-            resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-            for family, _, _, _, sockaddr in resolved:
-                ip = ipaddress.ip_address(sockaddr[0])
-                if _is_blocked_ip(ip):
-                    return True
-        except (socket.gaierror, OSError):
-            return True  # DNS resolution failed — fail closed (block)
-        return False
+        if _is_blocked_ip(ip):
+            raise ValueError("SSRF protection: requests to private/internal addresses are blocked")
+        return url, hostname, str(ip)
+    except ValueError as e:
+        if "SSRF" in str(e):
+            raise
+        # Not an IP literal — resolve hostname
+
+    try:
+        results = socket.getaddrinfo(hostname, port or 443, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except (socket.gaierror, OSError):
+        raise ValueError("SSRF protection: DNS resolution failed (fail-closed)")
+
+    if not results:
+        raise ValueError("SSRF protection: DNS resolution returned no results")
+
+    # Validate ALL resolved IPs — block if any is private
+    resolved_ips = []
+    for family, _, _, _, sockaddr in results:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if _is_blocked_ip(ip):
+            raise ValueError("SSRF protection: requests to private/internal addresses are blocked")
+        resolved_ips.append(str(ip))
+
+    # Use the first resolved IP for pinning
+    pinned_ip = resolved_ips[0]
+
+    # Build pinned URL: replace hostname with resolved IP
+    # For IPv6, wrap in brackets
+    if ":" in pinned_ip:
+        netloc_ip = f"[{pinned_ip}]"
+    else:
+        netloc_ip = pinned_ip
+
+    # Reconstruct netloc with port if present
+    if port:
+        pinned_netloc = f"{netloc_ip}:{port}"
+    else:
+        pinned_netloc = netloc_ip
+
+    pinned_url = urlunparse((
+        parsed.scheme, pinned_netloc, parsed.path,
+        parsed.params, parsed.query, parsed.fragment,
+    ))
+
+    return pinned_url, hostname, pinned_ip
+
+
+def _build_pinned_headers(
+    headers: dict[str, str],
+    original_hostname: str,
+    parsed_url,
+) -> dict[str, str]:
+    """Add Host header and return updated headers for a pinned request."""
+    out = dict(headers)
+    # Set Host header to original hostname (required when URL has IP)
+    port = parsed_url.port
+    if port and port not in (80, 443):
+        out["Host"] = f"{original_hostname}:{port}"
+    else:
+        out["Host"] = original_hostname
+    return out
+
+
+async def _send_pinned_request(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    content: str | None,
+    timeout: int,
+) -> httpx.Response:
+    """Resolve DNS, pin IP, and send a single request (no redirect following).
+
+    For HTTPS, sets SNI to the original hostname so TLS validation works
+    even though the URL contains the resolved IP.
+    """
+    loop = asyncio.get_running_loop()
+    pinned_url, original_hostname, resolved_ip = await loop.run_in_executor(
+        None, _resolve_and_pin, url,
+    )
+
+    parsed = urlparse(url)
+    pinned_headers = _build_pinned_headers(headers, original_hostname, parsed)
+
+    # Build request manually to set extensions for SNI and timeout
+    request = client.build_request(
+        method=method,
+        url=pinned_url,
+        headers=pinned_headers,
+        content=content,
+        timeout=timeout,
+    )
+
+    # Set SNI hostname for HTTPS so TLS validates against the original
+    # hostname, not the IP address we pinned to.
+    if parsed.scheme == "https":
+        request.extensions["sni_hostname"] = original_hostname.encode("ascii")
+
+    return await client.send(request, follow_redirects=False, stream=False)
+
+
+async def _request_with_pinned_dns(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    content: str | None,
+    timeout: int,
+) -> httpx.Response:
+    """Send request with DNS pinning and safe manual redirect following.
+
+    Each redirect hop re-resolves DNS and re-validates the target IP,
+    preventing DNS rebinding attacks where an attacker's DNS returns a
+    public IP for the initial check but a private IP for the connection.
+    """
+    response = await _send_pinned_request(client, method, url, headers, content, timeout)
+
+    for _ in range(_MAX_REDIRECTS):
+        if response.status_code not in (301, 302, 303, 307, 308):
+            return response
+
+        location = response.headers.get("location")
+        if not location:
+            return response
+
+        # Resolve relative redirects against the current URL
+        redirect_url = str(httpx.URL(url).join(location))
+
+        # For 303, always GET; for 301/302, GET (per browser behavior);
+        # for 307/308, preserve method
+        if response.status_code in (301, 302, 303):
+            method = "GET"
+            content = None
+
+        url = redirect_url
+        # Re-resolve and re-validate DNS for the redirect target
+        response = await _send_pinned_request(client, method, url, headers, content, timeout)
+
+    raise httpx.TooManyRedirects(
+        f"SSRF protection: exceeded {_MAX_REDIRECTS} redirects",
+        request=response.request,
+    )
 
 
 async def _resolve_creds(text: str, mesh_client) -> tuple[str, list[str]]:
@@ -182,12 +314,6 @@ async def http_request(
         resolved_url, url_secrets = await _resolve_creds(url, mesh_client)
         all_secrets.extend(url_secrets)
 
-        # SSRF protection: block requests to private/internal networks.
-        # Run in executor because socket.getaddrinfo() blocks the event loop.
-        loop = asyncio.get_running_loop()
-        if await loop.run_in_executor(None, _is_private_url, resolved_url):
-            return {"error": "SSRF protection: requests to private/internal addresses are blocked", "status_code": 0}
-
         resolved_headers = {}
         for k, v in (headers or {}).items():
             resolved_v, hdr_secrets = await _resolve_creds(str(v), mesh_client)
@@ -200,13 +326,15 @@ async def http_request(
             all_secrets.extend(body_secrets)
 
         client = await _get_client()
-        response = await client.request(
+        response = await _request_with_pinned_dns(
+            client,
             method=method.upper(),
             url=resolved_url,
             headers=resolved_headers,
             content=resolved_body if resolved_body else None,
             timeout=timeout,
         )
+
         resp_body = response.text[:_MAX_BODY]
         truncated = len(response.text) > _MAX_BODY
 
@@ -226,8 +354,11 @@ async def http_request(
             "truncated": truncated,
         }
     except ValueError as e:
-        # Credential resolution errors — redact in case earlier creds already resolved
+        # Credential resolution errors + SSRF blocks
         error_msg = _redact(str(e), all_secrets) if all_secrets else str(e)
+        return {"error": error_msg, "status_code": 0}
+    except httpx.TooManyRedirects as e:
+        error_msg = str(e)
         return {"error": error_msg, "status_code": 0}
     except httpx.TimeoutException:
         return {"error": f"Request timed out after {timeout}s", "status_code": 0}

@@ -13,6 +13,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import json
+import os
 import platform
 import re
 import secrets
@@ -696,6 +697,25 @@ def sandbox_available() -> bool:
         return False
 
 
+def _should_use_host_network() -> bool:
+    """Check if host networking is explicitly opted in via env var.
+
+    Defaults to False (bridge networking) for security — bridge mode prevents
+    agents from accessing the host network, mesh, and cloud metadata endpoints.
+    Set OPENLEGION_HOST_NETWORK=1 to opt in to --network=host (e.g. for
+    debugging or legacy setups that require it).
+    """
+    enabled = os.environ.get("OPENLEGION_HOST_NETWORK", "").strip()
+    if enabled in ("1", "true", "yes"):
+        logger.warning(
+            "Host networking enabled via OPENLEGION_HOST_NETWORK — "
+            "agents will have full access to the host network. "
+            "This is insecure in production."
+        )
+        return True
+    return False
+
+
 def select_backend(
     mesh_host_port: int = 8420,
     project_root: str | None = None,
@@ -718,10 +738,7 @@ def select_backend(
             "Docker Sandbox requested but not available. "
             "Requires Docker Desktop 4.58+. Falling back to containers."
         )
-    # Host networking only works reliably on Linux. On macOS/Windows,
-    # Docker Desktop runs in a VM so --network=host doesn't expose ports
-    # to the actual host. Use port mapping (bridge network) instead.
-    use_host_net = platform.system() == "Linux"
+    use_host_net = _should_use_host_network()
     logger.info("Using Docker container isolation (host_network=%s)", use_host_net)
     return DockerBackend(
         mesh_host_port=mesh_host_port,

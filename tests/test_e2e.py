@@ -73,7 +73,7 @@ def e2e_stack(tmp_path_factory):
     pubsub = PubSub()
     perms = PermissionMatrix()
     vault = CredentialVault()
-    cm = ContainerManager(mesh_host_port=MESH_PORT, use_host_network=True)
+    cm = ContainerManager(mesh_host_port=MESH_PORT, use_host_network=False)
     router = MessageRouter(perms, {})
 
     orch = Orchestrator(

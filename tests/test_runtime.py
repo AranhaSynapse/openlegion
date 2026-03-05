@@ -11,6 +11,7 @@ from src.host.runtime import (
     RuntimeBackend,
     SandboxBackend,
     _docker_safe_name,
+    _should_use_host_network,
     sandbox_available,
     select_backend,
 )
@@ -274,6 +275,60 @@ class TestSelectBackend:
             MockDocker.return_value = mock_instance
             result = select_backend(use_sandbox=True)
             assert result is mock_instance
+
+    def test_default_uses_bridge_networking(self):
+        """Default select_backend() uses bridge networking (use_host_network=False)."""
+        with (
+            patch.dict("os.environ", {}, clear=False),
+            patch("src.host.runtime.DockerBackend") as MockDocker,
+        ):
+            # Ensure OPENLEGION_HOST_NETWORK is not set
+            import os
+            os.environ.pop("OPENLEGION_HOST_NETWORK", None)
+            mock_instance = MagicMock()
+            MockDocker.return_value = mock_instance
+            select_backend()
+            MockDocker.assert_called_once()
+            assert MockDocker.call_args.kwargs["use_host_network"] is False
+
+    def test_host_network_env_override(self):
+        """OPENLEGION_HOST_NETWORK=1 enables host networking."""
+        with (
+            patch.dict("os.environ", {"OPENLEGION_HOST_NETWORK": "1"}),
+            patch("src.host.runtime.DockerBackend") as MockDocker,
+        ):
+            mock_instance = MagicMock()
+            MockDocker.return_value = mock_instance
+            select_backend()
+            MockDocker.assert_called_once()
+            assert MockDocker.call_args.kwargs["use_host_network"] is True
+
+
+# ── _should_use_host_network ─────────────────────────────────
+
+class TestShouldUseHostNetwork:
+    def test_default_is_false(self):
+        """Without env var, bridge networking is used."""
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+            os.environ.pop("OPENLEGION_HOST_NETWORK", None)
+            assert _should_use_host_network() is False
+
+    def test_enabled_with_1(self):
+        with patch.dict("os.environ", {"OPENLEGION_HOST_NETWORK": "1"}):
+            assert _should_use_host_network() is True
+
+    def test_enabled_with_true(self):
+        with patch.dict("os.environ", {"OPENLEGION_HOST_NETWORK": "true"}):
+            assert _should_use_host_network() is True
+
+    def test_disabled_with_0(self):
+        with patch.dict("os.environ", {"OPENLEGION_HOST_NETWORK": "0"}):
+            assert _should_use_host_network() is False
+
+    def test_disabled_with_empty(self):
+        with patch.dict("os.environ", {"OPENLEGION_HOST_NETWORK": ""}):
+            assert _should_use_host_network() is False
 
 
 # ── _default_embedding_model ─────────────────────────────────

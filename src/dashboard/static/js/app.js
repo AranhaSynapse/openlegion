@@ -624,6 +624,19 @@ function dashboard() {
       this._modelHealthInterval = setInterval(() => this.fetchModelHealth(), 60000);
       this._queuePollInterval = setInterval(() => this.fetchQueues(), 2000);
 
+      // Renew session cookie every 6 hours (sliding window).
+      // The auth gate issues 24h cookies; renew when <12h remaining.
+      // Also renew on tab focus (browsers throttle timers in background tabs).
+      this._cookieRenewalInterval = setInterval(() => {
+        fetch('/__auth/renew', { credentials: 'same-origin' }).catch(() => {});
+      }, 6 * 3600 * 1000);
+      this._visibilityHandler = () => {
+        if (document.visibilityState === 'visible') {
+          fetch('/__auth/renew', { credentials: 'same-origin' }).catch(() => {});
+        }
+      };
+      document.addEventListener('visibilitychange', this._visibilityHandler);
+
       // Restore chat history from sessionStorage
       try {
         const saved = sessionStorage.getItem('ol_chats');
@@ -742,6 +755,8 @@ function dashboard() {
       if (this._queuePollInterval) clearInterval(this._queuePollInterval);
       if (this._cronInterval) clearInterval(this._cronInterval);
       if (this._modelHealthInterval) clearInterval(this._modelHealthInterval);
+      if (this._cookieRenewalInterval) clearInterval(this._cookieRenewalInterval);
+      if (this._visibilityHandler) document.removeEventListener('visibilitychange', this._visibilityHandler);
       if (this._costDebounce) clearTimeout(this._costDebounce);
       if (this._fleetDebounce) clearTimeout(this._fleetDebounce);
       if (this._activityRefresh) clearInterval(this._activityRefresh);

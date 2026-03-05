@@ -103,7 +103,7 @@ def main() -> int:
     perms = PermissionMatrix()
     cost_tracker = CostTracker()
     vault = CredentialVault(cost_tracker=cost_tracker)
-    cm = ContainerManager(mesh_host_port=MESH_PORT, use_host_network=True)
+    cm = ContainerManager(mesh_host_port=MESH_PORT, use_host_network=False)
     router = MessageRouter(perms, {})
     orchestrator = Orchestrator(
         mesh_url=f"http://localhost:{MESH_PORT}",
