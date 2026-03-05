@@ -480,9 +480,6 @@ class RuntimeContext:
                 ch.send_notification(notification)
                 for ch in self._active_channels
             ), return_exceptions=True)
-        if self.event_bus:
-            self.event_bus.emit("notification", agent=agent_name,
-                               data={"message": message})
 
     def _start_mesh_server(self) -> None:
         import uvicorn
