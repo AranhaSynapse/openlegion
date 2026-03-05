@@ -154,10 +154,26 @@ class DockerBackend(RuntimeBackend):
         self._network_name = "openlegion_agents"
         self._network = None
         self._mesh_relay = None
+        self._relay_lock = threading.Lock()
         if not use_host_network:
+            need_create = False
             try:
                 self._network = self.client.networks.get(self._network_name)
+                # Verify the existing network is internal. A prior version may
+                # have created it without internal=True — recreate if so.
+                if not (self._network.attrs or {}).get("Internal", False):
+                    try:
+                        self._network.remove()
+                        need_create = True
+                    except Exception:
+                        logger.warning(
+                            "Network '%s' is not internal and could not be "
+                            "replaced — agents may have internet access",
+                            self._network_name,
+                        )
             except docker.errors.NotFound:
+                need_create = True
+            if need_create:
                 self._network = self.client.networks.create(
                     self._network_name,
                     driver="bridge",
@@ -179,11 +195,31 @@ class DockerBackend(RuntimeBackend):
           - internal agent network: discoverable by agents via Docker DNS
 
         This preserves ``internal=True`` isolation (no direct internet) while
-        giving agents a single path to the mesh.  Idempotent — skips if the
-        relay is already running.
+        giving agents a single path to the mesh.  Thread-safe and idempotent.
         """
-        if self.use_host_network or self._mesh_relay is not None:
+        if self.use_host_network:
             return
+        with self._relay_lock:
+            # Check if relay is already running (or was restarted after a crash)
+            if self._mesh_relay is not None:
+                try:
+                    self._mesh_relay.reload()
+                    if self._mesh_relay.status == "running":
+                        return
+                    # Relay died — clean up and recreate
+                    logger.warning("Mesh relay exited (status=%s), restarting", self._mesh_relay.status)
+                    try:
+                        self._mesh_relay.remove(force=True)
+                    except Exception:
+                        pass
+                    self._mesh_relay = None
+                except Exception:
+                    self._mesh_relay = None
+
+            self._start_mesh_relay()
+
+    def _start_mesh_relay(self) -> None:
+        """Create and start the mesh relay container.  Caller must hold _relay_lock."""
         import docker as _docker
 
         # Clean up any stale relay from a previous run
@@ -196,8 +232,9 @@ class DockerBackend(RuntimeBackend):
         # Minimal async TCP proxy: forwards port on the internal network
         # to host.docker.internal:<mesh_port> via the default bridge.
         proxy_script = (
-            "import asyncio\n"
+            "import asyncio, sys\n"
             f"PORT = {self.mesh_host_port}\n"
+            "HOST = 'host.docker.internal'\n"
             "async def pipe(r, w):\n"
             "    try:\n"
             "        while True:\n"
@@ -209,15 +246,23 @@ class DockerBackend(RuntimeBackend):
             "    except Exception:\n"
             "        pass\n"
             "    finally:\n"
-            "        w.close()\n"
+            "        try:\n"
+            "            w.close()\n"
+            "        except Exception:\n"
+            "            pass\n"
             "async def handle(cr, cw):\n"
             "    try:\n"
-            "        sr, sw = await asyncio.open_connection('host.docker.internal', PORT)\n"
+            "        sr, sw = await asyncio.open_connection(HOST, PORT)\n"
             "        await asyncio.gather(pipe(cr, sw), pipe(sr, cw))\n"
-            "    except Exception:\n"
-            "        cw.close()\n"
+            "    except Exception as e:\n"
+            "        print(f'relay: connect failed: {e}', file=sys.stderr)\n"
+            "        try:\n"
+            "            cw.close()\n"
+            "        except Exception:\n"
+            "            pass\n"
             "async def main():\n"
             "    s = await asyncio.start_server(handle, '0.0.0.0', PORT)\n"
+            "    print(f'relay: listening on 0.0.0.0:{PORT}', file=sys.stderr)\n"
             "    await s.serve_forever()\n"
             "asyncio.run(main())\n"
         )
@@ -225,12 +270,11 @@ class DockerBackend(RuntimeBackend):
         run_kwargs: dict[str, Any] = {
             "detach": True,
             "name": self.MESH_RELAY_NAME,
-            "entrypoint": ["python3", "-c", proxy_script],
-            "mem_limit": "64m",
+            "entrypoint": ["python3", "-u", "-c", proxy_script],
+            "mem_limit": "128m",
             "cpu_quota": 5000,
             "security_opt": ["no-new-privileges"],
             "cap_drop": ["ALL"],
-            "cap_add": ["NET_BIND_SERVICE"],
             "read_only": True,
             "tmpfs": {"/tmp": "size=10m,noexec,nosuid"},
         }
@@ -241,6 +285,23 @@ class DockerBackend(RuntimeBackend):
         self._mesh_relay = self.client.containers.run(self.BASE_IMAGE, **run_kwargs)
         # Also connect to the internal agent network so agents discover it via Docker DNS
         self._network.connect(self._mesh_relay)
+
+        # Wait for the relay to be running (Python startup + asyncio bind)
+        for _ in range(10):
+            self._mesh_relay.reload()
+            if self._mesh_relay.status == "running":
+                break
+            time.sleep(0.5)
+        else:
+            logs = self._mesh_relay.logs(tail=10).decode("utf-8", errors="replace")
+            logger.error("Mesh relay failed to start: %s", logs)
+            try:
+                self._mesh_relay.remove(force=True)
+            except Exception:
+                pass
+            self._mesh_relay = None
+            return
+
         logger.info("Started mesh relay for agent network isolation")
 
     def _cleanup_stale(self) -> None:
@@ -540,6 +601,7 @@ class DockerBackend(RuntimeBackend):
                 self._network.remove()
             except Exception:
                 pass
+            self._network = None
 
 
 # ── Docker Sandbox (MicroVM) Backend ─────────────────────────

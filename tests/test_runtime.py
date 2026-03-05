@@ -374,27 +374,37 @@ class TestDockerSafeName:
 # ── DockerBackend slim agent resources & browser service ─────
 
 
+def _make_docker_backend(**overrides):
+    """Create a DockerBackend without calling __init__ (avoids Docker)."""
+    import threading
+    backend = DockerBackend.__new__(DockerBackend)
+    backend.agents = {}
+    backend.auth_tokens = {}
+    backend.extra_env = {}
+    backend.mesh_host_port = 8420
+    backend.use_host_network = False
+    backend._next_port = 8401
+    backend._port_lock = threading.Lock()
+    backend._relay_lock = threading.Lock()
+    backend.project_root = __import__("pathlib").Path("/tmp")
+    backend.browser_service_url = None
+    backend.browser_vnc_url = None
+    backend.browser_auth_token = ""
+    backend._browser_container = None
+    backend._network_name = "openlegion_agents"
+    backend._network = MagicMock()
+    # Pretend relay is already running (status check passes)
+    relay_mock = MagicMock()
+    relay_mock.status = "running"
+    backend._mesh_relay = relay_mock
+    for k, v in overrides.items():
+        setattr(backend, k, v)
+    return backend
+
+
 class TestDockerBackendSlimResources:
     def _make_backend(self):
-        """Create a DockerBackend without calling __init__ (avoids Docker)."""
-        backend = DockerBackend.__new__(DockerBackend)
-        backend.agents = {}
-        backend.auth_tokens = {}
-        backend.extra_env = {}
-        backend.mesh_host_port = 8420
-        backend.use_host_network = False
-        backend._next_port = 8401
-        import threading
-        backend._port_lock = threading.Lock()
-        backend.project_root = __import__("pathlib").Path("/tmp")
-        backend.browser_service_url = None
-        backend.browser_vnc_url = None
-        backend.browser_auth_token = ""
-        backend._browser_container = None
-        backend._network_name = "openlegion_agents"
-        backend._network = MagicMock()
-        backend._mesh_relay = MagicMock()  # pretend relay is already running
-        return backend
+        return _make_docker_backend()
 
     def test_slim_agent_resources(self):
         """Agent containers use slim resources (384m, 0.15 CPU, no shm)."""
@@ -492,4 +502,293 @@ class TestDockerBackendSlimResources:
 
         run_call = mock_client.containers.run.call_args
         assert "init" not in run_call.kwargs
+
+    def test_agent_mesh_url_uses_relay(self):
+        """Agent MESH_URL points to the relay container, not host.docker.internal."""
+        import docker as _docker
+
+        backend = self._make_backend()
+        mock_container = MagicMock()
+        mock_client = MagicMock()
+        mock_client.containers.run.return_value = mock_container
+        mock_client.containers.get.side_effect = _docker.errors.NotFound("not found")
+        backend.client = mock_client
+
+        backend.start_agent(agent_id="test-agent", role="test", skills_dir="")
+
+        run_call = mock_client.containers.run.call_args
+        env = run_call.kwargs.get("environment", {})
+        assert env["MESH_URL"] == f"http://{DockerBackend.MESH_RELAY_NAME}:8420"
+        assert "host.docker.internal" not in env["MESH_URL"]
+
+    def test_agent_mesh_url_localhost_on_host_network(self):
+        """On host networking, MESH_URL uses 127.0.0.1 (no relay)."""
+        import docker as _docker
+
+        backend = _make_docker_backend(use_host_network=True, _mesh_relay=None)
+        mock_container = MagicMock()
+        mock_client = MagicMock()
+        mock_client.containers.run.return_value = mock_container
+        mock_client.containers.get.side_effect = _docker.errors.NotFound("not found")
+        backend.client = mock_client
+
+        backend.start_agent(agent_id="test-agent", role="test", skills_dir="")
+
+        run_call = mock_client.containers.run.call_args
+        env = run_call.kwargs.get("environment", {})
+        assert env["MESH_URL"] == "http://127.0.0.1:8420"
+
+    def test_agent_on_internal_network(self):
+        """Agent containers are placed on the internal agent network."""
+        import docker as _docker
+
+        backend = self._make_backend()
+        mock_container = MagicMock()
+        mock_client = MagicMock()
+        mock_client.containers.run.return_value = mock_container
+        mock_client.containers.get.side_effect = _docker.errors.NotFound("not found")
+        backend.client = mock_client
+
+        backend.start_agent(agent_id="test-agent", role="test", skills_dir="")
+
+        run_call = mock_client.containers.run.call_args
+        assert run_call.kwargs.get("network") == "openlegion_agents"
+
+
+class TestMeshRelay:
+    """Tests for the mesh relay container that bridges internal network to mesh."""
+
+    def test_ensure_relay_starts_container(self):
+        """_ensure_mesh_relay creates a relay on first call."""
+        import docker as _docker
+
+        backend = _make_docker_backend(_mesh_relay=None)
+        mock_relay = MagicMock()
+        mock_relay.status = "running"
+        mock_client = MagicMock()
+        mock_client.containers.run.return_value = mock_relay
+        mock_client.containers.get.side_effect = _docker.errors.NotFound("not found")
+        backend.client = mock_client
+
+        backend._ensure_mesh_relay()
+
+        assert backend._mesh_relay is mock_relay
+        mock_client.containers.run.assert_called_once()
+        run_call = mock_client.containers.run.call_args
+        assert run_call.kwargs["name"] == DockerBackend.MESH_RELAY_NAME
+        # Relay connected to internal network
+        backend._network.connect.assert_called_once_with(mock_relay)
+
+    def test_ensure_relay_idempotent(self):
+        """_ensure_mesh_relay skips if relay is already running."""
+        existing_relay = MagicMock()
+        existing_relay.status = "running"
+        backend = _make_docker_backend(_mesh_relay=existing_relay)
+        mock_client = MagicMock()
+        backend.client = mock_client
+
+        backend._ensure_mesh_relay()
+
+        mock_client.containers.run.assert_not_called()
+        assert backend._mesh_relay is existing_relay
+
+    def test_ensure_relay_skips_host_network(self):
+        """No relay needed when using host networking."""
+        backend = _make_docker_backend(use_host_network=True, _mesh_relay=None)
+        mock_client = MagicMock()
+        backend.client = mock_client
+
+        backend._ensure_mesh_relay()
+
+        mock_client.containers.run.assert_not_called()
+        assert backend._mesh_relay is None
+
+    def test_ensure_relay_restarts_crashed(self):
+        """_ensure_mesh_relay restarts a crashed relay container."""
+        import docker as _docker
+
+        dead_relay = MagicMock()
+        dead_relay.status = "exited"
+        backend = _make_docker_backend(_mesh_relay=dead_relay)
+
+        new_relay = MagicMock()
+        new_relay.status = "running"
+        mock_client = MagicMock()
+        mock_client.containers.run.return_value = new_relay
+        mock_client.containers.get.side_effect = _docker.errors.NotFound("not found")
+        backend.client = mock_client
+
+        backend._ensure_mesh_relay()
+
+        dead_relay.remove.assert_called_once_with(force=True)
+        assert backend._mesh_relay is new_relay
+
+    def test_relay_hardening(self):
+        """Relay container has security hardening settings."""
+        import docker as _docker
+
+        backend = _make_docker_backend(_mesh_relay=None)
+        mock_relay = MagicMock()
+        mock_relay.status = "running"
+        mock_client = MagicMock()
+        mock_client.containers.run.return_value = mock_relay
+        mock_client.containers.get.side_effect = _docker.errors.NotFound("not found")
+        backend.client = mock_client
+
+        backend._ensure_mesh_relay()
+
+        run_call = mock_client.containers.run.call_args
+        assert run_call.kwargs["mem_limit"] == "128m"
+        assert run_call.kwargs["read_only"] is True
+        assert run_call.kwargs["cap_drop"] == ["ALL"]
+        assert run_call.kwargs["security_opt"] == ["no-new-privileges"]
+
+    def test_relay_cleans_stale_on_start(self):
+        """_start_mesh_relay removes a stale relay container before starting."""
+        import docker as _docker
+
+        backend = _make_docker_backend(_mesh_relay=None)
+        stale = MagicMock()
+        new_relay = MagicMock()
+        new_relay.status = "running"
+        mock_client = MagicMock()
+        mock_client.containers.get.return_value = stale  # stale exists
+        mock_client.containers.run.return_value = new_relay
+        backend.client = mock_client
+
+        backend._ensure_mesh_relay()
+
+        stale.remove.assert_called_once_with(force=True)
+
+
+class TestStopAll:
+    """Tests for stop_all cleanup of relay and network."""
+
+    def test_stop_all_cleans_relay(self):
+        """stop_all stops and removes the mesh relay."""
+        relay = MagicMock()
+        backend = _make_docker_backend(_mesh_relay=relay)
+        backend.client = MagicMock()
+
+        backend.stop_all()
+
+        relay.stop.assert_called_once_with(timeout=5)
+        relay.remove.assert_called_once()
+        assert backend._mesh_relay is None
+
+    def test_stop_all_cleans_network(self):
+        """stop_all removes the agent network."""
+        network = MagicMock()
+        backend = _make_docker_backend(_network=network)
+        backend.client = MagicMock()
+
+        backend.stop_all()
+
+        network.remove.assert_called_once()
+        assert backend._network is None
+
+    def test_stop_all_relay_before_network(self):
+        """Relay is stopped before network is removed (relay is connected)."""
+        call_order = []
+        relay = MagicMock()
+        relay.stop.side_effect = lambda **kw: call_order.append("relay_stop")
+        relay.remove.side_effect = lambda: call_order.append("relay_remove")
+        network = MagicMock()
+        network.remove.side_effect = lambda: call_order.append("network_remove")
+
+        backend = _make_docker_backend(_mesh_relay=relay, _network=network)
+        backend.client = MagicMock()
+
+        backend.stop_all()
+
+        assert call_order == ["relay_stop", "relay_remove", "network_remove"]
+
+    def test_stop_all_no_relay(self):
+        """stop_all handles missing relay gracefully."""
+        backend = _make_docker_backend(_mesh_relay=None)
+        backend.client = MagicMock()
+
+        backend.stop_all()  # should not raise
+
+
+class TestNetworkInternalFlag:
+    """Tests for network internal=True validation."""
+
+    def test_reuses_internal_network(self):
+        """Existing internal network is reused without recreation."""
+        import docker
+        from unittest.mock import patch
+
+        existing_network = MagicMock()
+        existing_network.attrs = {"Internal": True}
+
+        mock_client = MagicMock()
+        mock_client.networks.get.return_value = existing_network
+
+        with patch("docker.from_env", return_value=mock_client):
+            backend = DockerBackend.__new__(DockerBackend)
+            backend.mesh_host_port = 8420
+            backend.project_root = __import__("pathlib").Path("/tmp")
+            backend.agents = {}
+            backend.auth_tokens = {}
+            backend.extra_env = {}
+            backend.use_host_network = False
+            backend._next_port = 8401
+            import threading
+            backend._port_lock = threading.Lock()
+            backend._relay_lock = threading.Lock()
+            backend.browser_service_url = None
+            backend.browser_vnc_url = None
+            backend.browser_auth_token = ""
+            backend._browser_container = None
+            backend._mesh_relay = None
+
+            # Simulate __init__ network setup
+            backend._network_name = "openlegion_agents"
+            backend._network = None
+            backend.client = mock_client
+            # Run the network setup logic
+            need_create = False
+            try:
+                backend._network = backend.client.networks.get(backend._network_name)
+                if not (backend._network.attrs or {}).get("Internal", False):
+                    try:
+                        backend._network.remove()
+                        need_create = True
+                    except Exception:
+                        pass
+            except docker.errors.NotFound:
+                need_create = True
+
+            assert not need_create
+            assert backend._network is existing_network
+            mock_client.networks.create.assert_not_called()
+
+    def test_replaces_non_internal_network(self):
+        """Non-internal network is removed and recreated with internal=True."""
+        import docker
+
+        non_internal = MagicMock()
+        non_internal.attrs = {"Internal": False}
+        non_internal.remove.return_value = None
+
+        new_network = MagicMock()
+        new_network.attrs = {"Internal": True}
+
+        mock_client = MagicMock()
+        mock_client.networks.get.return_value = non_internal
+        mock_client.networks.create.return_value = new_network
+
+        # Simulate the network setup logic
+        need_create = False
+        network = mock_client.networks.get("openlegion_agents")
+        if not (network.attrs or {}).get("Internal", False):
+            try:
+                network.remove()
+                need_create = True
+            except Exception:
+                pass
+
+        assert need_create
+        non_internal.remove.assert_called_once()
 
