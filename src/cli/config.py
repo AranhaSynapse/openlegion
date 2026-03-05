@@ -859,6 +859,81 @@ def _apply_template(template_name: str, tpl: dict) -> list[str]:
     return created
 
 
+def _load_skill_templates() -> list[dict]:
+    """Load individual agent role templates from team templates.
+
+    Returns a flat list of agent definitions extracted from all team templates,
+    each identified by ``"id": "team/agent_name"``.
+    """
+    templates = _load_templates()
+    result: list[dict] = []
+    for tpl_name, tpl in templates.items():
+        tpl_desc = tpl.get("description", "")
+        for agent_name, agent_def in tpl.get("agents", {}).items():
+            result.append({
+                "id": f"{tpl_name}/{agent_name}",
+                "name": agent_name,
+                "source": tpl_name,
+                "source_description": tpl_desc,
+                "role": agent_def.get("role", agent_name),
+                "has_instructions": bool(
+                    agent_def.get("instructions") or agent_def.get("system_prompt")
+                ),
+                "has_soul": bool(agent_def.get("soul")),
+                "has_heartbeat": bool(agent_def.get("heartbeat")),
+                "thinking": agent_def.get("thinking", ""),
+            })
+    return result
+
+
+def _create_agent_from_template(
+    name: str, template_id: str, model: str,
+) -> None:
+    """Create an agent applying a skill template's config.
+
+    *template_id* has the form ``"team/agent_name"`` (e.g. ``"devteam/engineer"``).
+    """
+    if "/" not in template_id:
+        raise ValueError(f"Invalid template id: {template_id}")
+    tpl_source, tpl_agent = template_id.split("/", 1)
+    templates = _load_templates()
+    tpl = templates.get(tpl_source)
+    if not tpl:
+        raise ValueError(f"Template source not found: {tpl_source}")
+    agent_def = tpl.get("agents", {}).get(tpl_agent)
+    if not agent_def:
+        raise ValueError(f"Agent '{tpl_agent}' not found in template '{tpl_source}'")
+
+    name = _validate_agent_name(name)
+    cfg = _load_config()
+    default_model = cfg.get("llm", {}).get("default_model", "openai/gpt-4o-mini")
+    resolved_model = model or agent_def.get("model", default_model)
+    resolved_model = resolved_model.replace("{default_model}", default_model)
+
+    instructions = agent_def.get("instructions", "") or agent_def.get("system_prompt", "")
+    soul = agent_def.get("soul", "")
+    heartbeat = agent_def.get("heartbeat", "")
+    thinking = agent_def.get("thinking", "")
+    budget = agent_def.get("budget")
+    resources = agent_def.get("resources")
+    agent_permissions = agent_def.get("permissions")
+
+    _add_agent_to_config(
+        name=name,
+        role=agent_def.get("role", name),
+        model=resolved_model,
+        initial_instructions=instructions,
+        initial_soul=soul,
+        initial_heartbeat=heartbeat,
+        thinking=thinking,
+        budget=budget,
+        resources=resources,
+    )
+    _add_agent_permissions(name, permissions=agent_permissions)
+    skills_dir = PROJECT_ROOT / "skills" / name
+    skills_dir.mkdir(parents=True, exist_ok=True)
+
+
 def _default_description(name: str) -> str:
     """Return a default agent description."""
     return f"General-purpose {name} agent"

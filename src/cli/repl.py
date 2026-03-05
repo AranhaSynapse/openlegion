@@ -14,10 +14,12 @@ import click
 
 from src.cli.config import (
     _create_agent,
+    _create_agent_from_template,
     _default_description,
     _edit_agent_interactive,
     _get_default_model,
     _load_config,
+    _load_skill_templates,
     _pick_model_interactive,
 )
 from src.cli.formatting import (
@@ -408,17 +410,49 @@ class REPLSession:
         if new_name in self.ctx.agents:
             click.echo(f"Agent '{new_name}' already exists.")
             return
-        new_desc = click.prompt(
-            "What should this agent do?",
-            default=_default_description(new_name),
-        )
+
+        # Offer skill template selection
+        templates = _load_skill_templates()
+        selected_template = None
+        if templates:
+            click.echo("\nAvailable templates:")
+            click.echo("  0) Blank agent (no template)")
+            for i, tpl in enumerate(templates, 1):
+                badges = []
+                if tpl.get("has_instructions"):
+                    badges.append("instructions")
+                if tpl.get("has_soul"):
+                    badges.append("personality")
+                if tpl.get("has_heartbeat"):
+                    badges.append("heartbeat")
+                badge_str = f" [{', '.join(badges)}]" if badges else ""
+                click.echo(f"  {i}) {tpl['role']} ({tpl['source']}){badge_str}")
+            tpl_choice = click.prompt(
+                "Select template",
+                type=click.IntRange(0, len(templates)),
+                default=0,
+            )
+            if tpl_choice > 0:
+                selected_template = templates[tpl_choice - 1]
+                click.echo(f"Using template: {selected_template['role']}")
+
+        if not selected_template:
+            new_desc = click.prompt(
+                "What should this agent do?",
+                default=_default_description(new_name),
+            )
+
         default_model = _get_default_model()
         model = _pick_model_interactive(
             default_model, label="default",
             credential_vault=self.ctx.credential_vault,
         )
 
-        _create_agent(new_name, new_desc, model)
+        if selected_template:
+            _create_agent_from_template(new_name, selected_template["id"], model)
+            new_desc = selected_template["role"]
+        else:
+            _create_agent(new_name, new_desc, model)
         # Reload permissions so the mesh grants the new agent API access
         self.ctx.permissions.reload()
         agent_cfg_data = _load_config().get("agents", {}).get(new_name, {})

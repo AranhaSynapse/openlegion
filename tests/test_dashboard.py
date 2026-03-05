@@ -391,6 +391,58 @@ class TestDashboardAgentCRUD:
         resp = self.client.delete("/dashboard/api/agents/nonexistent")
         assert resp.status_code == 404
 
+    def test_get_agent_templates(self):
+        resp = self.client.get("/dashboard/api/agent-templates")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+        assert len(data) > 0
+        # Check structure
+        tpl = data[0]
+        assert "id" in tpl
+        assert "name" in tpl
+        assert "source" in tpl
+        assert "role" in tpl
+        assert "/" in tpl["id"]
+
+    @patch("src.cli.config._create_agent_from_template")
+    @patch("src.cli.config._load_config")
+    def test_post_agent_with_template(self, mock_load, mock_create_tpl):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4o-mini"},
+            "agents": {
+                "my_engineer": {
+                    "role": "Software engineer",
+                    "skills_dir": "", "model": "openai/gpt-4o-mini",
+                },
+            },
+        }
+        self.components["runtime"].start_agent.return_value = "http://localhost:8403"
+        self.components["runtime"].wait_for_agent = AsyncMock(return_value=True)
+        self.components["permissions"].reload = MagicMock()
+
+        resp = self.client.post(
+            "/dashboard/api/agents",
+            json={"name": "my_engineer", "template": "devteam/engineer"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["created"] is True
+        assert data["agent"] == "my_engineer"
+        mock_create_tpl.assert_called_once_with("my_engineer", "devteam/engineer", "openai/gpt-4o-mini")
+
+    @patch("src.cli.config._create_agent_from_template")
+    def test_post_agent_invalid_template(self, mock_create_tpl):
+        mock_create_tpl.side_effect = ValueError("Template not found")
+        self.components["permissions"].reload = MagicMock()
+
+        resp = self.client.post(
+            "/dashboard/api/agents",
+            json={"name": "my_agent", "template": "nonexistent/template"},
+        )
+        assert resp.status_code == 400
+        assert "not found" in resp.json()["detail"].lower()
+
 
 class TestDashboardAgentDetail:
     def setup_method(self):

@@ -67,8 +67,9 @@ function dashboard() {
 
     // Add agent
     addAgentMode: false,
-    addAgentForm: { name: '', role: '', model: '', avatar: 1, _showPicker: false },
+    addAgentForm: { name: '', role: '', model: '', avatar: 1, template: '', _showPicker: false },
     addAgentLoading: false,
+    agentTemplates: [],
 
     // Blackboard
     bbEntries: [],
@@ -1612,20 +1613,22 @@ function dashboard() {
       if (!this.addAgentNameValid) { this.showToast('Invalid name: lowercase letters, numbers, underscores only. Max 30 chars.'); return; }
       this.addAgentLoading = true;
       try {
+        const payload = {
+          name: f.name.trim(),
+          role: f.role.trim(),
+          model: f.model,
+          avatar: f.avatar || 1,
+        };
+        if (f.template) payload.template = f.template;
         const resp = await fetch(`${window.__config.apiBase}/agents`, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            name: f.name.trim(),
-            role: f.role.trim(),
-            model: f.model,
-            avatar: f.avatar || 1,
-          }),
+          body: JSON.stringify(payload),
         });
         if (resp.ok) {
           const data = await resp.json();
           this.showToast(data.ready ? `${data.agent} added and ready` : `${data.agent} added (starting)`);
           this.addAgentMode = false;
-          this.addAgentForm = { name: '', role: '', model: '', avatar: 1, _showPicker: false };
+          this.addAgentForm = { name: '', role: '', model: '', avatar: 1, template: '', _showPicker: false };
           this.fetchAgents();
         } else {
           const err = await resp.json();
@@ -1645,6 +1648,7 @@ function dashboard() {
       this.addAgentMode = true;
       if (defaultName) this.addAgentForm.name = defaultName;
       this.fetchSettings();
+      this.fetchAgentTemplates();
       this.$nextTick(() => {
         const el = document.getElementById('add-agent-name-input');
         if (el) el.focus();
@@ -1654,7 +1658,21 @@ function dashboard() {
     closeAddAgentModal() {
       if (this.addAgentLoading) return;
       this.addAgentMode = false;
-      this.addAgentForm = { name: '', role: '', model: '', avatar: 1, _showPicker: false };
+      this.addAgentForm = { name: '', role: '', model: '', avatar: 1, template: '', _showPicker: false };
+    },
+
+    async fetchAgentTemplates() {
+      try {
+        const resp = await fetch(`${window.__config.apiBase}/agent-templates`);
+        if (resp.ok) this.agentTemplates = await resp.json();
+      } catch (e) { /* ignore */ }
+    },
+
+    applyAgentTemplate() {
+      const tpl = this.agentTemplates.find(t => t.id === this.addAgentForm.template);
+      if (tpl) {
+        if (!this.addAgentForm.role) this.addAgentForm.role = tpl.role;
+      }
     },
 
     async removeAgent(agentId) {

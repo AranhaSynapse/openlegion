@@ -2279,6 +2279,29 @@
             <h3 class="text-sm font-medium text-gray-200">Add Agent</h3>
             <button @click="closeAddAgentModal()" class="text-gray-500 hover:text-gray-300 text-lg leading-none">&times;</button>
           </div>
+          <div x-show="agentTemplates.length > 0" class="mb-3">
+            <label class="text-xs text-gray-500 mb-1 block">Start from template</label>
+            <select x-model="addAgentForm.template" @change="applyAgentTemplate()" :disabled="addAgentLoading" class="dash-select w-full">
+              <option value="">Blank agent</option>
+              <template x-for="group in [...new Set(agentTemplates.map(t => t.source))]" :key="group">
+                <optgroup :label="agentTemplates.find(t => t.source === group)?.source_description || group">
+                  <template x-for="t in agentTemplates.filter(t => t.source === group)" :key="t.id">
+                    <option :value="t.id" x-text="t.role"></option>
+                  </template>
+                </optgroup>
+              </template>
+            </select>
+            <div x-show="addAgentForm.template" class="mt-1.5 flex flex-wrap gap-1.5">
+              <template x-for="t in agentTemplates.filter(t => t.id === addAgentForm.template)" :key="t.id">
+                <div class="flex gap-1.5">
+                  <span x-show="t.has_instructions" class="text-[10px] px-1.5 py-0.5 rounded bg-green-900/40 text-green-400 border border-green-800/50">instructions</span>
+                  <span x-show="t.has_soul" class="text-[10px] px-1.5 py-0.5 rounded bg-purple-900/40 text-purple-400 border border-purple-800/50">personality</span>
+                  <span x-show="t.has_heartbeat" class="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-400 border border-amber-800/50">heartbeat</span>
+                  <span x-show="t.thinking" class="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 border border-blue-800/50" x-text="'thinking: ' + t.thinking"></span>
+                </div>
+              </template>
+            </div>
+          </div>
           <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div>
               <label class="text-xs text-gray-500 mb-1 block">Name</label>
@@ -2290,7 +2313,8 @@
             </div>
             <div>
               <label class="text-xs text-gray-500 mb-1 block">Role</label>
-              <input type="text" x-model="addAgentForm.role" :disabled="addAgentLoading" class="dash-input w-full" placeholder="assistant">
+              <input type="text" x-model="addAgentForm.role" :disabled="addAgentLoading" class="dash-input w-full"
+                :placeholder="addAgentForm.template ? 'From template' : 'assistant'">
             </div>
             <div>
               <label class="text-xs text-gray-500 mb-1 block">Model</label>
