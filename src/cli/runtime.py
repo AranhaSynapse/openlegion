@@ -328,10 +328,16 @@ class RuntimeContext:
             agent_mcp_servers = agent_cfg.get("mcp_servers") or None
             agent_thinking = agent_cfg.get("thinking", "")
 
-            # Seed INSTRUCTIONS.md from initial_instructions on first boot
+            # Seed workspace files from template on first boot
             initial_instructions = agent_cfg.get("initial_instructions", "")
             if initial_instructions:
                 self.runtime.extra_env["INITIAL_INSTRUCTIONS"] = initial_instructions
+            initial_soul = agent_cfg.get("initial_soul", "")
+            if initial_soul:
+                self.runtime.extra_env["INITIAL_SOUL"] = initial_soul
+            initial_heartbeat = agent_cfg.get("initial_heartbeat", "")
+            if initial_heartbeat:
+                self.runtime.extra_env["INITIAL_HEARTBEAT"] = initial_heartbeat
 
             # Set project-specific env vars for this agent
             project_name = agent_projects.get(agent_id)
@@ -383,6 +389,8 @@ class RuntimeContext:
             finally:
                 # Clean up per-agent env vars so they don't leak to the next agent
                 self.runtime.extra_env.pop("INITIAL_INSTRUCTIONS", None)
+                self.runtime.extra_env.pop("INITIAL_SOUL", None)
+                self.runtime.extra_env.pop("INITIAL_HEARTBEAT", None)
                 self.runtime.extra_env.pop("PROJECT_MD_PATH", None)
                 self.runtime.extra_env.pop("PROJECT_NAME", None)
             self.router.register_agent(agent_id, url, role=agent_cfg.get("role", ""))

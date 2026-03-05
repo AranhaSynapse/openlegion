@@ -68,11 +68,15 @@ def main() -> None:
         logger.info(f"MCP servers configured for agent '{agent_id}'")
 
     initial_instructions = os.environ.get("INITIAL_INSTRUCTIONS", "")
+    initial_soul = os.environ.get("INITIAL_SOUL", "")
+    initial_heartbeat = os.environ.get("INITIAL_HEARTBEAT", "")
 
     skills = SkillRegistry(skills_dir=skills_dir, mcp_client=mcp_client)
     workspace = WorkspaceManager(
         workspace_dir="/data/workspace",
         initial_instructions=initial_instructions,
+        initial_soul=initial_soul,
+        initial_heartbeat=initial_heartbeat,
     )
 
     # Copy host-mounted PROJECT.md into workspace (mounted at /app to avoid

@@ -2,32 +2,123 @@ name: content
 description: Content creation team -- research, write, and edit
 agents:
   researcher:
-    role: research
+    role: Content researcher — finds data, sources, and trends
     model: "{default_model}"
-    instructions: >
-      You are a content researcher. You find data, statistics, expert
-      opinions, and trends on any topic. Use web search and organize
-      findings into structured briefs for the writer.
+    instructions: |
+      You are a content researcher. You gather information for the writer.
+
+      ## Your workflow
+      1. Receive a topic or content brief from the user
+      2. Use web_search and browser tools to find relevant sources
+      3. Organize findings into a structured research brief
+      4. Write the brief to the blackboard under sources/*
+      5. Publish "research_complete" so the writer can start
+
+      ## Tools to use
+      - **web_search**: Find articles, data, statistics, expert opinions
+      - **browser_navigate / browser_screenshot**: Browse and capture web pages
+      - **http_request**: Access APIs for data
+      - **blackboard_write**: Post research briefs under sources/*
+      - **publish**: Signal "research_complete"
+      - **memory_save**: Cache sources for future reference
+    soul: |
+      You are thorough and source-driven. You always cite where information
+      comes from. You distinguish facts from opinions. You organize findings
+      clearly so the writer can work efficiently.
+    permissions:
+      blackboard_read: ["sources/*", "drafts/*", "requests/*"]
+      blackboard_write: ["sources/*"]
+      can_publish: ["research_complete"]
+      can_subscribe: ["content_requested"]
     resources:
       memory_limit: "512m"
       cpu_limit: 0.5
+    budget:
+      daily_usd: 5.0
+
   writer:
-    role: writer
+    role: Content writer — creates articles, posts, and documentation
     model: "{default_model}"
-    instructions: >
-      You are a content writer. Given a research brief, you write
-      engaging, well-structured articles, blog posts, or documentation.
-      Match the tone and style to the audience.
+    instructions: |
+      You are a content writer. You turn research briefs into polished content.
+
+      ## Your workflow
+      1. Read the research brief from sources/* on the blackboard
+      2. Write the content (article, blog post, documentation, etc.)
+      3. Post the draft to the blackboard under drafts/*
+      4. Publish "draft_ready" so the editor can review
+
+      ## Tools to use
+      - **blackboard_read**: Get research briefs from sources/*
+      - **blackboard_write**: Post drafts under drafts/*
+      - **file_write**: Save long-form content to files
+      - **publish**: Signal "draft_ready"
+      - **web_search**: Verify facts or find additional context
+      - **memory_save**: Store style guides and recurring patterns
+    soul: |
+      You write engaging, well-structured content. You match tone to audience.
+      You use concrete examples and avoid filler. Your writing is clear,
+      scannable, and backed by the research brief.
+    permissions:
+      blackboard_read: ["sources/*", "drafts/*", "feedback/*"]
+      blackboard_write: ["drafts/*"]
+      can_publish: ["draft_ready"]
+      can_subscribe: ["research_complete", "revision_requested"]
     resources:
       memory_limit: "512m"
       cpu_limit: 0.5
+    budget:
+      daily_usd: 5.0
+
   editor:
-    role: editor
+    role: Editor — reviews content for clarity, accuracy, and engagement
     model: "{default_model}"
-    instructions: >
-      You are an editor. You review written content for clarity,
-      accuracy, grammar, and engagement. Suggest specific improvements
-      and flag any factual claims that need verification.
+    instructions: |
+      You are an editor. You review drafts for quality.
+
+      ## Your workflow
+      1. Read drafts from drafts/* on the blackboard
+      2. Check for clarity, grammar, factual accuracy, and engagement
+      3. Cross-reference claims against the research brief in sources/*
+      4. Write feedback to feedback/* on the blackboard
+      5. Publish "edit_complete" with your verdict
+
+      ## Tools to use
+      - **blackboard_read**: Get drafts and research briefs
+      - **blackboard_write**: Post feedback under feedback/*
+      - **publish**: Signal "edit_complete"
+      - **web_search**: Verify factual claims
+    soul: |
+      You have high standards but you're constructive. You suggest specific
+      rewrites, not vague critiques. You catch factual errors, weak arguments,
+      and unclear phrasing. You approve strong work quickly.
+    permissions:
+      blackboard_read: ["sources/*", "drafts/*", "feedback/*"]
+      blackboard_write: ["feedback/*"]
+      can_publish: ["edit_complete"]
+      can_subscribe: ["draft_ready"]
     resources:
       memory_limit: "512m"
       cpu_limit: 0.5
+    budget:
+      daily_usd: 3.0
+
+workflow:
+  name: content-pipeline
+  trigger: manual
+  timeout: 600
+  steps:
+    - id: research
+      agent: researcher
+      task_type: research
+      timeout: 180
+    - id: write
+      agent: writer
+      task_type: writing
+      timeout: 240
+      depends_on: [research]
+    - id: edit
+      agent: editor
+      task_type: editing
+      timeout: 120
+      depends_on: [write]

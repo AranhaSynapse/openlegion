@@ -357,6 +357,11 @@ def _build_docker_image() -> None:
 def _add_agent_to_config(
     name: str, role: str, model: str,
     initial_instructions: str = "",
+    initial_soul: str = "",
+    initial_heartbeat: str = "",
+    thinking: str = "",
+    budget: dict | None = None,
+    resources: dict | None = None,
 ) -> None:
     """Add an agent entry to agents.yaml."""
     agents_cfg: dict = {"agents": {}}
@@ -373,17 +378,31 @@ def _add_agent_to_config(
     }
     if initial_instructions:
         entry["initial_instructions"] = initial_instructions
+    if initial_soul:
+        entry["initial_soul"] = initial_soul
+    if initial_heartbeat:
+        entry["initial_heartbeat"] = initial_heartbeat
+    if thinking:
+        entry["thinking"] = thinking
+    if budget:
+        entry["budget"] = budget
+    if resources:
+        entry["resources"] = resources
     agents_cfg["agents"][name] = entry
     AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(AGENTS_FILE, "w") as f:
         yaml.dump(agents_cfg, f, default_flow_style=False, sort_keys=False)
 
 
-def _add_agent_permissions(name: str) -> None:
+def _add_agent_permissions(name: str, permissions: dict | None = None) -> None:
     """Add default permissions for a new agent.
 
     If collaboration mode is enabled in mesh.yaml, agents can message
     all other agents. Otherwise they can only message the orchestrator.
+
+    If *permissions* is provided (from a template), its ``blackboard_read``,
+    ``blackboard_write``, ``can_publish``, and ``can_subscribe`` entries
+    are merged into the defaults.
     """
     cfg = _load_config()
     collab = cfg.get("collaboration", True)
@@ -395,7 +414,7 @@ def _add_agent_permissions(name: str) -> None:
     else:
         can_message = ["orchestrator"]
 
-    perms["permissions"][name] = {
+    agent_perms: dict = {
         "can_message": can_message,
         "can_publish": ["*"] if collab else [f"{name}_complete"],
         "can_subscribe": ["*"] if collab else [],
@@ -404,6 +423,17 @@ def _add_agent_permissions(name: str) -> None:
         "allowed_apis": ["llm"],
         "allowed_credentials": ["*"],
     }
+
+    # Merge template permissions into defaults
+    if permissions:
+        for key in ("blackboard_read", "blackboard_write", "can_publish", "can_subscribe"):
+            tpl_values = permissions.get(key)
+            if tpl_values and isinstance(tpl_values, list):
+                existing = set(agent_perms.get(key, []))
+                existing.update(tpl_values)
+                agent_perms[key] = sorted(existing)
+
+    perms["permissions"][name] = agent_perms
     _save_permissions(perms)
 
 
@@ -788,27 +818,43 @@ def _apply_template(template_name: str, tpl: dict) -> list[str]:
     created: list[str] = []
 
     for agent_name, agent_def in tpl_agents.items():
+        agent_name = _validate_agent_name(agent_name)
         model = agent_def.get("model", default_model).replace("{default_model}", default_model)
         instructions = agent_def.get("instructions", "") or agent_def.get("system_prompt", "")
+        soul = agent_def.get("soul", "")
+        heartbeat = agent_def.get("heartbeat", "")
+        thinking = agent_def.get("thinking", "")
+        budget = agent_def.get("budget")
+        agent_permissions = agent_def.get("permissions")
+        resources = agent_def.get("resources")
+
         _add_agent_to_config(
             name=agent_name,
             role=agent_def.get("role", agent_name),
             model=model,
             initial_instructions=instructions,
+            initial_soul=soul,
+            initial_heartbeat=heartbeat,
+            thinking=thinking,
+            budget=budget,
+            resources=resources,
         )
-        if "resources" in agent_def:
-            agents_cfg: dict = {"agents": {}}
-            if AGENTS_FILE.exists():
-                with open(AGENTS_FILE) as f:
-                    agents_cfg = yaml.safe_load(f) or {"agents": {}}
-            if agent_name in agents_cfg.get("agents", {}):
-                agents_cfg["agents"][agent_name]["resources"] = agent_def["resources"]
-                with open(AGENTS_FILE, "w") as f:
-                    yaml.dump(agents_cfg, f, default_flow_style=False, sort_keys=False)
-        _add_agent_permissions(agent_name)
+        _add_agent_permissions(agent_name, permissions=agent_permissions)
         skills_dir = PROJECT_ROOT / "skills" / agent_name
         skills_dir.mkdir(parents=True, exist_ok=True)
         created.append(agent_name)
+
+    # Write workflow YAML if template defines one
+    workflow_def = tpl.get("workflow")
+    if workflow_def:
+        wf_dir = PROJECT_ROOT / "config" / "workflows"
+        wf_dir.mkdir(parents=True, exist_ok=True)
+        wf_name = workflow_def.get("name", template_name)
+        # Validate workflow name — prevent path traversal
+        _validate_agent_name(wf_name)
+        wf_path = wf_dir / f"{wf_name}.yaml"
+        with open(wf_path, "w") as f:
+            yaml.dump(workflow_def, f, default_flow_style=False, sort_keys=False)
 
     return created
 

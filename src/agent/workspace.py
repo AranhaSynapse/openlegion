@@ -139,9 +139,17 @@ class WorkspaceManager:
     ERRORS_FILE = "learnings/errors.md"
     CORRECTIONS_FILE = "learnings/corrections.md"
 
-    def __init__(self, workspace_dir: str = "/data/workspace", initial_instructions: str = ""):
+    def __init__(
+        self,
+        workspace_dir: str = "/data/workspace",
+        initial_instructions: str = "",
+        initial_soul: str = "",
+        initial_heartbeat: str = "",
+    ):
         self.root = Path(workspace_dir)
         self._initial_instructions = initial_instructions
+        self._initial_soul = initial_soul
+        self._initial_heartbeat = initial_heartbeat
         self._ensure_scaffold()
 
     def _ensure_scaffold(self) -> None:
@@ -160,11 +168,25 @@ class WorkspaceManager:
         for filename, default_content in _SCAFFOLD_FILES.items():
             path = self.root / filename
             if not path.exists():
-                # Seed INSTRUCTIONS.md from template instructions on first creation
+                # Seed from template content on first creation
                 if filename == "INSTRUCTIONS.md" and self._initial_instructions:
                     content = (
                         "# Instructions\n\n"
                         + self._initial_instructions.strip()
+                        + "\n"
+                    )
+                    path.write_text(content)
+                elif filename == "SOUL.md" and self._initial_soul:
+                    content = (
+                        "# Identity\n\n"
+                        + self._initial_soul.strip()
+                        + "\n"
+                    )
+                    path.write_text(content)
+                elif filename == "HEARTBEAT.md" and self._initial_heartbeat:
+                    content = (
+                        "# Heartbeat Rules\n\n"
+                        + self._initial_heartbeat.strip()
                         + "\n"
                     )
                     path.write_text(content)

@@ -77,6 +77,83 @@ class TestWorkspaceScaffold:
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
+    def test_initial_soul_seeds_soul_md(self):
+        """When initial_soul is provided, SOUL.md is seeded with that content."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            WorkspaceManager(workspace_dir=tmpdir, initial_soul="You are a pirate captain.")
+            root = Path(tmpdir)
+            content = (root / "SOUL.md").read_text()
+            assert content.startswith("# Identity")
+            assert "You are a pirate captain." in content
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_initial_soul_does_not_overwrite_existing(self):
+        """If SOUL.md already exists, initial_soul is ignored."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            root = Path(tmpdir)
+            root.mkdir(exist_ok=True)
+            (root / "SOUL.md").write_text("# Existing soul\nDo not change.")
+            WorkspaceManager(workspace_dir=tmpdir, initial_soul="New soul")
+            assert (root / "SOUL.md").read_text() == "# Existing soul\nDo not change."
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_initial_soul_empty_uses_default(self):
+        """When initial_soul is empty, default scaffold content is used."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            WorkspaceManager(workspace_dir=tmpdir, initial_soul="")
+            root = Path(tmpdir)
+            content = (root / "SOUL.md").read_text()
+            assert "# Identity" in content
+            assert "Personality, tone" in content  # default scaffold
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_initial_heartbeat_seeds_heartbeat_md(self):
+        """When initial_heartbeat is provided, HEARTBEAT.md is seeded with that content."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            WorkspaceManager(workspace_dir=tmpdir, initial_heartbeat="Check email every hour.")
+            root = Path(tmpdir)
+            content = (root / "HEARTBEAT.md").read_text()
+            assert content.startswith("# Heartbeat Rules")
+            assert "Check email every hour." in content
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_initial_heartbeat_does_not_overwrite_existing(self):
+        """If HEARTBEAT.md already exists, initial_heartbeat is ignored."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            root = Path(tmpdir)
+            root.mkdir(exist_ok=True)
+            (root / "HEARTBEAT.md").write_text("# Custom rules\nDo not change.")
+            WorkspaceManager(workspace_dir=tmpdir, initial_heartbeat="New rules")
+            assert (root / "HEARTBEAT.md").read_text() == "# Custom rules\nDo not change."
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_all_three_seeded_together(self):
+        """All three initial_* params work simultaneously."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            WorkspaceManager(
+                workspace_dir=tmpdir,
+                initial_instructions="Do research.",
+                initial_soul="You are curious.",
+                initial_heartbeat="Monitor news.",
+            )
+            root = Path(tmpdir)
+            assert "Do research." in (root / "INSTRUCTIONS.md").read_text()
+            assert "You are curious." in (root / "SOUL.md").read_text()
+            assert "Monitor news." in (root / "HEARTBEAT.md").read_text()
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
     def test_migration_agents_md_to_instructions_md(self):
         """Existing AGENTS.md is renamed to INSTRUCTIONS.md on scaffold."""
         tmpdir = tempfile.mkdtemp()
