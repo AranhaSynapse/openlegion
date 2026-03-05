@@ -1137,6 +1137,28 @@ def create_mesh_app(
             headers=headers,
         )
 
+    # KasmVNC credentials — matches .kasmpasswd created in browser __main__.py
+    _KASM_USER = "browser"
+    _KASM_PASS = "openlegion"
+
+    async def _get_kasm_token(port: int) -> str | None:
+        """Fetch a session token from KasmVNC's /api/get_token (Basic Auth)."""
+        import httpx
+        import base64
+        creds = base64.b64encode(f"{_KASM_USER}:{_KASM_PASS}".encode()).decode()
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(
+                    f"http://127.0.0.1:{port}/api/get_token",
+                    headers={"Authorization": f"Basic {creds}"},
+                )
+                if resp.status_code == 200:
+                    return resp.text.strip()
+                _server_logger.debug("KasmVNC /api/get_token returned %d", resp.status_code)
+        except Exception as e:
+            _server_logger.debug("Failed to get KasmVNC token: %s", e)
+        return None
+
     @app.websocket("/vnc/{path:path}")
     async def vnc_ws_proxy(websocket: WebSocket, path: str):
         """Reverse-proxy WebSocket connections to KasmVNC."""
@@ -1158,9 +1180,14 @@ def create_mesh_app(
             await websocket.close(code=1011, reason="Browser service not available")
             return
 
-        # KasmVNC with -disableBasicAuth exposes unauthenticated WebSocket
-        # at /websockify. Always connect there regardless of the incoming path.
-        target = f"ws://127.0.0.1:{port}/websockify"
+        # KasmVNC 1.4.0: get token via /api/get_token, connect to /api/ws?token=
+        kasm_token = await _get_kasm_token(port)
+        if kasm_token:
+            target = f"ws://127.0.0.1:{port}/api/ws?token={kasm_token}"
+        else:
+            # Fallback: try the path directly
+            target = f"ws://127.0.0.1:{port}/{path}"
+            _server_logger.warning("KasmVNC token fetch failed, trying direct WS to /%s", path)
 
         await websocket.accept()
         try:

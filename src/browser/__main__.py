@@ -35,17 +35,24 @@ _IDLE_TIMEOUT = int(os.environ.get("IDLE_TIMEOUT_MINUTES", "30"))
 def _start_kasmvnc() -> subprocess.Popen:
     """Start KasmVNC Xvnc — combined X server + VNC server + web server.
 
-    Uses Xvnc directly with:
-    - ``-disableBasicAuth``: no HTTP Basic Auth on web client or WebSocket
-    - ``-SecurityTypes None``: no VNC-level authentication
-    - ``-sslOnly 0``: disable TLS (access control via Docker port mapping)
-    - ``-httpd``: serve the KasmVNC web client files
-    - ``-AlwaysShared``: allow multiple VNC viewers
+    KasmVNC 1.4.0 WebSocket flow:
+    1. GET /api/get_token (Basic Auth) → returns session token
+    2. WS /api/ws?token=TOKEN → VNC data stream
 
-    Auth is handled by the mesh host's VNC proxy. The browser container
-    is only reachable from the host via mapped ports, never from the internet.
-    WebSocket endpoint: ``/websockify`` (no token required with disableBasicAuth).
+    The mesh host's VNC proxy handles this server-side so the dashboard
+    iframe user never sees an auth prompt. The browser container is only
+    reachable from the host via Docker port mapping.
     """
+    # Create .kasmpasswd for API auth (/api/get_token, /api/ws)
+    kasmpasswd = os.path.expanduser("~/.kasmpasswd")
+    subprocess.run(
+        ["kasmvncpasswd", "-u", "browser", "-ow", kasmpasswd],
+        input="openlegion\nopenlegion\n",
+        text=True,
+        capture_output=True,
+    )
+    logger.debug("Created .kasmpasswd for KasmVNC API auth")
+
     cmd = [
         "Xvnc", _DISPLAY,
         "-geometry", "1920x1080",
@@ -54,7 +61,6 @@ def _start_kasmvnc() -> subprocess.Popen:
         "-httpd", "/usr/share/kasmvnc/www",
         "-sslOnly", "0",
         "-SecurityTypes", "None",
-        "-disableBasicAuth",
         "-AlwaysShared",
         "-interface", "0.0.0.0",
         # Allow iframe embedding from dashboard (different port = different origin)
