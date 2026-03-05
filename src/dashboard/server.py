@@ -278,6 +278,11 @@ def create_dashboard_router(
         except (ValueError, TypeError):
             raise HTTPException(status_code=400, detail="Avatar must be an integer between 1 and 50")
 
+        if template:
+            import re as _re
+            if not _re.match(r"^[a-z][a-z0-9_-]*/[a-z][a-z0-9_-]*$", template):
+                raise HTTPException(status_code=400, detail="Invalid template id format")
+
         if not model:
             from src.cli.config import _load_config
             default = _load_config().get("llm", {}).get("default_model", "openai/gpt-4o-mini")
@@ -303,16 +308,16 @@ def create_dashboard_router(
 
         try:
             from src.cli.config import (
-                _create_agent, _create_agent_from_template, _load_config, _update_agent_field,
+                _create_agent,
+                _create_agent_from_template,
+                _load_config,
+                _update_agent_field,
             )
             if template:
                 try:
                     _create_agent_from_template(name, template, model)
                 except ValueError as e:
                     raise HTTPException(status_code=400, detail=str(e))
-                # Template sets the role — read it back from config
-                cfg_check = _load_config()
-                role = cfg_check.get("agents", {}).get(name, {}).get("role", role)
             else:
                 _create_agent(name, role, model)
             _update_agent_field(name, "avatar", avatar)
@@ -321,6 +326,8 @@ def create_dashboard_router(
 
             cfg = _load_config()
             acfg = cfg.get("agents", {}).get(name, {})
+            if template:
+                role = acfg.get("role", role)
             import os
             skills_dir = os.path.abspath(acfg.get("skills_dir", ""))
             url = runtime.start_agent(

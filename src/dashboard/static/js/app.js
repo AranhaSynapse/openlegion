@@ -1671,7 +1671,10 @@ function dashboard() {
     applyAgentTemplate() {
       const tpl = this.agentTemplates.find(t => t.id === this.addAgentForm.template);
       if (tpl) {
-        if (!this.addAgentForm.role) this.addAgentForm.role = tpl.role;
+        this.addAgentForm.role = tpl.role;
+      } else {
+        // Switched back to "Blank agent" — clear auto-filled role
+        this.addAgentForm.role = '';
       }
     },
 

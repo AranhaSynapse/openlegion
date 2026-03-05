@@ -893,9 +893,10 @@ def _create_agent_from_template(
 
     *template_id* has the form ``"team/agent_name"`` (e.g. ``"devteam/engineer"``).
     """
-    if "/" not in template_id:
+    parts = template_id.split("/", 1)
+    if len(parts) != 2 or not parts[0] or not parts[1]:
         raise ValueError(f"Invalid template id: {template_id}")
-    tpl_source, tpl_agent = template_id.split("/", 1)
+    tpl_source, tpl_agent = parts
     templates = _load_templates()
     tpl = templates.get(tpl_source)
     if not tpl:

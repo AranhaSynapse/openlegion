@@ -432,7 +432,12 @@ class TestDashboardAgentCRUD:
         mock_create_tpl.assert_called_once_with("my_engineer", "devteam/engineer", "openai/gpt-4o-mini")
 
     @patch("src.cli.config._create_agent_from_template")
-    def test_post_agent_invalid_template(self, mock_create_tpl):
+    @patch("src.cli.config._load_config")
+    def test_post_agent_invalid_template(self, mock_load, mock_create_tpl):
+        mock_load.return_value = {
+            "llm": {"default_model": "openai/gpt-4o-mini"},
+            "agents": {},
+        }
         mock_create_tpl.side_effect = ValueError("Template not found")
         self.components["permissions"].reload = MagicMock()
 
@@ -442,6 +447,21 @@ class TestDashboardAgentCRUD:
         )
         assert resp.status_code == 400
         assert "not found" in resp.json()["detail"].lower()
+
+    def test_post_agent_malformed_template_id(self):
+        resp = self.client.post(
+            "/dashboard/api/agents",
+            json={"name": "my_agent", "template": "no-slash"},
+        )
+        assert resp.status_code == 400
+        assert "template" in resp.json()["detail"].lower()
+
+    def test_post_agent_template_path_traversal(self):
+        resp = self.client.post(
+            "/dashboard/api/agents",
+            json={"name": "my_agent", "template": "../../../etc/passwd"},
+        )
+        assert resp.status_code == 400
 
 
 class TestDashboardAgentDetail:

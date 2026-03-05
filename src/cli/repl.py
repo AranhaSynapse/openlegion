@@ -436,7 +436,10 @@ class REPLSession:
                 selected_template = templates[tpl_choice - 1]
                 click.echo(f"Using template: {selected_template['role']}")
 
-        if not selected_template:
+        new_desc: str
+        if selected_template:
+            new_desc = selected_template["role"]
+        else:
             new_desc = click.prompt(
                 "What should this agent do?",
                 default=_default_description(new_name),
@@ -450,7 +453,6 @@ class REPLSession:
 
         if selected_template:
             _create_agent_from_template(new_name, selected_template["id"], model)
-            new_desc = selected_template["role"]
         else:
             _create_agent(new_name, new_desc, model)
         # Reload permissions so the mesh grants the new agent API access

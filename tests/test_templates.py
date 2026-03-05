@@ -683,6 +683,17 @@ class TestCreateAgentFromTemplate(_TempConfigMixin):
             with pytest.raises(ValueError, match="Invalid template id"):
                 _create_agent_from_template("agent", "noslash", "openai/gpt-4o")
 
+    def test_invalid_template_id_empty_parts(self):
+        with self._mock_config():
+            with pytest.raises(ValueError, match="Invalid template id"):
+                _create_agent_from_template("agent", "/agent", "openai/gpt-4o")
+        with self._mock_config():
+            with pytest.raises(ValueError, match="Invalid template id"):
+                _create_agent_from_template("agent", "source/", "openai/gpt-4o")
+        with self._mock_config():
+            with pytest.raises(ValueError, match="Invalid template id"):
+                _create_agent_from_template("agent", "", "openai/gpt-4o")
+
     def test_unknown_template_source(self):
         with self._mock_config():
             with pytest.raises(ValueError, match="not found"):
@@ -692,6 +703,11 @@ class TestCreateAgentFromTemplate(_TempConfigMixin):
         with self._mock_config():
             with pytest.raises(ValueError, match="not found"):
                 _create_agent_from_template("agent", "devteam/nonexistent", "openai/gpt-4o")
+
+    def test_invalid_agent_name_rejected(self):
+        with self._mock_config():
+            with pytest.raises(ValueError, match="Invalid agent name"):
+                _create_agent_from_template("../evil", "devteam/engineer", "openai/gpt-4o")
 
     def test_applies_resources_from_template(self):
         with self._mock_config():
