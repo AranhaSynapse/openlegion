@@ -156,32 +156,37 @@ class DockerBackend(RuntimeBackend):
         self._mesh_relay = None
         self._relay_lock = threading.Lock()
         if not use_host_network:
-            need_create = False
-            try:
-                self._network = self.client.networks.get(self._network_name)
-                # Verify the existing network is internal. A prior version may
-                # have created it without internal=True — recreate if so.
-                if not (self._network.attrs or {}).get("Internal", False):
-                    try:
-                        self._network.remove()
-                        need_create = True
-                    except Exception:
-                        logger.warning(
-                            "Network '%s' is not internal and could not be "
-                            "replaced — agents may have internet access",
-                            self._network_name,
-                        )
-            except docker.errors.NotFound:
-                need_create = True
-            if need_create:
-                self._network = self.client.networks.create(
-                    self._network_name,
-                    driver="bridge",
-                    internal=True,
-                )
+            self._network = self._ensure_internal_network()
 
     # Name used by agents to reach the mesh via Docker DNS on the internal network.
     MESH_RELAY_NAME = "openlegion_mesh_relay"
+
+    def _ensure_internal_network(self):
+        """Get or create the internal bridge network for agent isolation.
+
+        If the network exists but is NOT internal (e.g. from a prior version),
+        it is removed and recreated with ``internal=True``.
+        """
+        import docker
+        try:
+            network = self.client.networks.get(self._network_name)
+            if (network.attrs or {}).get("Internal", False):
+                return network
+            # Not internal — remove and recreate
+            try:
+                network.remove()
+            except Exception:
+                logger.warning(
+                    "Network '%s' is not internal and could not be "
+                    "replaced — agents may have internet access",
+                    self._network_name,
+                )
+                return network
+        except docker.errors.NotFound:
+            pass
+        return self.client.networks.create(
+            self._network_name, driver="bridge", internal=True,
+        )
 
     @staticmethod
     def backend_name() -> str:
@@ -285,7 +290,17 @@ class DockerBackend(RuntimeBackend):
 
         self._mesh_relay = self.client.containers.run(self.BASE_IMAGE, **run_kwargs)
         # Also connect to the internal agent network so agents discover it via Docker DNS
-        self._network.connect(self._mesh_relay)
+        try:
+            self._network.connect(self._mesh_relay)
+        except Exception as e:
+            logger.error("Failed to connect relay to internal network: %s", e)
+            try:
+                self._mesh_relay.stop(timeout=5)
+                self._mesh_relay.remove()
+            except Exception:
+                pass
+            self._mesh_relay = None
+            return
 
         # Wait for the relay to be running (Python startup + asyncio bind)
         for _ in range(10):

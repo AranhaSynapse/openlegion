@@ -663,6 +663,64 @@ class TestMeshRelay:
 
         stale.remove.assert_called_once_with(force=True)
 
+    def test_relay_network_connect_failure_cleans_up(self):
+        """If connecting relay to internal network fails, relay is removed."""
+        import docker as _docker
+
+        backend = _make_docker_backend(_mesh_relay=None)
+        relay = MagicMock()
+        relay.status = "running"
+        mock_client = MagicMock()
+        mock_client.containers.run.return_value = relay
+        mock_client.containers.get.side_effect = _docker.errors.NotFound("not found")
+        backend.client = mock_client
+        backend._network = MagicMock()
+        backend._network.connect.side_effect = _docker.errors.APIError("network error")
+
+        backend._ensure_mesh_relay()
+
+        # Relay should be cleaned up, not left as orphan
+        relay.stop.assert_called_once()
+        relay.remove.assert_called_once()
+        assert backend._mesh_relay is None
+
+    def test_relay_startup_failure_cleans_up(self):
+        """If relay container exits immediately, it is cleaned up."""
+        import docker as _docker
+
+        backend = _make_docker_backend(_mesh_relay=None)
+        relay = MagicMock()
+        relay.status = "exited"  # never reaches "running"
+        relay.logs.return_value = b"ImportError: no module named asyncio"
+        mock_client = MagicMock()
+        mock_client.containers.run.return_value = relay
+        mock_client.containers.get.side_effect = _docker.errors.NotFound("not found")
+        backend.client = mock_client
+
+        backend._ensure_mesh_relay()
+
+        relay.remove.assert_called_once_with(force=True)
+        assert backend._mesh_relay is None
+
+    def test_relay_reload_exception_triggers_restart(self):
+        """If relay.reload() raises, relay is recreated."""
+        import docker as _docker
+
+        dead_relay = MagicMock()
+        dead_relay.reload.side_effect = _docker.errors.NotFound("removed externally")
+        backend = _make_docker_backend(_mesh_relay=dead_relay)
+
+        new_relay = MagicMock()
+        new_relay.status = "running"
+        mock_client = MagicMock()
+        mock_client.containers.run.return_value = new_relay
+        mock_client.containers.get.side_effect = _docker.errors.NotFound("not found")
+        backend.client = mock_client
+
+        backend._ensure_mesh_relay()
+
+        assert backend._mesh_relay is new_relay
+
 
 class TestStopAll:
     """Tests for stop_all cleanup of relay and network."""
@@ -715,57 +773,23 @@ class TestStopAll:
 
 
 class TestNetworkInternalFlag:
-    """Tests for network internal=True validation."""
+    """Tests for _ensure_internal_network validation."""
 
     def test_reuses_internal_network(self):
         """Existing internal network is reused without recreation."""
         import docker
-        from unittest.mock import patch
 
-        existing_network = MagicMock()
-        existing_network.attrs = {"Internal": True}
+        existing = MagicMock()
+        existing.attrs = {"Internal": True}
 
-        mock_client = MagicMock()
-        mock_client.networks.get.return_value = existing_network
+        backend = _make_docker_backend()
+        backend.client = MagicMock()
+        backend.client.networks.get.return_value = existing
 
-        with patch("docker.from_env", return_value=mock_client):
-            backend = DockerBackend.__new__(DockerBackend)
-            backend.mesh_host_port = 8420
-            backend.project_root = __import__("pathlib").Path("/tmp")
-            backend.agents = {}
-            backend.auth_tokens = {}
-            backend.extra_env = {}
-            backend.use_host_network = False
-            backend._next_port = 8401
-            import threading
-            backend._port_lock = threading.Lock()
-            backend._relay_lock = threading.Lock()
-            backend.browser_service_url = None
-            backend.browser_vnc_url = None
-            backend.browser_auth_token = ""
-            backend._browser_container = None
-            backend._mesh_relay = None
+        result = backend._ensure_internal_network()
 
-            # Simulate __init__ network setup
-            backend._network_name = "openlegion_agents"
-            backend._network = None
-            backend.client = mock_client
-            # Run the network setup logic
-            need_create = False
-            try:
-                backend._network = backend.client.networks.get(backend._network_name)
-                if not (backend._network.attrs or {}).get("Internal", False):
-                    try:
-                        backend._network.remove()
-                        need_create = True
-                    except Exception:
-                        pass
-            except docker.errors.NotFound:
-                need_create = True
-
-            assert not need_create
-            assert backend._network is existing_network
-            mock_client.networks.create.assert_not_called()
+        assert result is existing
+        backend.client.networks.create.assert_not_called()
 
     def test_replaces_non_internal_network(self):
         """Non-internal network is removed and recreated with internal=True."""
@@ -773,25 +797,54 @@ class TestNetworkInternalFlag:
 
         non_internal = MagicMock()
         non_internal.attrs = {"Internal": False}
-        non_internal.remove.return_value = None
 
         new_network = MagicMock()
-        new_network.attrs = {"Internal": True}
 
-        mock_client = MagicMock()
-        mock_client.networks.get.return_value = non_internal
-        mock_client.networks.create.return_value = new_network
+        backend = _make_docker_backend()
+        backend.client = MagicMock()
+        backend.client.networks.get.return_value = non_internal
+        backend.client.networks.create.return_value = new_network
 
-        # Simulate the network setup logic
-        need_create = False
-        network = mock_client.networks.get("openlegion_agents")
-        if not (network.attrs or {}).get("Internal", False):
-            try:
-                network.remove()
-                need_create = True
-            except Exception:
-                pass
+        result = backend._ensure_internal_network()
 
-        assert need_create
         non_internal.remove.assert_called_once()
+        backend.client.networks.create.assert_called_once_with(
+            backend._network_name, driver="bridge", internal=True,
+        )
+        assert result is new_network
+
+    def test_creates_when_not_found(self):
+        """Creates a new internal network when none exists."""
+        import docker
+
+        new_network = MagicMock()
+
+        backend = _make_docker_backend()
+        backend.client = MagicMock()
+        backend.client.networks.get.side_effect = docker.errors.NotFound("not found")
+        backend.client.networks.create.return_value = new_network
+
+        result = backend._ensure_internal_network()
+
+        backend.client.networks.create.assert_called_once_with(
+            backend._network_name, driver="bridge", internal=True,
+        )
+        assert result is new_network
+
+    def test_keeps_non_internal_if_remove_fails(self):
+        """Falls back to non-internal network if removal fails."""
+        import docker
+
+        non_internal = MagicMock()
+        non_internal.attrs = {"Internal": False}
+        non_internal.remove.side_effect = docker.errors.APIError("has active endpoints")
+
+        backend = _make_docker_backend()
+        backend.client = MagicMock()
+        backend.client.networks.get.return_value = non_internal
+
+        result = backend._ensure_internal_network()
+
+        assert result is non_internal
+        backend.client.networks.create.assert_not_called()
 
