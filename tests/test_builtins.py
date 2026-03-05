@@ -5,7 +5,6 @@ import os
 import shutil
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
-from urllib.parse import urlparse
 
 import pytest
 
@@ -758,6 +757,7 @@ class TestHttpTool:
     async def test_is_blocked_ip_link_local(self):
         """Link-local addresses (169.254.x.x) are blocked."""
         import ipaddress
+
         from src.agent.builtins.http_tool import _is_blocked_ip
 
         assert _is_blocked_ip(ipaddress.ip_address("169.254.1.1")) is True
@@ -766,6 +766,7 @@ class TestHttpTool:
     async def test_is_blocked_ip_ipv6_loopback(self):
         """IPv6 loopback (::1) is blocked."""
         import ipaddress
+
         from src.agent.builtins.http_tool import _is_blocked_ip
 
         assert _is_blocked_ip(ipaddress.ip_address("::1")) is True
@@ -774,6 +775,7 @@ class TestHttpTool:
     async def test_is_blocked_ip_public_is_allowed(self):
         """Public IPs are not blocked."""
         import ipaddress
+
         from src.agent.builtins.http_tool import _is_blocked_ip
 
         assert _is_blocked_ip(ipaddress.ip_address("8.8.8.8")) is False
@@ -793,8 +795,8 @@ class TestHttpTool:
     @pytest.mark.asyncio
     async def test_dns_failure_fails_closed(self):
         """DNS resolution failure blocks the request (fail-closed)."""
-        from unittest.mock import patch
         import socket
+        from unittest.mock import patch
 
         from src.agent.builtins.http_tool import _resolve_and_pin
 
