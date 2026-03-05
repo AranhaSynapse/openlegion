@@ -1114,7 +1114,6 @@ def create_mesh_app(
         """Reverse-proxy HTTP requests to KasmVNC (static files)."""
         _reject_agent_tokens(request)
         import httpx
-        import base64
 
         port = _get_vnc_port()
         if port is None:
@@ -1123,14 +1122,9 @@ def create_mesh_app(
         target = f"http://127.0.0.1:{port}/{path}"
         if query:
             target += f"?{query}"
-        # KasmVNC requires Basic Auth on all HTTP endpoints
-        kasm_creds = base64.b64encode(b"browser:openlegion").decode()
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(
-                    target,
-                    headers={"Authorization": f"Basic {kasm_creds}"},
-                )
+                resp = await client.get(target)
         except (httpx.ConnectError, httpx.TimeoutException):
             raise HTTPException(502, "Browser VNC not reachable")
         headers = {}
@@ -1142,10 +1136,6 @@ def create_mesh_app(
             status_code=resp.status_code,
             headers=headers,
         )
-
-    # KasmVNC credentials — matches .kasmpasswd created in browser __main__.py
-    _KASM_USER = "browser"
-    _KASM_PASS = "openlegion"
 
     @app.websocket("/vnc/{path:path}")
     async def vnc_ws_proxy(websocket: WebSocket, path: str):
@@ -1168,16 +1158,10 @@ def create_mesh_app(
             await websocket.close(code=1011, reason="Browser service not available")
             return
 
-        # KasmVNC requires Sec-WebSocket-Origin (non-standard) for /websockify.
-        # Also inject Basic Auth credentials server-side.
-        import base64
-        kasm_creds = base64.b64encode(
-            f"{_KASM_USER}:{_KASM_PASS}".encode()
-        ).decode()
+        # KasmVNC requires Origin header for /websockify (even with -disableBasicAuth).
         target = f"ws://127.0.0.1:{port}/websockify"
         extra_headers = {
-            "Authorization": f"Basic {kasm_creds}",
-            "Sec-WebSocket-Origin": f"http://127.0.0.1:{port}",
+            "Origin": f"http://127.0.0.1:{port}",
         }
 
         await websocket.accept()
