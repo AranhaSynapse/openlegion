@@ -796,19 +796,19 @@
         </div>
         <!-- Input area -->
         <div class="px-3 py-2.5 border-t border-gray-800 shrink-0" x-data="{ chatInput: '' }">
-          <div class="flex gap-1.5 items-end">
-            <textarea x-model="chatInput" id="chat-slide-input" rows="1"
+          <div class="chat-input-wrap">
+            <textarea x-model="chatInput" id="chat-slide-input" rows="2"
               :disabled="chatLoadingAgents[activeChatId]"
               @keydown.enter="if (!$event.shiftKey && chatInput.trim()) { $event.preventDefault(); if (isAgentBusy(activeChatId)) { steerAgent(activeChatId, chatInput); } else { sendChatTo(activeChatId, chatInput); } chatInput = ''; $el.style.height = 'auto'; }"
               @input="$el.style.height = 'auto'; $el.style.height = Math.min($el.scrollHeight, 120) + 'px'"
-              class="dash-input flex-1 text-xs py-1.5 resize-none overflow-y-auto"
-              style="max-height: 120px"
+              style="max-height:120px;background:transparent;border:none;outline:none;resize:none;flex:1;min-width:0;padding:0.5rem 0.25rem 0.5rem 0.625rem;font-size:0.75rem;line-height:1.4;color:#e5e7eb;overflow-y:auto"
               :placeholder="isAgentBusy(activeChatId) ? 'Steer agent...' : 'Message...'"></textarea>
             <button @click="if (chatInput.trim()) { if (isAgentBusy(activeChatId)) { steerAgent(activeChatId, chatInput); } else { sendChatTo(activeChatId, chatInput); } chatInput = ''; const ta = document.getElementById('chat-slide-input'); if (ta) ta.style.height = 'auto'; }"
-              :disabled="!chatInput.trim() || chatLoadingAgents[activeChatId]"
-              class="text-[10px] px-3 py-1.5 rounded text-white disabled:opacity-50 transition-colors shrink-0"
-              :class="isAgentBusy(activeChatId) ? 'bg-amber-600 hover:bg-amber-500' : 'bg-indigo-600 hover:bg-indigo-500'"
-              x-text="isAgentBusy(activeChatId) ? 'Steer' : 'Send'"></button>
+              :disabled="!chatInput.trim()"
+              style="width:34px;height:34px;min-width:34px;min-height:34px;border-radius:9999px;border:none;padding:0;margin:3px 4px 3px 0;display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;cursor:pointer;transition:background-color 0.15s,opacity 0.15s"
+              :class="chatInput.trim() ? (isAgentBusy(activeChatId) ? 'bg-amber-600 hover:bg-amber-500' : 'bg-indigo-600 hover:bg-indigo-500') : 'bg-gray-700 opacity-40 cursor-default'">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" style="width:16px;height:16px"><path fill-rule="evenodd" d="M3 10a.75.75 0 0 1 .75-.75h10.638L10.23 5.29a.75.75 0 1 1 1.04-1.08l5.5 5.25a.75.75 0 0 1 0 1.08l-5.5 5.25a.75.75 0 1 1-1.04-1.08l4.158-3.96H3.75A.75.75 0 0 1 3 10Z" clip-rule="evenodd"/></svg>
+            </button>
           </div>
         </div>
       </div>
