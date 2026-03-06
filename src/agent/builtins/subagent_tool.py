@@ -152,12 +152,13 @@ async def _run_subagent(
         _cleanup_depth(subagent_id)
         memory.close()
 
-    # Write result to blackboard
-    result_key = f"subagent_results/{parent_id}/{subagent_id}"
-    try:
-        await mesh_client.write_blackboard(result_key, result_data)
-    except Exception as e:
-        logger.warning("Failed to write subagent result to blackboard: %s", e)
+    # Write result to blackboard (project agents only — standalone has no blackboard)
+    if not getattr(mesh_client, "is_standalone", False):
+        result_key = f"subagent_results/{parent_id}/{subagent_id}"
+        try:
+            await mesh_client.write_blackboard(result_key, result_data)
+        except Exception as e:
+            logger.warning("Failed to write subagent result to blackboard: %s", e)
 
     return result_data
 
@@ -312,9 +313,9 @@ async def wait_for_subagent(
     except Exception as e:
         logger.warning("Failed to get subagent result from task: %s", e)
 
-    # Fallback: try reading from blackboard (for project agents)
-    result_key = f"subagent_results/{parent_id}/{subagent_id}"
-    if mesh_client:
+    # Fallback: try reading from blackboard (project agents only)
+    if mesh_client and not getattr(mesh_client, "is_standalone", False):
+        result_key = f"subagent_results/{parent_id}/{subagent_id}"
         try:
             bb = await mesh_client.read_blackboard(result_key)
             if bb is not None:
