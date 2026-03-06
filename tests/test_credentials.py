@@ -1142,6 +1142,380 @@ class TestGetAuthForModel:
         providers = v.get_providers_with_credentials()
         assert providers == set()
 
+    def test_get_auth_for_model_oauth_token(self, monkeypatch):
+        """OAuth setup-token returns key with empty headers (OAuth bypasses LiteLLM)."""
+        monkeypatch.setenv(
+            "OPENLEGION_SYSTEM_ANTHROPIC_API_KEY",
+            "sk-ant-oat01-" + "x" * 80,
+        )
+        v = CredentialVault()
+        api_key, headers = v._get_auth_for_model("anthropic/claude-sonnet-4-6")
+        assert api_key.startswith("sk-ant-oat01-")
+        # OAuth tokens bypass LiteLLM — headers built in _oauth_headers() instead
+        assert headers == {}
+
+
+# ── OAuth token detection ──────────────────────────────────────
+
+
+class TestOAuthTokenHandling:
+    """Tests for OAuth setup-token detection and API body conversion."""
+
+    def test_is_oauth_token(self):
+        from src.host.credentials import is_oauth_token
+        assert is_oauth_token("sk-ant-oat01-" + "x" * 80)
+        assert not is_oauth_token("sk-ant-api03-regular-key")
+        assert not is_oauth_token("")
+        assert not is_oauth_token("some-random-token")
+
+    def test_build_anthropic_body_basic(self):
+        """Converts LiteLLM-style params to Anthropic format."""
+        params = {
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "Hello"},
+            ],
+            "max_tokens": 1024,
+            "temperature": 0.5,
+        }
+        body = CredentialVault._build_anthropic_body(params)
+        assert body["model"] == "claude-sonnet-4-6"
+        assert body["system"] == "You are helpful."
+        assert len(body["messages"]) == 1
+        assert body["messages"][0]["role"] == "user"
+        assert body["max_tokens"] == 1024
+        assert body["temperature"] == 0.5
+
+    def test_build_anthropic_body_with_tools(self):
+        """Converts OpenAI-style tools to Anthropic format."""
+        params = {
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "test"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "search",
+                    "description": "Search the web",
+                    "parameters": {"type": "object", "properties": {"q": {"type": "string"}}},
+                },
+            }],
+        }
+        body = CredentialVault._build_anthropic_body(params)
+        assert len(body["tools"]) == 1
+        tool = body["tools"][0]
+        assert tool["name"] == "search"
+        assert tool["description"] == "Search the web"
+        assert "input_schema" in tool
+
+    def test_parse_anthropic_response_text(self):
+        """Parses a simple text response."""
+        data = {
+            "content": [{"type": "text", "text": "Hello!"}],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+            "model": "claude-sonnet-4-6",
+        }
+        result = CredentialVault._parse_anthropic_response(data, "anthropic/claude-sonnet-4-6")
+        assert result["content"] == "Hello!"
+        assert result["tokens_used"] == 15
+        assert result["input_tokens"] == 10
+        assert result["output_tokens"] == 5
+        assert result["tool_calls"] == []
+
+    def test_parse_anthropic_response_tool_use(self):
+        """Parses a tool-use response."""
+        import json
+        data = {
+            "content": [
+                {"type": "text", "text": "Let me search."},
+                {"type": "tool_use", "name": "search", "input": {"q": "test"}},
+            ],
+            "usage": {"input_tokens": 20, "output_tokens": 30},
+        }
+        result = CredentialVault._parse_anthropic_response(data, "anthropic/claude-sonnet-4-6")
+        assert result["content"] == "Let me search."
+        assert len(result["tool_calls"]) == 1
+        assert result["tool_calls"][0]["name"] == "search"
+        assert json.loads(result["tool_calls"][0]["arguments"]) == {"q": "test"}
+
+    def test_parse_anthropic_response_thinking(self):
+        """Parses response with thinking blocks."""
+        data = {
+            "content": [
+                {"type": "thinking", "thinking": "reasoning here"},
+                {"type": "text", "text": "Answer"},
+            ],
+            "usage": {"input_tokens": 50, "output_tokens": 100},
+        }
+        result = CredentialVault._parse_anthropic_response(data, "anthropic/test")
+        assert result["content"] == "Answer"
+        assert result["thinking_content"] == "reasoning here"
+
+    def test_oauth_headers_structure(self):
+        """OAuth headers include all required fields."""
+        headers = CredentialVault._oauth_headers("sk-ant-oat01-test")
+        assert headers["Authorization"] == "Bearer sk-ant-oat01-test"
+        assert headers["anthropic-version"] == "2023-06-01"
+        assert "claude-code-20250219" in headers["anthropic-beta"]
+        assert "oauth-2025-04-20" in headers["anthropic-beta"]
+        assert headers["user-agent"].startswith("claude-cli/")
+        assert headers["Content-Type"] == "application/json"
+
+    def test_build_anthropic_body_tool_choice_auto(self):
+        """tool_choice='auto' converts to Anthropic format."""
+        params = {
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "test"}],
+            "tools": [{"function": {"name": "t", "parameters": {"type": "object"}}}],
+            "tool_choice": "auto",
+        }
+        body = CredentialVault._build_anthropic_body(params)
+        assert body["tool_choice"] == {"type": "auto"}
+
+    def test_build_anthropic_body_tool_choice_required(self):
+        """tool_choice='required' maps to Anthropic 'any'."""
+        params = {
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "test"}],
+            "tools": [{"function": {"name": "t", "parameters": {"type": "object"}}}],
+            "tool_choice": "required",
+        }
+        body = CredentialVault._build_anthropic_body(params)
+        assert body["tool_choice"] == {"type": "any"}
+
+    def test_build_anthropic_body_tool_choice_specific(self):
+        """tool_choice with specific function maps to Anthropic 'tool' type."""
+        params = {
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "test"}],
+            "tools": [{"function": {"name": "search", "parameters": {"type": "object"}}}],
+            "tool_choice": {"function": {"name": "search"}},
+        }
+        body = CredentialVault._build_anthropic_body(params)
+        assert body["tool_choice"] == {"type": "tool", "name": "search"}
+
+    def test_build_anthropic_body_top_p(self):
+        """top_p is forwarded to body."""
+        params = {
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "test"}],
+            "top_p": 0.9,
+        }
+        body = CredentialVault._build_anthropic_body(params)
+        assert body["top_p"] == 0.9
+
+    def test_build_anthropic_body_tool_choice_none_removes_tools(self):
+        """tool_choice='none' removes tools from body entirely."""
+        params = {
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "test"}],
+            "tools": [{"function": {"name": "t", "parameters": {"type": "object"}}}],
+            "tool_choice": "none",
+        }
+        body = CredentialVault._build_anthropic_body(params)
+        assert "tools" not in body
+        assert "tool_choice" not in body
+
+
+# ── OAuth async integration tests ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_oauth_chat_success(monkeypatch):
+    """_oauth_chat returns parsed response on 200."""
+    import httpx
+
+    monkeypatch.setenv("OPENLEGION_SYSTEM_ANTHROPIC_API_KEY", "sk-ant-oat01-" + "x" * 80)
+    v = CredentialVault()
+
+    mock_response = httpx.Response(
+        200,
+        json={
+            "content": [{"type": "text", "text": "Hello!"}],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+            "model": "claude-sonnet-4-6",
+        },
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+    )
+
+    async def mock_post(*args, **kwargs):
+        return mock_response
+
+    mock_client = MagicMock()
+    mock_client.post = mock_post
+    mock_client.is_closed = False
+    v._http_client = mock_client
+
+    req = APIProxyRequest(
+        service="llm", action="chat",
+        params={
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 100,
+        },
+    )
+    result = await v._oauth_chat(req, v.system_credentials["anthropic_api_key"], "anthropic/claude-sonnet-4-6")
+    assert result.success
+    assert result.data["content"] == "Hello!"
+    assert result.data["tokens_used"] == 15
+
+
+@pytest.mark.asyncio
+async def test_oauth_chat_connect_error(monkeypatch):
+    """_oauth_chat raises RuntimeError on ConnectError."""
+    import httpx
+
+    monkeypatch.setenv("OPENLEGION_SYSTEM_ANTHROPIC_API_KEY", "sk-ant-oat01-" + "x" * 80)
+    v = CredentialVault()
+
+    async def mock_post(*args, **kwargs):
+        raise httpx.ConnectError("Connection refused")
+
+    mock_client = MagicMock()
+    mock_client.post = mock_post
+    mock_client.is_closed = False
+    v._http_client = mock_client
+
+    req = APIProxyRequest(
+        service="llm", action="chat",
+        params={
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    with pytest.raises(RuntimeError, match="connection error"):
+        await v._oauth_chat(req, "sk-ant-oat01-" + "x" * 80, "anthropic/claude-sonnet-4-6")
+
+
+@pytest.mark.asyncio
+async def test_oauth_chat_401_non_json(monkeypatch):
+    """_oauth_chat handles non-JSON 401 response gracefully."""
+    import httpx
+
+    monkeypatch.setenv("OPENLEGION_SYSTEM_ANTHROPIC_API_KEY", "sk-ant-oat01-" + "x" * 80)
+    v = CredentialVault()
+
+    mock_response = httpx.Response(
+        401,
+        text="Unauthorized",
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+    )
+
+    async def mock_post(*args, **kwargs):
+        return mock_response
+
+    mock_client = MagicMock()
+    mock_client.post = mock_post
+    mock_client.is_closed = False
+    v._http_client = mock_client
+
+    req = APIProxyRequest(
+        service="llm", action="chat",
+        params={
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    with pytest.raises(RuntimeError, match="OAuth authentication failed"):
+        await v._oauth_chat(req, "sk-ant-oat01-" + "x" * 80, "anthropic/claude-sonnet-4-6")
+
+
+@pytest.mark.asyncio
+async def test_oauth_chat_401_oauth_disabled(monkeypatch):
+    """_oauth_chat raises specific message when Anthropic disables OAuth."""
+    import httpx
+
+    monkeypatch.setenv("OPENLEGION_SYSTEM_ANTHROPIC_API_KEY", "sk-ant-oat01-" + "x" * 80)
+    v = CredentialVault()
+
+    mock_response = httpx.Response(
+        401,
+        json={"error": {"message": "OAuth access has been disabled for this application"}},
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+    )
+
+    async def mock_post(*args, **kwargs):
+        return mock_response
+
+    mock_client = MagicMock()
+    mock_client.post = mock_post
+    mock_client.is_closed = False
+    v._http_client = mock_client
+
+    req = APIProxyRequest(
+        service="llm", action="chat",
+        params={
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    with pytest.raises(RuntimeError, match="disabled OAuth for third-party"):
+        await v._oauth_chat(req, "sk-ant-oat01-" + "x" * 80, "anthropic/claude-sonnet-4-6")
+
+
+@pytest.mark.asyncio
+async def test_oauth_chat_500_records_health_failure(monkeypatch):
+    """_oauth_chat records health failure for server errors."""
+    import httpx
+
+    monkeypatch.setenv("OPENLEGION_SYSTEM_ANTHROPIC_API_KEY", "sk-ant-oat01-" + "x" * 80)
+    v = CredentialVault()
+
+    mock_response = httpx.Response(
+        500,
+        text="Internal Server Error",
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+    )
+
+    async def mock_post(*args, **kwargs):
+        return mock_response
+
+    mock_client = MagicMock()
+    mock_client.post = mock_post
+    mock_client.is_closed = False
+    v._http_client = mock_client
+
+    req = APIProxyRequest(
+        service="llm", action="chat",
+        params={
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        await v._oauth_chat(req, "sk-ant-oat01-" + "x" * 80, "anthropic/claude-sonnet-4-6")
+
+    # Verify health tracker recorded the failure
+    status = v._health_tracker.get_status()
+    model_status = [s for s in status if s["model"] == "anthropic/claude-sonnet-4-6"]
+    assert len(model_status) == 1
+    assert model_status[0]["failure_count"] > 0
+
+
+@pytest.mark.asyncio
+async def test_handle_llm_routes_oauth_to_direct_path(monkeypatch):
+    """_handle_llm routes OAuth tokens to _oauth_chat, not LiteLLM."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("OPENLEGION_SYSTEM_ANTHROPIC_API_KEY", "sk-ant-oat01-" + "x" * 80)
+    v = CredentialVault()
+
+    mock_result = MagicMock()
+    mock_result.success = True
+    mock_result.data = {"content": "test"}
+    v._oauth_chat = AsyncMock(return_value=mock_result)
+
+    req = APIProxyRequest(
+        service="llm", action="chat",
+        params={
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    result = await v._handle_llm(req)
+    v._oauth_chat.assert_called_once()
+    assert result.success
+
 
 # ── Budget lock timeout returns error ──────────────────────────
 
