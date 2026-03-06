@@ -114,7 +114,7 @@ OpenLegion was designed from day one assuming agents will be compromised.
 | **Multi-agent routing** | LLM CEO agent | Deterministic YAML DAG workflows |
 | **LLM providers** | Broad | 100+ via LiteLLM with health-tracked failover |
 | **Test coverage** | Minimal | 1826 tests including full Docker E2E |
-| **Codebase size** | 430,000+ lines | ~25,000 lines — auditable in a day |
+| **Codebase size** | 430,000+ lines | ~26,000 lines — auditable in a day |
 
 ---
 
@@ -128,7 +128,7 @@ Chat with your agent fleet via **Telegram**, **Discord**, **Slack**, **WhatsApp*
 via cron schedules, webhooks, heartbeat monitoring, and file watchers — without being
 prompted.
 
-**1826 tests passing** across **~25,000 lines** of application code.
+**1826 tests passing** across **~26,000 lines** of application code.
 **Fully auditable in a day.**
 No LangChain. No Redis. No Kubernetes. No CEO agent. BSL License.
 
@@ -404,7 +404,7 @@ canonicalized parameters and results over a 15-call sliding window.
 | `browser_screenshot` | Capture page screenshot |
 | `browser_click` | Click element by ref or CSS selector |
 | `browser_type` | Fill input by ref or CSS selector (supports `$CRED{}` handles) |
-| `browser_scroll` | Scroll page or element into view |
+| `browser_scroll` | Scroll page up/down or scroll element into view |
 | `browser_reset` | Reset browser session (profile preserved) |
 | `browser_solve_captcha` | Manual CAPTCHA detection and solving |
 | `memory_search` | Hybrid search across workspace files and structured DB |
