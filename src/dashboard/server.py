@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from jinja2 import Environment, FileSystemLoader
 
 from src.dashboard.auth import verify_session_cookie
-from src.shared.utils import sanitize_for_prompt, setup_logging
+from src.shared.utils import friendly_streaming_error, sanitize_for_prompt, setup_logging
 
 if TYPE_CHECKING:
     from src.dashboard.events import EventBus
@@ -778,7 +778,7 @@ def create_dashboard_router(
                             event_bus.emit(etype, agent=agent_id,
                                 data={k: v for k, v in event.items() if k != "type"})
             except Exception as e:
-                yield f"data: {_json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                yield f"data: {_json.dumps({'type': 'error', 'message': friendly_streaming_error(e)})}\n\n"
 
         from starlette.responses import StreamingResponse
         return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -875,7 +875,7 @@ def create_dashboard_router(
                                 event_bus.emit(etype, agent=aid,
                                     data={k: v for k, v in tagged.items() if k != "type"})
             except Exception as e:
-                await queue.put({"type": "error", "agent": aid, "message": str(e)})
+                await queue.put({"type": "error", "agent": aid, "message": friendly_streaming_error(e)})
             await queue.put({"type": "agent_done", "agent": aid})
 
         async def event_generator():

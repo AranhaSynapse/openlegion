@@ -22,7 +22,7 @@ import httpx
 
 from src.host.transcript import sanitize_for_provider
 from src.shared.types import APIProxyRequest, APIProxyResponse
-from src.shared.utils import setup_logging
+from src.shared.utils import friendly_streaming_error, setup_logging
 
 logger = setup_logging("host.credentials")
 
@@ -877,7 +877,7 @@ class CredentialVault:
         except Exception as e:
             logger.error(f"OAuth streaming call failed: {e}")
             self._health_tracker.record_failure(model, type(e).__name__, 0)
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'error': friendly_streaming_error(e)})}\n\n"
 
     async def _handle_llm(self, request: APIProxyRequest) -> APIProxyResponse:
         """Unified LLM handler. Auto-detects provider from model prefix via LiteLLM.
@@ -1084,7 +1084,7 @@ class CredentialVault:
             self._health_tracker.record_failure(
                 used_model, type(e).__name__, self._get_status_code(e),
             )
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'error': friendly_streaming_error(e)})}\n\n"
 
     async def _handle_apollo(self, request: APIProxyRequest) -> APIProxyResponse:
         """Handle Apollo.io API calls."""
