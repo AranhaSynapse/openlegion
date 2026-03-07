@@ -59,6 +59,19 @@ def _verify_dashboard_auth(request: Request) -> None:
         raise HTTPException(401, error)
 
 
+def _parse_positive_float(value: Any, field: str, fallback: float) -> float:
+    """Validate *value* as a positive float, returning *fallback* if None."""
+    if value is None:
+        return fallback
+    try:
+        result = float(value)
+        if result <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"{field} must be a positive number")
+    return result
+
+
 def create_dashboard_router(
     blackboard: Blackboard,
     health_monitor: HealthMonitor | None,
@@ -552,29 +565,12 @@ def create_dashboard_router(
         if "budget" in body:
             budget_val = body["budget"]
             if isinstance(budget_val, dict):
-                daily = budget_val.get("daily_usd")
-                monthly = budget_val.get("monthly_usd")
-                if daily is not None or monthly is not None:
-                    # Read current budget so we don't reset the other limit
-                    current_budget = cost_tracker.check_budget(agent_id)
-                    if daily is not None:
-                        try:
-                            daily = float(daily)
-                            if daily <= 0:
-                                raise ValueError
-                        except (ValueError, TypeError):
-                            raise HTTPException(status_code=400, detail="Budget daily_usd must be a positive number")
-                    else:
-                        daily = current_budget.get("daily_limit", 10.0)
-                    if monthly is not None:
-                        try:
-                            monthly = float(monthly)
-                            if monthly <= 0:
-                                raise ValueError
-                        except (ValueError, TypeError):
-                            raise HTTPException(status_code=400, detail="Budget monthly_usd must be a positive number")
-                    else:
-                        monthly = current_budget.get("monthly_limit", 200.0)
+                raw_daily = budget_val.get("daily_usd")
+                raw_monthly = budget_val.get("monthly_usd")
+                if raw_daily is not None or raw_monthly is not None:
+                    current = cost_tracker.check_budget(agent_id)
+                    daily = _parse_positive_float(raw_daily, "daily_usd", current.get("daily_limit", 10.0))
+                    monthly = _parse_positive_float(raw_monthly, "monthly_usd", current.get("monthly_limit", 200.0))
                     _update_agent_field(agent_id, "budget", {"daily_usd": daily, "monthly_usd": monthly})
                     cost_tracker.set_budget(agent_id, daily_usd=daily, monthly_usd=monthly)
                     updated.append("budget")
@@ -648,32 +644,13 @@ def create_dashboard_router(
         if agent_id not in agent_registry:
             raise HTTPException(status_code=404, detail="Agent not found")
         body = await request.json()
-        daily_usd = body.get("daily_usd")
-        monthly_usd = body.get("monthly_usd")
-        if daily_usd is None and monthly_usd is None:
+        raw_daily = body.get("daily_usd")
+        raw_monthly = body.get("monthly_usd")
+        if raw_daily is None and raw_monthly is None:
             raise HTTPException(status_code=400, detail="Provide daily_usd and/or monthly_usd")
-        # Read current budget so we don't reset the other limit
         current = cost_tracker.check_budget(agent_id)
-        current_daily = current.get("daily_limit", 10.0)
-        current_monthly = current.get("monthly_limit", 200.0)
-        if daily_usd is not None:
-            try:
-                daily_usd = float(daily_usd)
-                if daily_usd <= 0:
-                    raise ValueError
-            except (ValueError, TypeError):
-                raise HTTPException(status_code=400, detail="daily_usd must be a positive number")
-        else:
-            daily_usd = current_daily
-        if monthly_usd is not None:
-            try:
-                monthly_usd = float(monthly_usd)
-                if monthly_usd <= 0:
-                    raise ValueError
-            except (ValueError, TypeError):
-                raise HTTPException(status_code=400, detail="monthly_usd must be a positive number")
-        else:
-            monthly_usd = current_monthly
+        daily_usd = _parse_positive_float(raw_daily, "daily_usd", current.get("daily_limit", 10.0))
+        monthly_usd = _parse_positive_float(raw_monthly, "monthly_usd", current.get("monthly_limit", 200.0))
         cost_tracker.set_budget(agent_id, daily_usd=daily_usd, monthly_usd=monthly_usd)
         from src.cli.config import _update_agent_field
         _update_agent_field(agent_id, "budget", {"daily_usd": daily_usd, "monthly_usd": monthly_usd})
