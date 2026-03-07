@@ -134,12 +134,30 @@ class SkillRegistry:
         call_args = dict(arguments)
 
         sig = inspect.signature(func)
+
+        # Inject framework-provided dependencies if the function accepts them.
         if "mesh_client" in sig.parameters:
             call_args["mesh_client"] = mesh_client
         if "workspace_manager" in sig.parameters:
             call_args["workspace_manager"] = workspace_manager
         if "memory_store" in sig.parameters:
             call_args["memory_store"] = memory_store
+
+        # Filter out LLM-hallucinated parameters that the function doesn't
+        # accept.  Without this, an LLM sending e.g. {"raw": ""} to a
+        # zero-parameter tool like vault_list() causes a TypeError crash.
+        # We only filter when the function does NOT accept **kwargs.
+        if not any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in sig.parameters.values()
+        ):
+            valid_params = set(sig.parameters.keys())
+            extra = set(call_args) - valid_params
+            if extra:
+                logger.debug(
+                    "Dropping unknown args %s for skill '%s'", extra, name,
+                )
+                call_args = {k: v for k, v in call_args.items() if k in valid_params}
 
         if inspect.iscoroutinefunction(func):
             return await func(**call_args)

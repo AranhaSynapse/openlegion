@@ -426,3 +426,60 @@ class TestMCPIntegration:
         registry.skills = {}
         registry._register_mcp_tools()
         assert len(registry.skills) == 0
+
+
+@pytest.mark.asyncio
+async def test_execute_filters_hallucinated_params():
+    """LLM-hallucinated parameters (e.g. 'raw') should be silently dropped."""
+    @skill(name="no_args_skill", description="takes no args", parameters={})
+    def no_args():
+        return {"ok": True}
+
+    registry = SkillRegistry.__new__(SkillRegistry)
+    registry.skills = dict(_skill_staging)
+
+    # Passing 'raw' should not crash — it should be filtered out
+    result = await registry.execute("no_args_skill", {"raw": ""})
+    assert result == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_execute_filters_extra_params_keeps_valid():
+    """Extra params are dropped but valid params are preserved."""
+    @skill(name="one_arg_skill", description="takes one arg", parameters={"x": {"type": "string"}})
+    def one_arg(x: str):
+        return {"got": x}
+
+    registry = SkillRegistry.__new__(SkillRegistry)
+    registry.skills = dict(_skill_staging)
+
+    result = await registry.execute("one_arg_skill", {"x": "hello", "raw": "", "bogus": 42})
+    assert result == {"got": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_execute_kwargs_function_keeps_all_params():
+    """Functions accepting **kwargs should receive all params including extras."""
+    @skill(name="kwargs_skill", description="accepts kwargs", parameters={})
+    def kwargs_fn(**kwargs):
+        return {"keys": sorted(kwargs.keys())}
+
+    registry = SkillRegistry.__new__(SkillRegistry)
+    registry.skills = dict(_skill_staging)
+
+    result = await registry.execute("kwargs_skill", {"raw": "", "extra": "val"})
+    assert result == {"keys": ["extra", "raw"]}
+
+
+@pytest.mark.asyncio
+async def test_execute_filters_hallucinated_params_async():
+    """Async functions also get hallucinated params filtered."""
+    @skill(name="async_no_args", description="async no args", parameters={})
+    async def async_no_args():
+        return {"async_ok": True}
+
+    registry = SkillRegistry.__new__(SkillRegistry)
+    registry.skills = dict(_skill_staging)
+
+    result = await registry.execute("async_no_args", {"raw": ""})
+    assert result == {"async_ok": True}
