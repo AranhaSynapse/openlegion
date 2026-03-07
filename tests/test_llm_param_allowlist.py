@@ -4,8 +4,9 @@ Verifies that only safe LLM parameters pass through from agent requests,
 and that security-sensitive params (api_key, api_base, etc.) are dropped.
 """
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 from src.shared.types import APIProxyRequest
 
