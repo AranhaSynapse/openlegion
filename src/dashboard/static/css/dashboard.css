@@ -905,6 +905,25 @@ select:focus-visible,
   }
 }
 
+/* ── Mobile responsiveness ───────────────────────── */
+
+/* Prevent horizontal overflow from any element */
+html, body {
+  overflow-x: hidden;
+}
+
+/* iOS Safari auto-zooms on inputs with font-size < 16px.
+   Bump all form controls to 16px on touch-sized viewports. */
+@media (max-width: 767px) {
+  .dash-input,
+  .dash-textarea,
+  .dash-select,
+  .chat-slide-textarea,
+  .chat-input-wrap textarea {
+    font-size: 16px !important;
+  }
+}
+
 /* ── Chat input composite (textarea + send button) ── */
 
 .chat-input-wrap {
@@ -930,6 +949,23 @@ select:focus-visible,
   outline: 2px solid rgba(99, 102, 241, 0.6);
   outline-offset: 2px;
   border-radius: 50%;
+}
+
+/* ── Chat slide-over textarea ───────────────────── */
+
+.chat-slide-textarea {
+  max-height: 120px;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.25rem 0.5rem 0.625rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #e5e7eb;
+  overflow-y: auto;
 }
 
 /* ── Auto-growing textarea for chat input ───────── */

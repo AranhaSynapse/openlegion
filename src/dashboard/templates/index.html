@@ -167,11 +167,11 @@
     </div>
 
     <!-- Navigation bar -->
-    <nav class="nav-bar px-4 py-2.5 flex items-center justify-between shrink-0">
-      <div class="flex items-center gap-5">
+    <nav class="nav-bar px-2 sm:px-4 py-2.5 flex items-center justify-between shrink-0 gap-2">
+      <div class="flex items-center gap-2 sm:gap-5 min-w-0">
         <div class="flex items-center gap-2.5">
           <img src="/dashboard/static/logo.png" alt="OpenLegion" width="24" height="24" class="rounded-full">
-          <span class="text-base font-bold text-white tracking-tight">OpenLegion</span>
+          <span class="text-base font-bold text-white tracking-tight hidden sm:inline">OpenLegion</span>
         </div>
         <div class="flex gap-0.5 bg-gray-800/50 rounded-lg p-0.5" role="tablist">
           <template x-for="tab in tabs" :key="tab.id">
@@ -246,7 +246,7 @@
     </nav>
 
     <!-- Main content -->
-    <main class="flex-1 overflow-auto p-4 lg:p-6 transition-[margin] duration-200" :class="openChats.length > 0 && !chatPanelMinimized && 'sm:mr-[380px]'">
+    <main class="flex-1 overflow-auto p-2 sm:p-4 lg:p-6 transition-[margin] duration-200" :class="openChats.length > 0 && !chatPanelMinimized && 'sm:mr-[380px]'">
 
       <!-- Connection error banner -->
       <div x-show="connectionError" x-cloak class="mb-4 bg-red-900/30 border border-red-800 rounded-lg px-4 py-3 flex items-center gap-3">
@@ -652,7 +652,7 @@
                         <option value="oauth">Subscription Token</option>
                       </select>
                     </template>
-                    <input type="password" x-model="onboardKey" :disabled="onboardSaving" class="dash-input flex-1 min-w-[200px]"
+                    <input type="password" x-model="onboardKey" :disabled="onboardSaving" class="dash-input flex-1 min-w-0 sm:min-w-[200px]"
                       :placeholder="onboardAuthType === 'oauth' ? 'sk-ant-oat01-...' : 'API key'">
                   </div>
                   <template x-if="onboardAuthType === 'oauth'">
@@ -661,7 +661,7 @@
                     </div>
                   </template>
                   <div x-show="onboardAuthType !== 'oauth'" class="flex flex-wrap gap-2 items-center">
-                    <input type="text" x-model="onboardBaseUrl" :disabled="onboardSaving" class="dash-input flex-1 min-w-[200px]" placeholder="Custom API base URL (optional)">
+                    <input type="text" x-model="onboardBaseUrl" :disabled="onboardSaving" class="dash-input flex-1 min-w-0 sm:min-w-[200px]" placeholder="Custom API base URL (optional)">
                   </div>
                   <div class="flex flex-wrap gap-2 items-center">
                     <button @click="submitOnboardCredential()" :disabled="onboardSaving || !onboardProvider || !onboardKey"
@@ -801,7 +801,7 @@
               :disabled="chatLoadingAgents[activeChatId]"
               @keydown.enter="if (!$event.shiftKey && chatInput.trim()) { $event.preventDefault(); if (isAgentBusy(activeChatId)) { steerAgent(activeChatId, chatInput); } else { sendChatTo(activeChatId, chatInput); } chatInput = ''; $el.style.height = 'auto'; }"
               @input="$el.style.height = 'auto'; $el.style.height = Math.min($el.scrollHeight, 120) + 'px'"
-              style="max-height:120px;background:transparent;border:none;outline:none;resize:none;flex:1;min-width:0;padding:0.5rem 0.25rem 0.5rem 0.625rem;font-size:0.75rem;line-height:1.4;color:#e5e7eb;overflow-y:auto"
+              class="chat-slide-textarea"
               :placeholder="isAgentBusy(activeChatId) ? 'Steer agent...' : 'Message...'"></textarea>
             <button @click="if (chatInput.trim()) { if (isAgentBusy(activeChatId)) { steerAgent(activeChatId, chatInput); } else { sendChatTo(activeChatId, chatInput); } chatInput = ''; const ta = document.getElementById('chat-slide-input'); if (ta) ta.style.height = 'auto'; }"
               :disabled="!chatInput.trim()"
@@ -1067,15 +1067,15 @@
         </div>
         <template x-if="agentDetail">
           <div>
-            <div class="flex items-center justify-between mb-5">
-              <div class="flex items-center gap-3">
-                <div class="agent-avatar agent-avatar-lg" :class="'agent-color-' + agentColorIndex(agentDetail.id)">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+              <div class="flex items-center gap-3 min-w-0">
+                <div class="agent-avatar agent-avatar-lg shrink-0" :class="'agent-color-' + agentColorIndex(agentDetail.id)">
                   <img :src="agentAvatarUrl(agentDetail.id)" :alt="agentDetail.id">
                 </div>
-                <div>
+                <div class="min-w-0">
                   <div class="flex items-center gap-2.5">
-                    <h2 class="text-xl font-bold" x-text="agentDetail.id"></h2>
-                    <span class="health-badge"
+                    <h2 class="text-xl font-bold truncate" x-text="agentDetail.id"></h2>
+                    <span class="health-badge shrink-0"
                       :class="{
                         'health-healthy': agentDetail.health?.status === 'healthy',
                         'health-unhealthy': agentDetail.health?.status === 'unhealthy',
@@ -1088,7 +1088,7 @@
                   <span class="text-xs text-gray-500" x-text="agentConfigs[selectedAgent]?.role || formatModelName(agentConfigs[selectedAgent]?.model) || ''"></span>
                 </div>
               </div>
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <button @click="openChat(selectedAgent)" class="action-btn action-btn-primary px-3 py-1.5"
                   :class="openChats.includes(selectedAgent) && 'ring-1 ring-indigo-500 bg-indigo-600/20'">
                   <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -1391,7 +1391,7 @@
                               <span class="text-xs text-gray-400" x-text="'#' + (editForm.avatar || 1)"></span>
                             </button>
                             <div x-show="editForm._showAvatarPicker" x-cloak @click.outside="editForm._showAvatarPicker = false"
-                              class="absolute z-50 mt-1 p-2 bg-gray-800 border border-gray-700 rounded-lg shadow-xl w-[272px] max-h-[200px] overflow-y-auto custom-scrollbar">
+                              class="absolute z-50 mt-1 p-2 bg-gray-800 border border-gray-700 rounded-lg shadow-xl w-[272px] max-w-[calc(100vw-2rem)] max-h-[200px] overflow-y-auto custom-scrollbar">
                               <div class="grid grid-cols-8 gap-1">
                                 <template x-for="n in 50" :key="n">
                                   <button type="button" @click="editForm.avatar = n; editForm._showAvatarPicker = false"
@@ -1409,7 +1409,7 @@
                           </div>
                           <div class="md:col-span-2">
                             <label class="text-xs text-gray-500 mb-1.5 block">Credential Access</label>
-                            <div class="flex items-center gap-3 mb-2">
+                            <div class="flex flex-wrap items-center gap-2 mb-2">
                               <button type="button" @click="editForm.allowed_credentials = '*'; editForm._credMode = 'all'"
                                 class="text-xs px-2.5 py-1 rounded transition-colors"
                                 :class="editForm._credMode === 'all' ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'">
