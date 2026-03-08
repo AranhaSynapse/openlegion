@@ -2747,6 +2747,7 @@ function dashboard() {
       } catch (e) {
         this.showToast(`Steer failed: ${e.message}`);
       }
+      this._saveChatToSession();
       this.fetchQueues();
     },
 
