@@ -146,6 +146,16 @@ def create_agent_app(loop: AgentLoop) -> FastAPI:
         await loop.reset_chat()
         return {"status": "ok"}
 
+    @app.get("/chat/history")
+    async def chat_history() -> dict:
+        """Return the current chat conversation messages.
+
+        Returns the agent's in-memory chat messages so the dashboard
+        can restore conversation history across page reloads and new tabs.
+        """
+        messages = loop.get_chat_messages()
+        return {"messages": messages, "count": len(messages)}
+
     @app.get("/history")
     async def get_history(days: int = 3) -> dict:
         """Return this agent's daily logs for inter-agent context sharing."""

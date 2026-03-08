@@ -1059,6 +1059,22 @@ class AgentLoop:
         parts.append(f"Response: {response_summary}")
         self.workspace.append_daily_log(" | ".join(parts))
 
+    def get_chat_messages(self) -> list[dict]:
+        """Return chat messages suitable for history restoration.
+
+        Filters out internal tool-result messages and sanitizes content.
+        """
+        result = []
+        for m in self._chat_messages:
+            role = m.get("role", "unknown")
+            if role == "tool":
+                continue
+            content = m.get("content", "")
+            if isinstance(content, str):
+                content = sanitize_for_prompt(content)
+            result.append({"role": role, "content": content})
+        return result
+
     async def reset_chat(self) -> None:
         """Clear conversation history. Flushes important facts to memory
         before clearing. Acquires the chat lock to avoid corrupting state

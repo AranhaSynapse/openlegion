@@ -289,6 +289,7 @@ function dashboard() {
     _queuePollInterval: null,
     _cronInterval: null,
     _seenEventIds: new Set(),
+    _initTime: new Date().toISOString(),  // page-load timestamp for replay filtering
 
     // URL routing
     _skipPush: false,
@@ -652,16 +653,18 @@ function dashboard() {
       };
       document.addEventListener('visibilitychange', this._visibilityHandler);
 
-      // Restore chat history from sessionStorage
+      // Restore chat history from localStorage (persists across tabs & browser restarts)
       try {
-        const saved = sessionStorage.getItem('ol_chats');
+        const saved = localStorage.getItem('ol_chats');
         if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed.histories) this.chatHistories = parsed.histories;
           if (parsed.openChats) this.openChats = parsed.openChats;
           if (parsed.activeChatId) this.activeChatId = parsed.activeChatId;
         }
-      } catch (_) {}
+      } catch (e) {
+        console.debug('chat history fetch skipped:', e.message || e);
+      }
 
       // Command palette: Cmd+K / Ctrl+K + tab shortcuts 1/2/3
       this._cmdPaletteHandler = (e) => {
@@ -894,28 +897,33 @@ function dashboard() {
         this.fetchModelHealth();
       }
 
-      // Show toast for agent notifications + inject into chat panel
+      // Show toast for agent notifications + inject into chat panel.
+      // Skip replayed events (timestamp before page load) to avoid
+      // re-showing old toasts and duplicating chat history on reconnect.
       if (evt.type === 'notification' && evt.agent) {
-        this.showToast(`[${evt.agent}] ${(evt.data?.message || '').substring(0, 120)}`);
-        if (!this.chatHistories[evt.agent]) this.chatHistories[evt.agent] = [];
-        this.chatHistories[evt.agent].push({
-          role: 'notification',
-          content: evt.data?.message || '',
-          streaming: false,
-          tools: [],
-        });
-        this._saveChatToSession();
-        if (this.openChats.includes(evt.agent)) {
-          if (this.chatPanelMinimized || this.activeChatId !== evt.agent) {
-            this.chatUnread = { ...this.chatUnread, [evt.agent]: (this.chatUnread[evt.agent] || 0) + 1 };
+        const isReplay = evt.timestamp && evt.timestamp < this._initTime;
+        if (!isReplay) {
+          this.showToast(`[${evt.agent}] ${(evt.data?.message || '').substring(0, 120)}`);
+          if (!this.chatHistories[evt.agent]) this.chatHistories[evt.agent] = [];
+          this.chatHistories[evt.agent].push({
+            role: 'notification',
+            content: evt.data?.message || '',
+            streaming: false,
+            tools: [],
+          });
+          this._saveChatToSession();
+          if (this.openChats.includes(evt.agent)) {
+            if (this.chatPanelMinimized || this.activeChatId !== evt.agent) {
+              this.chatUnread = { ...this.chatUnread, [evt.agent]: (this.chatUnread[evt.agent] || 0) + 1 };
+            } else {
+              this.$nextTick(() => this._scrollChat(evt.agent));
+            }
           } else {
+            // Open a new chat tab without stealing focus
+            this.openChats.push(evt.agent);
+            if (!this.activeChatId) this.activeChatId = evt.agent;
             this.$nextTick(() => this._scrollChat(evt.agent));
           }
-        } else {
-          // Open a new chat tab without stealing focus
-          this.openChats.push(evt.agent);
-          if (!this.activeChatId) this.activeChatId = evt.agent;
-          this.$nextTick(() => this._scrollChat(evt.agent));
         }
       }
 
@@ -2027,7 +2035,7 @@ function dashboard() {
           openChats: this.openChats,
           activeChatId: this.activeChatId,
         });
-        sessionStorage.setItem('ol_chats', payload);
+        localStorage.setItem('ol_chats', payload);
       } catch (e) {
         // On quota exceeded, evict oldest agent history and retry once
         if (e instanceof DOMException && e.name === 'QuotaExceededError') {
@@ -2173,6 +2181,29 @@ function dashboard() {
 
     // ── Chat slide-over panel ──────────────────────────
 
+    async _loadChatHistory(agentId) {
+      // Fetch server-side chat history when local history is empty.
+      // The agent keeps _chat_messages in memory; this endpoint exposes them.
+      if (this.chatHistories[agentId] && this.chatHistories[agentId].length > 0) return;
+      try {
+        const resp = await fetch(`/dashboard/api/agents/${agentId}/chat/history`, { credentials: 'same-origin' });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.messages || data.messages.length === 0) return;
+        // Only populate if still empty (avoid race with incoming messages)
+        if (this.chatHistories[agentId] && this.chatHistories[agentId].length > 0) return;
+        this.chatHistories[agentId] = data.messages.map(m => ({
+          role: m.role,
+          content: m.content,
+          streaming: false,
+          phase: 'done',
+          tools: [],
+        }));
+        this._saveChatToSession();
+        this.$nextTick(() => this._scrollChat(agentId));
+      } catch (_) {}
+    },
+
     openChat(agentId) {
       this.chatPanelMinimized = false;
       if (this.openChats.includes(agentId)) {
@@ -2183,10 +2214,14 @@ function dashboard() {
           const input = document.getElementById('chat-slide-input');
           if (input) input.focus();
         });
+        // Load from server if local history is empty
+        this._loadChatHistory(agentId);
         return;
       }
       this.openChats.push(agentId);
       this.activeChatId = agentId;
+      // Load from server if local history is empty
+      this._loadChatHistory(agentId);
       this.$nextTick(() => this._scrollChat(agentId));
     },
 
