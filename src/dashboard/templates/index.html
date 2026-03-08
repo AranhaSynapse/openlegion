@@ -440,25 +440,6 @@
             </div>
           </div>
         </div>
-        <!-- Broadcast inline input -->
-        <div x-show="broadcastTargets.length >= 2" class="bg-gray-900 border border-gray-800 rounded-lg p-3 mb-4" x-cloak>
-          <div class="flex items-center gap-3">
-            <svg class="w-3.5 h-3.5 text-gray-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
-            <input id="broadcast-input" type="text" x-model="broadcastMessage" @keydown.enter="sendBroadcast()"
-              :disabled="broadcastSending"
-              class="dash-input flex-1 text-sm"
-              :placeholder="activeProject
-                ? 'Broadcast to ' + broadcastTargets.length + ' ' + activeProject + ' agent' + (broadcastTargets.length !== 1 ? 's' : '') + '...'
-                : 'Broadcast to all ' + broadcastTargets.length + ' agents...'">
-            <span x-show="_broadcastPending" class="text-[10px] text-indigo-400 font-mono shrink-0 whitespace-nowrap"
-              x-text="_broadcastPending ? _broadcastPending.completed + '/' + _broadcastPending.total + ' done' : ''"></span>
-            <button @click="sendBroadcast()" :disabled="broadcastSending || !broadcastMessage.trim()"
-              class="text-xs px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors shrink-0 inline-flex items-center gap-1.5 disabled:opacity-50">
-              <svg x-show="broadcastSending" x-cloak class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-              <span x-text="broadcastSending ? 'Sending...' : 'Send'"></span>
-            </button>
-          </div>
-        </div>
         <!-- ═══ PROJECT COMMS (collapsible, project-level) ═══ -->
         <div x-show="activeProject && agents.length > 0" x-cloak class="mb-4">
           <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
@@ -682,6 +663,25 @@
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+        <!-- Broadcast inline input -->
+        <div x-show="broadcastTargets.length >= 2" class="bg-gray-900 border border-gray-800 rounded-lg p-3 mb-4" x-cloak>
+          <div class="flex items-center gap-3">
+            <svg class="w-3.5 h-3.5 text-gray-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+            <input id="broadcast-input" type="text" x-model="broadcastMessage" @keydown.enter="sendBroadcast()"
+              :disabled="broadcastSending"
+              class="dash-input flex-1 text-sm"
+              :placeholder="activeProject
+                ? 'Broadcast to ' + broadcastTargets.length + ' ' + activeProject + ' agent' + (broadcastTargets.length !== 1 ? 's' : '') + '...'
+                : 'Broadcast to all ' + broadcastTargets.length + ' agents...'">
+            <span x-show="_broadcastPending" class="text-[10px] text-indigo-400 font-mono shrink-0 whitespace-nowrap"
+              x-text="_broadcastPending ? _broadcastPending.completed + '/' + _broadcastPending.total + ' done' : ''"></span>
+            <button @click="sendBroadcast()" :disabled="broadcastSending || !broadcastMessage.trim()"
+              class="text-xs px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors shrink-0 inline-flex items-center gap-1.5 disabled:opacity-50">
+              <svg x-show="broadcastSending" x-cloak class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              <span x-text="broadcastSending ? 'Sending...' : 'Send'"></span>
+            </button>
           </div>
         </div>
         <!-- Artifact preview modal (global — outside collapsible) -->
