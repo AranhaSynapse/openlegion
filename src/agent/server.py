@@ -13,6 +13,8 @@ Exposes endpoints for the mesh/orchestrator to interact with:
   GET  /workspace-logs - read daily logs (read-only)
   GET  /workspace-learnings - read errors and corrections (read-only)
   GET  /heartbeat-context - single-call heartbeat bootstrap data
+  GET  /artifacts - list artifact files
+  GET  /artifacts/{name} - read artifact content
 """
 
 from __future__ import annotations
@@ -351,6 +353,66 @@ def create_agent_app(loop: AgentLoop) -> FastAPI:
             "has_recent_activity": bool(daily.strip()),
             "is_standalone": loop.mesh_client.is_standalone,
         }
+
+    # ── Artifact API ─────────────────────────────────────────
+
+    _MAX_ARTIFACT_BYTES = 2 * 1024 * 1024  # 2 MB cap for content transfer
+    _ARTIFACT_NAME_RE = __import__("re").compile(r"^[\w][\w.\-/ ]{0,198}[\w.]$")
+
+    @app.get("/artifacts")
+    async def list_artifacts() -> dict:
+        """List artifact files in the workspace."""
+        if not loop.workspace:
+            return {"artifacts": []}
+        from pathlib import Path
+        artifacts_dir = Path(loop.workspace.root) / "artifacts"
+        if not artifacts_dir.is_dir():
+            return {"artifacts": []}
+        items = []
+        for f in sorted(artifacts_dir.rglob("*")):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(artifacts_dir)
+            items.append({
+                "name": str(rel),
+                "size": f.stat().st_size,
+                "modified": f.stat().st_mtime,
+            })
+        return {"artifacts": items}
+
+    @app.get("/artifacts/{name:path}")
+    async def read_artifact(name: str) -> dict:
+        """Return artifact content for dashboard preview/download.
+
+        Text files are returned as-is.  Binary files are base64-encoded.
+        Capped at 2 MB to prevent transport overload.
+        """
+        if not loop.workspace:
+            raise HTTPException(503, "Workspace not available")
+        if not _ARTIFACT_NAME_RE.match(name):
+            raise HTTPException(400, f"Invalid artifact name: {name}")
+        from pathlib import Path
+        artifacts_dir = Path(loop.workspace.root) / "artifacts"
+        filepath = (artifacts_dir / name).resolve()
+        if not filepath.is_relative_to(artifacts_dir.resolve()):
+            raise HTTPException(400, "Path traversal not allowed")
+        if not filepath.is_file():
+            raise HTTPException(404, f"Artifact not found: {name}")
+        size = filepath.stat().st_size
+        if size > _MAX_ARTIFACT_BYTES:
+            raise HTTPException(413, f"Artifact too large ({size} bytes, max {_MAX_ARTIFACT_BYTES})")
+        # Try text first, fall back to base64 for binary
+        import base64
+        import mimetypes
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        try:
+            content = filepath.read_text(encoding="utf-8")
+            return {"name": name, "content": content, "size": size,
+                    "mime_type": mime, "encoding": "utf-8"}
+        except UnicodeDecodeError:
+            raw = filepath.read_bytes()
+            return {"name": name, "content": base64.b64encode(raw).decode("ascii"),
+                    "size": size, "mime_type": mime, "encoding": "base64"}
 
     return app
 

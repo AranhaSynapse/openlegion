@@ -81,10 +81,17 @@ function dashboard() {
     bbNewValue: '{}',
     bbWriterFilter: '',
     bbExpanded: {},
-    commsView: 'activity',  // 'activity' or 'state'
+    commsView: 'activity',  // 'activity', 'state', or 'artifacts'
     commsActivity: [],
     commsActivityLoading: false,
     commsSubs: {},
+
+    // Artifacts
+    artifactsList: [],
+    artifactsLoading: false,
+    artifactPreview: null,
+    artifactPreviewContent: null,
+    artifactPreviewLoading: false,
 
     // PROJECT.md (per-project only)
     projectContent: '',
@@ -397,6 +404,8 @@ function dashboard() {
       this.bbPrefix = '';
       this.bbWriteMode = false;
       this.commsView = 'activity';
+      this.artifactsList = [];
+      this.artifactPreview = null;
       if (this._detailReturnProject !== null && this._detailReturnProject !== undefined) {
         this.activeProject = this._detailReturnProject;
       }
@@ -934,6 +943,10 @@ function dashboard() {
         if (this.detailAgent && this._detailAgentProject()) {
           this.fetchBlackboard();
           this.fetchCommsActivity();
+          // Refresh artifacts if an artifact key was written
+          if (evt.data.key.includes('artifacts/') && this.commsView === 'artifacts') {
+            this.fetchArtifacts();
+          }
         }
       }
 
@@ -1497,6 +1510,88 @@ function dashboard() {
         }
       } catch (e) { console.warn('fetchCommsActivity failed:', e); }
       this.commsActivityLoading = false;
+    },
+
+    async fetchArtifacts() {
+      this.artifactsLoading = true;
+      try {
+        // Gather artifacts from all agents in the current project
+        const proj = this._detailAgentProject();
+        const projectAgents = this.agents.filter(a => a.project === proj);
+        const results = await Promise.allSettled(
+          projectAgents.map(async (a) => {
+            const resp = await fetch(`${window.__config.apiBase}/agents/${a.id}/artifacts`, { credentials: 'same-origin' });
+            if (!resp.ok) return [];
+            const data = await resp.json();
+            return (data.artifacts || []).map(art => ({ ...art, agent: a.id }));
+          })
+        );
+        const all = [];
+        for (const r of results) {
+          if (r.status === 'fulfilled') all.push(...r.value);
+        }
+        all.sort((a, b) => (b.modified || 0) - (a.modified || 0));
+        this.artifactsList = all;
+      } catch (e) { console.warn('fetchArtifacts failed:', e); }
+      this.artifactsLoading = false;
+    },
+
+    async previewArtifact(art) {
+      this.artifactPreview = art;
+      this.artifactPreviewContent = null;
+      this.artifactPreviewLoading = true;
+      try {
+        const resp = await fetch(`${window.__config.apiBase}/agents/${art.agent}/artifacts/${encodeURIComponent(art.name)}`, { credentials: 'same-origin' });
+        if (!resp.ok) {
+          this.artifactPreviewContent = `Error loading artifact: ${resp.status}`;
+          return;
+        }
+        const data = await resp.json();
+        this.artifactPreviewContent = data.encoding === 'base64'
+          ? atob(data.content)
+          : data.content;
+      } catch (e) {
+        this.artifactPreviewContent = `Failed to load: ${e.message || e}`;
+      }
+      this.artifactPreviewLoading = false;
+    },
+
+    async downloadArtifact(art) {
+      try {
+        const resp = await fetch(`${window.__config.apiBase}/agents/${art.agent}/artifacts/${encodeURIComponent(art.name)}`, { credentials: 'same-origin' });
+        if (!resp.ok) { this.showToast('Download failed: ' + resp.status); return; }
+        const data = await resp.json();
+        let blob;
+        if (data.encoding === 'base64') {
+          const bytes = Uint8Array.from(atob(data.content), c => c.charCodeAt(0));
+          blob = new Blob([bytes], { type: data.mime_type || 'application/octet-stream' });
+        } else {
+          blob = new Blob([data.content], { type: data.mime_type || 'text/plain' });
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = art.name.split('/').pop();
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        this.showToast('Download failed: ' + (e.message || e));
+      }
+    },
+
+    artifactIsText(name) {
+      const textExts = ['.md', '.txt', '.json', '.csv', '.yaml', '.yml', '.xml', '.html', '.css', '.js', '.ts', '.py', '.sh', '.sql', '.log', '.env', '.toml', '.ini', '.cfg'];
+      return textExts.some(ext => name.toLowerCase().endsWith(ext));
+    },
+
+    formatFileSize(bytes) {
+      if (bytes === 0) return '0 B';
+      const units = ['B', 'KB', 'MB'];
+      const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+      const val = bytes / Math.pow(1024, i);
+      return (i === 0 ? val : val.toFixed(1)) + ' ' + units[i];
     },
 
     async fetchCosts() {
