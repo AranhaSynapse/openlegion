@@ -1998,12 +1998,27 @@ function dashboard() {
             role: m.role,
             content: m.content,
             streaming: false,
-            phase: m.phase || 'done',
-            tools: [],
-            timeline: Array.isArray(m.timeline) ? m.timeline.map(step => ({
-              kind: step.kind, name: step.name,
-              content: step.kind === 'text' ? step.content : undefined,
+            phase: (m.phase === 'error' || m.phase === 'done') ? m.phase : 'done',
+            tools: Array.isArray(m.tools) ? m.tools.map(t => ({
+              name: t.name,
+              status: t.status === 'running' ? 'done' : (t.status || 'done'),
+              inputPreview: t.inputPreview || '',
+              outputPreview: t.outputPreview || '',
             })) : [],
+            timeline: Array.isArray(m.timeline) ? m.timeline.map(step => {
+              if (step.kind === 'tool') {
+                return {
+                  kind: 'tool', name: step.name,
+                  status: step.status === 'running' ? 'done' : (step.status || 'done'),
+                  inputPreview: step.inputPreview || '',
+                  outputPreview: step.outputPreview || '',
+                };
+              }
+              return {
+                kind: step.kind, name: step.name,
+                content: step.kind === 'text' ? step.content : undefined,
+              };
+            }) : [],
           }));
           histories[agentId] = capped;
         }
@@ -2488,11 +2503,27 @@ function dashboard() {
         }
       } catch (e) {
         if (e.name === 'AbortError') return;
-        this.chatHistories[agentId][idx].content = e.message;
-        this.chatHistories[agentId][idx].role = 'error';
-        this.chatHistories[agentId][idx].streaming = false;
-        this.chatHistories[agentId][idx].phase = 'error';
-        this._pushChatTimelinePhase(this.chatHistories[agentId][idx], 'error');
+        const entry = this.chatHistories[agentId][idx];
+        const hadContent = !!(entry.content || (entry.tools && entry.tools.length > 0));
+        if (hadContent) {
+          // Stream interrupted (e.g. tab backgrounded on mobile) but we have partial data.
+          // Mark any running tools as done and finalize the message gracefully.
+          entry.streaming = false;
+          entry.phase = 'done';
+          if (Array.isArray(entry.tools)) {
+            entry.tools.forEach(t => { if (t.status === 'running') t.status = 'done'; });
+          }
+          if (Array.isArray(entry.timeline)) {
+            entry.timeline.forEach(t => { if (t.status === 'running') t.status = 'done'; });
+          }
+        } else {
+          // No content at all — show error but with a friendlier message
+          entry.content = 'Connection interrupted — please try again.';
+          entry.role = 'error';
+          entry.streaming = false;
+          entry.phase = 'error';
+          this._pushChatTimelinePhase(entry, 'error');
+        }
       }
       delete this._chatAborts[agentId];
       this.chatLoadingAgents[agentId] = false;
