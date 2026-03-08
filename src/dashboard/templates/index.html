@@ -782,7 +782,7 @@
                         'health-failed': agent.health_status === 'failed',
                         'health-unknown': agent.health_status === 'unknown' || !agent.health_status,
                       }"
-                      x-text="agent.health_status || 'unknown'"
+                      x-text="healthLabel(agent.health_status)"
                     ></span>
                   </template>
                 </div>
@@ -1344,7 +1344,7 @@
                         'health-failed': agentDetail.health?.status === 'failed',
                         'health-unknown': !agentDetail.health?.status || agentDetail.health?.status === 'unknown',
                       }"
-                      x-text="agentDetail.health?.status || 'unknown'"
+                      x-text="healthLabel(agentDetail.health?.status)"
                     ></span>
                   </div>
                   <span class="text-xs text-gray-500" x-text="agentConfigs[selectedAgent]?.role || formatModelName(agentConfigs[selectedAgent]?.model) || ''"></span>

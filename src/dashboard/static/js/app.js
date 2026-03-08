@@ -867,6 +867,11 @@ function dashboard() {
       return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ', ' + time;
     },
 
+    healthLabel(status) {
+      const map = { healthy: 'Online', unhealthy: 'Degraded', restarting: 'Degraded', failed: 'Offline', unknown: 'Starting' };
+      return map[status] || 'Starting';
+    },
+
     // ── WebSocket event handler ───────────────────────────
 
     onWsEvent(evt) {
