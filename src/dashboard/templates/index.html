@@ -1359,7 +1359,7 @@
                     <span class="health-badge shrink-0"
                       :class="{
                         'health-healthy': agentDetail.health?.status === 'healthy',
-                        'health-unhealthy': agentDetail.health?.status === 'unhealthy',
+                        'health-unhealthy': agentDetail.health?.status === 'unhealthy' || agentDetail.health?.status === 'restarting',
                         'health-failed': agentDetail.health?.status === 'failed',
                         'health-unknown': !agentDetail.health?.status || agentDetail.health?.status === 'unknown',
                       }"
