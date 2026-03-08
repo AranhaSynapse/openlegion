@@ -81,10 +81,18 @@ function dashboard() {
     bbNewValue: '{}',
     bbWriterFilter: '',
     bbExpanded: {},
-    commsView: 'activity',  // 'activity' or 'state'
+    commsView: 'activity',  // 'activity', 'state', or 'artifacts'
+    commsExpanded: false,
     commsActivity: [],
     commsActivityLoading: false,
     commsSubs: {},
+
+    // Artifacts
+    artifactsList: [],
+    artifactsLoading: false,
+    artifactPreview: null,
+    artifactPreviewContent: null,
+    artifactPreviewLoading: false,
 
     // PROJECT.md (per-project only)
     projectContent: '',
@@ -391,12 +399,6 @@ function dashboard() {
     closeDetail() {
       this.detailAgent = null;
       this.selectedAgent = null;
-      this.bbEntries = [];
-      this.commsActivity = [];
-      this.commsSubs = {};
-      this.bbPrefix = '';
-      this.bbWriteMode = false;
-      this.commsView = 'activity';
       if (this._detailReturnProject !== null && this._detailReturnProject !== undefined) {
         this.activeProject = this._detailReturnProject;
       }
@@ -931,9 +933,13 @@ function dashboard() {
       if (evt.type === 'blackboard_write' && evt.data && evt.data.key) {
         if (!this.bbHighlights.includes(evt.data.key)) this.bbHighlights.push(evt.data.key);
         setTimeout(() => { const i = this.bbHighlights.indexOf(evt.data.key); if (i !== -1) this.bbHighlights.splice(i, 1); }, 5000);
-        if (this.detailAgent && this._detailAgentProject()) {
-          this.fetchBlackboard();
-          this.fetchCommsActivity();
+        if (this.activeProject && this.activeTab === 'fleet' && !this.detailAgent) {
+          if (this._commsDebounce) clearTimeout(this._commsDebounce);
+          this._commsDebounce = setTimeout(() => {
+            this.fetchBlackboard();
+            this.fetchCommsActivity();
+            if (evt.data.key.includes('artifacts/')) this.fetchArtifacts();
+          }, 1000);
         }
       }
 
@@ -1304,7 +1310,22 @@ function dashboard() {
       this.projectEditBuffer = '';
       this.projectBannerExpanded = false;
       this.showProjectForm = false;
+      this.commsView = 'activity';
+      this.commsExpanded = false;
+      this.bbPrefix = '';
+      this.bbWriteMode = false;
+      this.bbExpanded = {};
+      this.artifactPreview = null;
+      this.commsActivity = [];
+      this.bbEntries = [];
+      this.commsSubs = {};
+      this.artifactsList = [];
       this.fetchProject();
+      if (name) {
+        this.fetchCommsActivity();
+        this.fetchBlackboard();
+        this.fetchArtifacts();
+      }
     },
 
     openProjectModal() {
@@ -1432,17 +1453,10 @@ function dashboard() {
       return this.projects.find(p => p.name === this.activeProject) || null;
     },
 
-    _detailAgentProject() {
-      // Get the project of the currently viewed agent
-      if (!this.detailAgent) return null;
-      const agent = this.agents.find(a => a.id === this.detailAgent);
-      return agent?.project || null;
-    },
 
     _bbProjectPrefix() {
-      // Scope blackboard keys to the detail agent's project
-      const proj = this._detailAgentProject();
-      return proj ? `projects/${proj}/` : '';
+      // Scope blackboard keys to the active project
+      return this.activeProject ? `projects/${this.activeProject}/` : '';
     },
 
     _bbStripProjectPrefix(key) {
@@ -1472,7 +1486,7 @@ function dashboard() {
     async fetchCommsActivity() {
       this.commsActivityLoading = true;
       try {
-        const proj = this._detailAgentProject();
+        const proj = this.activeProject;
         const params = new URLSearchParams({ limit: '100' });
         if (proj) params.set('project', proj);
         const resp = await fetch(`${window.__config.apiBase}/comms/activity?${params}`);
@@ -1497,6 +1511,89 @@ function dashboard() {
         }
       } catch (e) { console.warn('fetchCommsActivity failed:', e); }
       this.commsActivityLoading = false;
+    },
+
+    async fetchArtifacts() {
+      this.artifactsLoading = true;
+      try {
+        // Gather artifacts from all agents in the current project
+        const proj = this.activeProject;
+        if (!proj) { this.artifactsList = []; this.artifactsLoading = false; return; }
+        const projectAgents = this.agents.filter(a => a.project === proj);
+        const results = await Promise.allSettled(
+          projectAgents.map(async (a) => {
+            const resp = await fetch(`${window.__config.apiBase}/agents/${a.id}/artifacts`, { credentials: 'same-origin' });
+            if (!resp.ok) return [];
+            const data = await resp.json();
+            return (data.artifacts || []).map(art => ({ ...art, agent: a.id }));
+          })
+        );
+        const all = [];
+        for (const r of results) {
+          if (r.status === 'fulfilled') all.push(...r.value);
+        }
+        all.sort((a, b) => (b.modified || 0) - (a.modified || 0));
+        this.artifactsList = all;
+      } catch (e) { console.warn('fetchArtifacts failed:', e); }
+      this.artifactsLoading = false;
+    },
+
+    async previewArtifact(art) {
+      this.artifactPreview = art;
+      this.artifactPreviewContent = null;
+      this.artifactPreviewLoading = true;
+      try {
+        const resp = await fetch(`${window.__config.apiBase}/agents/${art.agent}/artifacts/${encodeURIComponent(art.name)}`, { credentials: 'same-origin' });
+        if (!resp.ok) {
+          this.artifactPreviewContent = `Error loading artifact: ${resp.status}`;
+          return;
+        }
+        const data = await resp.json();
+        this.artifactPreviewContent = data.encoding === 'base64'
+          ? atob(data.content)
+          : data.content;
+      } catch (e) {
+        this.artifactPreviewContent = `Failed to load: ${e.message || e}`;
+      }
+      this.artifactPreviewLoading = false;
+    },
+
+    async downloadArtifact(art) {
+      try {
+        const resp = await fetch(`${window.__config.apiBase}/agents/${art.agent}/artifacts/${encodeURIComponent(art.name)}`, { credentials: 'same-origin' });
+        if (!resp.ok) { this.showToast('Download failed: ' + resp.status); return; }
+        const data = await resp.json();
+        let blob;
+        if (data.encoding === 'base64') {
+          const bytes = Uint8Array.from(atob(data.content), c => c.charCodeAt(0));
+          blob = new Blob([bytes], { type: data.mime_type || 'application/octet-stream' });
+        } else {
+          blob = new Blob([data.content], { type: data.mime_type || 'text/plain' });
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = art.name.split('/').pop();
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        this.showToast('Download failed: ' + (e.message || e));
+      }
+    },
+
+    artifactIsText(name) {
+      const textExts = ['.md', '.txt', '.json', '.csv', '.yaml', '.yml', '.xml', '.html', '.css', '.js', '.ts', '.py', '.sh', '.sql', '.log', '.env', '.toml', '.ini', '.cfg'];
+      return textExts.some(ext => name.toLowerCase().endsWith(ext));
+    },
+
+    formatFileSize(bytes) {
+      if (bytes === 0) return '0 B';
+      const units = ['B', 'KB', 'MB'];
+      const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+      const val = bytes / Math.pow(1024, i);
+      return (i === 0 ? val : val.toFixed(1)) + ' ' + units[i];
     },
 
     async fetchCosts() {
@@ -2592,11 +2689,33 @@ function dashboard() {
 
     // ── Broadcast ────────────────────────────────────────
 
+    get detailAgentCronJobs() {
+      if (!this.detailAgent) return [];
+      return this.cronJobs.filter(j => j.agent === this.detailAgent);
+    },
+
+    addCronForAgent() {
+      // Navigate from agent detail to System > Automation with agent pre-selected
+      const agent = this.detailAgent;
+      this.selectedAgent = null;
+      if (this._detailReturnProject !== null && this._detailReturnProject !== undefined) {
+        this.activeProject = this._detailReturnProject;
+      }
+      this._detailReturnProject = null;
+      this.detailAgent = null;
+      this.cronFormAgent = agent;
+      this.showCronForm = true;
+      this.systemTab = 'automation';
+      this.switchTab('system');
+    },
+
     get broadcastTargets() {
-      // Project selected → project members; no project → all agents
+      // Project selected → project members; no project → standalone agents only
       // Exclude over-limit (locked) agents — they aren't running
-      const base = this.activeProject ? this.filteredAgents : this.agents;
-      return base.filter(a => !a.over_limit);
+      if (this.activeProject) {
+        return this.filteredAgents.filter(a => !a.over_limit);
+      }
+      return this.agents.filter(a => !a.over_limit && !a.project);
     },
 
     sendBroadcast() {
@@ -3053,12 +3172,7 @@ function dashboard() {
       this.fetchAgentDetail(agentId);
       this.fetchIdentityFiles(agentId);
       this.fetchAgentConfig(agentId);
-      // Fetch comms if agent belongs to a project
-      const agent = this.agents.find(a => a.id === agentId);
-      if (agent?.project) {
-        this.fetchBlackboard();
-        this.fetchCommsActivity();
-      }
+      this.fetchCronJobs();
       this.activeTab = 'fleet';
       if (!this._skipPush) this._pushUrl(false);
     },
