@@ -541,12 +541,11 @@ class CredentialVault:
         "max_tokens", "temperature", "top_p", "stop", "stream",
         "tools", "tool_choice", "response_format", "seed",
         "presence_penalty", "frequency_penalty", "logit_bias", "n",
+        "logprobs", "top_logprobs", "user",
         # Anthropic thinking / extended-thinking
         "thinking", "max_completion_tokens",
         # OpenAI reasoning models
         "reasoning_effort",
-        # Provider-specific pass-through (body-level only, not auth)
-        "extra_body",
     })
 
     def _prepare_llm_params(
