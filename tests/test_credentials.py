@@ -1722,6 +1722,228 @@ async def test_handle_llm_routes_oauth_to_direct_path(monkeypatch):
     assert result.success
 
 
+# ── OAuth cost-tracking bypass tests ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_oauth_skips_cost_tracking(monkeypatch):
+    """OAuth calls via execute_api_call must NOT record costs."""
+    import httpx
+
+    monkeypatch.setenv("OPENLEGION_SYSTEM_ANTHROPIC_API_KEY", "sk-ant-oat01-" + "x" * 80)
+    cost_tracker = MagicMock()
+    cost_tracker.preflight_check.return_value = {"allowed": True}
+    v = CredentialVault(cost_tracker=cost_tracker)
+
+    mock_response = httpx.Response(
+        200,
+        json={
+            "content": [{"type": "text", "text": "Hello!"}],
+            "usage": {"input_tokens": 50, "output_tokens": 25},
+        },
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+    )
+
+    async def mock_post(*args, **kwargs):
+        return mock_response
+
+    mock_client = MagicMock()
+    mock_client.post = mock_post
+    mock_client.is_closed = False
+    v._http_client = mock_client
+
+    req = APIProxyRequest(
+        service="llm", action="chat",
+        params={
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    result = await v.execute_api_call(req, agent_id="test-agent")
+
+    assert result.success
+    cost_tracker.track.assert_not_called()
+    cost_tracker.preflight_check.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_oauth_skips_budget_lock(monkeypatch):
+    """OAuth calls must not acquire the per-agent budget lock."""
+    import httpx
+
+    monkeypatch.setenv("OPENLEGION_SYSTEM_ANTHROPIC_API_KEY", "sk-ant-oat01-" + "x" * 80)
+    cost_tracker = MagicMock()
+    v = CredentialVault(cost_tracker=cost_tracker)
+
+    mock_response = httpx.Response(
+        200,
+        json={
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": 5, "output_tokens": 3},
+        },
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+    )
+
+    async def mock_post(*args, **kwargs):
+        return mock_response
+
+    mock_client = MagicMock()
+    mock_client.post = mock_post
+    mock_client.is_closed = False
+    v._http_client = mock_client
+
+    req = APIProxyRequest(
+        service="llm", action="chat",
+        params={
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    result = await v.execute_api_call(req, agent_id="test-agent")
+    assert result.success
+    assert "test-agent" not in v._budget_locks
+
+
+@pytest.mark.asyncio
+async def test_oauth_response_has_oauth_flag(monkeypatch):
+    """_oauth_chat response data includes oauth=True flag."""
+    import httpx
+
+    monkeypatch.setenv("OPENLEGION_SYSTEM_ANTHROPIC_API_KEY", "sk-ant-oat01-" + "x" * 80)
+    v = CredentialVault()
+
+    mock_response = httpx.Response(
+        200,
+        json={
+            "content": [{"type": "text", "text": "test"}],
+            "usage": {"input_tokens": 5, "output_tokens": 3},
+        },
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+    )
+
+    async def mock_post(*args, **kwargs):
+        return mock_response
+
+    mock_client = MagicMock()
+    mock_client.post = mock_post
+    mock_client.is_closed = False
+    v._http_client = mock_client
+
+    req = APIProxyRequest(
+        service="llm", action="chat",
+        params={
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    result = await v._oauth_chat(req, v.system_credentials["anthropic_api_key"], "anthropic/claude-sonnet-4-6")
+    assert result.data["oauth"] is True
+
+
+@pytest.mark.asyncio
+async def test_oauth_stream_skips_cost_tracking(monkeypatch):
+    """Streaming OAuth calls via stream_llm must NOT record costs."""
+    import json as _json
+
+    monkeypatch.setenv("OPENLEGION_SYSTEM_ANTHROPIC_API_KEY", "sk-ant-oat01-" + "x" * 80)
+    cost_tracker = MagicMock()
+    v = CredentialVault(cost_tracker=cost_tracker)
+
+    # Mock _oauth_chat_stream to yield a simple done event
+    async def mock_stream(request, api_key, model):
+        yield f"data: {_json.dumps({'type': 'text_delta', 'content': 'hi'})}\n\n"
+        yield f"data: {_json.dumps({'type': 'done', 'content': 'hi', 'tokens_used': 100, 'model': model, 'tool_calls': []})}\n\n"
+
+    v._oauth_chat_stream = mock_stream
+
+    req = APIProxyRequest(
+        service="llm", action="chat",
+        params={
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    events = []
+    async for event in v.stream_llm(req, agent_id="test-agent"):
+        events.append(event)
+
+    assert any("done" in e for e in events)
+    cost_tracker.track.assert_not_called()
+    cost_tracker.preflight_check.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_oauth_stream_skips_preflight_even_when_over_budget(monkeypatch):
+    """OAuth streaming bypasses budget enforcement even when budget is exceeded."""
+    import json as _json
+
+    monkeypatch.setenv("OPENLEGION_SYSTEM_ANTHROPIC_API_KEY", "sk-ant-oat01-" + "x" * 80)
+    cost_tracker = MagicMock()
+    cost_tracker.preflight_check.return_value = {"allowed": False}
+    v = CredentialVault(cost_tracker=cost_tracker)
+
+    async def mock_stream(request, api_key, model):
+        yield f"data: {_json.dumps({'type': 'done', 'content': 'ok', 'tokens_used': 10, 'model': model, 'tool_calls': []})}\n\n"
+
+    v._oauth_chat_stream = mock_stream
+
+    req = APIProxyRequest(
+        service="llm", action="chat",
+        params={
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    events = []
+    async for event in v.stream_llm(req, agent_id="test-agent"):
+        events.append(event)
+
+    assert any("done" in e for e in events)
+    assert not any("Budget exceeded" in e for e in events)
+    cost_tracker.preflight_check.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_regular_key_still_tracks_costs(monkeypatch):
+    """Non-OAuth calls must still track costs normally (regression guard)."""
+    monkeypatch.setenv("OPENLEGION_SYSTEM_OPENAI_API_KEY", "sk-regular-key")
+    cost_tracker = MagicMock()
+    cost_tracker.preflight_check.return_value = {
+        "allowed": True, "estimated_cost": 0.01,
+        "daily_used": 0, "daily_limit": 10,
+        "monthly_used": 0, "monthly_limit": 200,
+    }
+    v = CredentialVault(cost_tracker=cost_tracker)
+
+    async def mock_acompletion(model, messages, api_key, **kwargs):
+        resp = MagicMock()
+        resp.choices = [MagicMock()]
+        resp.choices[0].message.content = "ok"
+        resp.choices[0].message.tool_calls = None
+        resp.usage = MagicMock()
+        resp.usage.total_tokens = 100
+        resp.usage.prompt_tokens = 60
+        resp.usage.completion_tokens = 40
+        return resp
+
+    with patch("litellm.acompletion", side_effect=mock_acompletion):
+        req = APIProxyRequest(
+            service="llm", action="chat",
+            params={
+                "model": "openai/gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+        result = await v.execute_api_call(req, agent_id="test-agent")
+
+    assert result.success
+    cost_tracker.preflight_check.assert_called_once()
+    cost_tracker.track.assert_called_once()
+    call_args = cost_tracker.track.call_args[0]
+    assert call_args[0] == "test-agent"
+    assert call_args[1] == "openai/gpt-4o-mini"
+
+
 # ── Budget lock timeout returns error ──────────────────────────
 
 

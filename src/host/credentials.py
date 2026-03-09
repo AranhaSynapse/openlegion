@@ -345,7 +345,15 @@ class CredentialVault:
         before either is charged.
         """
         is_llm = request.service == "llm"
-        use_budget_lock = bool(self.cost_tracker and agent_id and is_llm)
+
+        # OAuth tokens (Anthropic subscription) have no per-call cost —
+        # skip budget enforcement and cost tracking for them.
+        _is_oauth = False
+        if is_llm:
+            _oauth_key = self._get_api_key_for_model(request.params.get("model", ""))
+            _is_oauth = bool(_oauth_key and is_oauth_token(_oauth_key))
+
+        use_budget_lock = bool(self.cost_tracker and agent_id and is_llm and not _is_oauth)
 
         if use_budget_lock:
             if agent_id not in self._budget_locks:
@@ -355,7 +363,7 @@ class CredentialVault:
             lock = None
 
         async def _execute() -> APIProxyResponse:
-            if self.cost_tracker and agent_id and is_llm:
+            if self.cost_tracker and agent_id and is_llm and not _is_oauth:
                 model = request.params.get("model", "unknown")
                 preflight = self.cost_tracker.preflight_check(agent_id, model)
                 if not preflight["allowed"]:
@@ -375,16 +383,17 @@ class CredentialVault:
                 response = await handler(request)
 
                 if self.cost_tracker and agent_id and response.success and response.data:
-                    tokens_used = response.data.get("tokens_used", 0)
-                    if tokens_used:
-                        model = response.data.get(
-                            "model", request.params.get("model", "unknown"),
-                        )
-                        raw_pt = response.data.get("input_tokens")
-                        prompt_tokens = raw_pt if raw_pt else int(tokens_used * 0.7)
-                        raw_ct = response.data.get("output_tokens")
-                        completion_tokens = raw_ct if raw_ct else (tokens_used - prompt_tokens)
-                        self.cost_tracker.track(agent_id, model, prompt_tokens, completion_tokens)
+                    if not response.data.get("oauth"):
+                        tokens_used = response.data.get("tokens_used", 0)
+                        if tokens_used:
+                            model = response.data.get(
+                                "model", request.params.get("model", "unknown"),
+                            )
+                            raw_pt = response.data.get("input_tokens")
+                            prompt_tokens = raw_pt if raw_pt else int(tokens_used * 0.7)
+                            raw_ct = response.data.get("output_tokens")
+                            completion_tokens = raw_ct if raw_ct else (tokens_used - prompt_tokens)
+                            self.cost_tracker.track(agent_id, model, prompt_tokens, completion_tokens)
 
                 return response
             except Exception as e:
@@ -793,12 +802,12 @@ class CredentialVault:
 
         data = resp.json()
         result = self._parse_anthropic_response(data, model)
+        result["oauth"] = True
         self._health_tracker.record_success(model)
         return APIProxyResponse(success=True, data=result)
 
     async def _oauth_chat_stream(
         self, request: APIProxyRequest, api_key: str, model: str,
-        agent_id: str = "",
     ):
         """Streaming Anthropic API call using OAuth bearer auth.
 
@@ -896,11 +905,6 @@ class CredentialVault:
                 done_data["thinking_content"] = collected_thinking
             yield f"data: {json.dumps(done_data)}\n\n"
 
-            if self.cost_tracker and agent_id and tokens_used:
-                pt = input_tokens or int(tokens_used * 0.7)
-                ct = output_tokens or (tokens_used - pt)
-                self.cost_tracker.track(agent_id, model, pt, ct)
-
         except Exception as e:
             logger.error(f"OAuth streaming call failed: {e}")
             self._health_tracker.record_failure(model, type(e).__name__, 0)
@@ -997,23 +1001,24 @@ class CredentialVault:
         """
         import litellm
 
+        requested_model = request.params.get("model", "")
+
+        # OAuth fast-path: bypass LiteLLM for Anthropic OAuth tokens.
+        # No cost tracking or budget enforcement — subscription-based usage.
+        api_key = self._get_api_key_for_model(requested_model)
+        if api_key and is_oauth_token(api_key):
+            async for chunk in self._oauth_chat_stream(
+                request, api_key, requested_model,
+            ):
+                yield chunk
+            return
+
         if self.cost_tracker and agent_id and request.service == "llm":
-            model = request.params.get("model", "unknown")
-            preflight = self.cost_tracker.preflight_check(agent_id, model)
+            preflight = self.cost_tracker.preflight_check(agent_id, requested_model)
             if not preflight["allowed"]:
                 yield f"data: {json.dumps({'error': 'Budget exceeded'})}\n\n"
                 return
 
-        requested_model = request.params.get("model", "")
-
-        # OAuth fast-path: bypass LiteLLM for Anthropic OAuth tokens
-        api_key = self._get_api_key_for_model(requested_model)
-        if api_key and is_oauth_token(api_key):
-            async for chunk in self._oauth_chat_stream(
-                request, api_key, requested_model, agent_id,
-            ):
-                yield chunk
-            return
         models_to_try = self._failover_chain.get_models_to_try(requested_model)
 
         response = None
