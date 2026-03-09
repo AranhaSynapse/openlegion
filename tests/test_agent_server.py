@@ -426,6 +426,21 @@ class TestArtifactDelete:
             assert artifacts_dir.exists()
 
     @pytest.mark.asyncio
+    async def test_delete_artifact_preserves_nonempty_parent(self, tmp_workspace):
+        app, _ = _make_app(tmp_workspace)
+        artifacts_dir = Path(tmp_workspace) / "artifacts"
+        subdir = artifacts_dir / "reports"
+        subdir.mkdir(parents=True)
+        (subdir / "a.txt").write_text("keep")
+        (subdir / "b.txt").write_text("delete")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.delete("/artifacts/reports/b.txt")
+            assert resp.status_code == 200
+            # Sibling file keeps the directory alive
+            assert subdir.exists()
+            assert (subdir / "a.txt").exists()
+
+    @pytest.mark.asyncio
     async def test_delete_artifact_no_workspace(self):
         app, _ = _make_app(workspace_dir=None)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
