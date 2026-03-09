@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -1637,6 +1638,97 @@ def create_dashboard_router(
                 "projects_enabled": not _projects_disabled,
             },
         }
+
+    # ── Storage ────────────────────────────────────────────────
+
+    _STORAGE_SKIP_DIRS = {"src", ".git", ".venv", "venv", "node_modules", ".claude"}
+    _STORAGE_DB_SUFFIXES = {".db", ".db-wal", ".db-shm"}
+
+    def _scan_storage(root: Path) -> dict:
+        """Scan project root for storage breakdown (blocking I/O).
+
+        Uses os.walk with dir pruning to avoid descending into source,
+        git, and virtualenv directories.
+        """
+        # System-wide disk usage
+        try:
+            disk = shutil.disk_usage(str(root))
+            disk_info = {"total": disk.total, "used": disk.used, "free": disk.free}
+        except OSError:
+            disk_info = {"total": 0, "used": 0, "free": 0}
+
+        db_bytes = 0
+        log_bytes = 0
+        config_bytes = 0
+        agent_bytes = 0
+        other_bytes = 0
+
+        root_str = str(root)
+        for dirpath, dirnames, filenames in os.walk(root):
+            # Compute top-level directory relative to root
+            rel = os.path.relpath(dirpath, root_str)
+            top = rel.split(os.sep, 1)[0] if rel != "." else ""
+
+            # Prune skipped directories so os.walk doesn't descend
+            dirnames[:] = [
+                d for d in dirnames
+                if (d if rel == "." else top) not in _STORAGE_SKIP_DIRS
+            ]
+
+            for name in filenames:
+                fpath = os.path.join(dirpath, name)
+                try:
+                    size = os.lstat(fpath).st_size
+                except OSError:
+                    continue
+
+                # Categorize: files at root level use their own name/suffix,
+                # files in subdirs are categorized by top-level dir
+                _, suffix = os.path.splitext(name)
+                suffix = suffix.lower()
+                if suffix in _STORAGE_DB_SUFFIXES:
+                    db_bytes += size
+                elif suffix == ".log":
+                    log_bytes += size
+                elif top == "config":
+                    config_bytes += size
+                elif top == ".openlegion":
+                    agent_bytes += size
+                elif top == "data":
+                    # data/ contains costs.db, traces.db (caught above by suffix);
+                    # any other files in data/ are still engine data
+                    other_bytes += size
+                elif top:
+                    other_bytes += size
+                else:
+                    # Root-level files that aren't db/log
+                    other_bytes += size
+
+        engine_total = db_bytes + log_bytes + config_bytes + agent_bytes + other_bytes
+        return {
+            "disk": disk_info,
+            "engine": {
+                "total": engine_total,
+                "databases": db_bytes,
+                "agent_data": agent_bytes,
+                "logs": log_bytes,
+                "config": config_bytes,
+                "other": other_bytes,
+            },
+        }
+
+    @api_router.get("/api/storage")
+    async def api_storage() -> dict:
+        """Return disk usage breakdown for the engine's data directory."""
+        import asyncio
+
+        project_root = (
+            runtime.project_root if runtime and hasattr(runtime, "project_root")
+            else Path(__file__).resolve().parent.parent.parent
+        )
+        return await asyncio.get_running_loop().run_in_executor(
+            None, _scan_storage, project_root,
+        )
 
     # ── Messages log ─────────────────────────────────────────
 

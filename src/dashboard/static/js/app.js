@@ -150,6 +150,9 @@ function dashboard() {
     // Settings
     settingsData: null,
 
+    // Storage
+    storageData: null,
+
     // Slide-over chat panel
     openChats: [],             // Array of agent IDs with open chat panels
     chatHistories: {},         // Preserved — keyed by agent ID
@@ -758,6 +761,7 @@ function dashboard() {
           }
           if (this.activeTab === 'system') {
             this.fetchCronJobs();
+            this.fetchStorage();
             this._cronInterval = setInterval(() => this.fetchCronJobs(), 10000);
           }
           // Resume model health + queue polling
@@ -822,6 +826,7 @@ function dashboard() {
       if (tab === 'system') {
         this.fetchSettings();
         this.fetchCosts();
+        this.fetchStorage();
         this.fetchCronJobs();
         this.fetchWorkflows();
         if (this.systemTab === 'integrations') {
@@ -2358,6 +2363,20 @@ function dashboard() {
           }
         }
       } catch (e) { console.warn('fetchSettings failed:', e); }
+    },
+
+    async fetchStorage() {
+      try {
+        const resp = await fetch(`${window.__config.apiBase}/storage`);
+        if (resp.ok) this.storageData = await resp.json();
+      } catch (e) { console.warn('fetchStorage failed:', e); }
+    },
+
+    formatBytes(bytes) {
+      if (!bytes || bytes <= 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+      return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
     },
 
     // ── Chat slide-over panel ──────────────────────────

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI
@@ -2842,3 +2843,102 @@ class TestDashboardArtifactDelete:
         self.client = _make_client(self.components)
         resp = self.client.delete("/dashboard/api/agents/alpha/artifacts/file.txt")
         assert resp.status_code == 503
+
+
+class TestDashboardStorage:
+    """Tests for the /api/storage endpoint."""
+
+    def setup_method(self):
+        self._tmp = tempfile.mkdtemp()
+        components = _make_components(self._tmp, include_v2=True)
+        components["runtime"].project_root = Path(self._tmp)
+        self.client = _make_client(components)
+        self._components = components
+        self._root = Path(self._tmp)
+
+    def teardown_method(self):
+        _teardown(self._components)
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_storage_returns_disk_info(self):
+        resp = self.client.get("/dashboard/api/storage")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "disk" in data
+        assert data["disk"]["total"] > 0
+        assert data["disk"]["used"] > 0
+        assert data["disk"]["free"] > 0
+
+    def test_storage_returns_engine_breakdown(self):
+        resp = self.client.get("/dashboard/api/storage")
+        data = resp.json()
+        assert "engine" in data
+        engine = data["engine"]
+        for key in ("total", "databases", "agent_data", "logs", "config", "other"):
+            assert key in engine
+
+    def test_storage_counts_db_files(self):
+        """Database files in the project root should be categorized."""
+        (self._root / "test.db").write_bytes(b"x" * 1000)
+        resp = self.client.get("/dashboard/api/storage")
+        data = resp.json()
+        assert data["engine"]["databases"] >= 1000
+
+    def test_storage_counts_wal_and_shm(self):
+        """WAL and SHM journal files count as database storage."""
+        (self._root / "blackboard.db-wal").write_bytes(b"x" * 800)
+        (self._root / "blackboard.db-shm").write_bytes(b"x" * 200)
+        resp = self.client.get("/dashboard/api/storage")
+        data = resp.json()
+        assert data["engine"]["databases"] >= 1000
+
+    def test_storage_counts_config_dir(self):
+        """Files under config/ should be categorized as config."""
+        (self._root / "config").mkdir(exist_ok=True)
+        (self._root / "config" / "mesh.yaml").write_bytes(b"x" * 500)
+        resp = self.client.get("/dashboard/api/storage")
+        data = resp.json()
+        assert data["engine"]["config"] >= 500
+
+    def test_storage_counts_log_files(self):
+        """Log files should be categorized."""
+        (self._root / ".openlegion.log").write_bytes(b"x" * 2000)
+        resp = self.client.get("/dashboard/api/storage")
+        data = resp.json()
+        assert data["engine"]["logs"] >= 2000
+
+    def test_storage_counts_agent_data(self):
+        """Files under .openlegion/ should be categorized as agent data."""
+        agent_dir = self._root / ".openlegion" / "agents" / "alpha"
+        agent_dir.mkdir(parents=True)
+        (agent_dir / "MEMORY.md").write_bytes(b"x" * 3000)
+        resp = self.client.get("/dashboard/api/storage")
+        data = resp.json()
+        assert data["engine"]["agent_data"] >= 3000
+
+    def test_storage_excludes_src_and_git(self):
+        """Source code and .git should not be counted in engine data."""
+        baseline = self.client.get("/dashboard/api/storage").json()["engine"]["total"]
+        (self._root / "src").mkdir(exist_ok=True)
+        (self._root / "src" / "big.py").write_bytes(b"x" * 10000)
+        (self._root / ".git").mkdir(exist_ok=True)
+        (self._root / ".git" / "objects").write_bytes(b"x" * 10000)
+        (self._root / "node_modules").mkdir(exist_ok=True)
+        (self._root / "node_modules" / "pkg").write_bytes(b"x" * 10000)
+        resp = self.client.get("/dashboard/api/storage")
+        data = resp.json()
+        assert data["engine"]["total"] == baseline
+
+    def test_storage_total_is_sum_of_categories(self):
+        """Engine total should equal the sum of all categories."""
+        (self._root / "extra.db").write_bytes(b"x" * 100)
+        (self._root / "app.log").write_bytes(b"x" * 200)
+        (self._root / "config").mkdir(exist_ok=True)
+        (self._root / "config" / "mesh.yaml").write_bytes(b"x" * 300)
+        resp = self.client.get("/dashboard/api/storage")
+        engine = resp.json()["engine"]
+        category_sum = (
+            engine["databases"] + engine["agent_data"]
+            + engine["logs"] + engine["config"] + engine["other"]
+        )
+        assert engine["total"] == category_sum
