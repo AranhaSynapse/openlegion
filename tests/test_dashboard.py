@@ -2837,6 +2837,11 @@ class TestDashboardArtifactDelete:
         resp = self.client.delete("/dashboard/api/agents/alpha/artifacts/missing.txt")
         assert resp.status_code == 404
 
+    def test_delete_artifact_transport_exception(self):
+        self.components["transport"].request = AsyncMock(side_effect=ConnectionError("down"))
+        resp = self.client.delete("/dashboard/api/agents/alpha/artifacts/file.txt")
+        assert resp.status_code == 502
+
     def test_delete_artifact_no_transport(self):
         self.components["transport"] = None
         self.client = _make_client(self.components)
