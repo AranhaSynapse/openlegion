@@ -1143,6 +1143,7 @@ class TestHeartbeatInAgentsAPI:
         assert resp.status_code == 200
         agents = resp.json()["agents"]
         alpha = next(a for a in agents if a["id"] == "alpha")
+        assert alpha["heartbeat_job_id"] == "hb_alpha"
         assert alpha["heartbeat_schedule"] == "every 15m"
         assert alpha["heartbeat_enabled"] is True
         assert alpha["heartbeat_next_run"] == "2026-03-09T12:00:00+00:00"
@@ -1159,6 +1160,7 @@ class TestHeartbeatInAgentsAPI:
         assert resp.status_code == 200
         agents = resp.json()["agents"]
         alpha = next(a for a in agents if a["id"] == "alpha")
+        assert "heartbeat_job_id" not in alpha
         assert "heartbeat_schedule" not in alpha
         assert "heartbeat_enabled" not in alpha
         assert "heartbeat_next_run" not in alpha
@@ -2947,3 +2949,113 @@ class TestDashboardStorage:
             + engine["logs"] + engine["config"] + engine["other"]
         )
         assert engine["total"] == category_sum
+
+
+# ── Chat History Cross-Device Consistency ────────────────────
+
+
+class TestDashboardChatHistory:
+    """Verify chat history API returns consistent data regardless of caller.
+
+    The /dashboard/api/agents/{id}/chat/history endpoint proxies to the
+    agent's persistent transcript, which must be the same for all devices.
+    """
+
+    def setup_method(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self.components = _make_components(self._tmpdir, include_v2=True)
+        self.client = _make_client(self.components)
+
+    def teardown_method(self):
+        _teardown(self.components)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_returns_transcript_with_all_fields(self):
+        """ts and tools fields pass through the proxy transparently."""
+        transcript = {
+            "messages": [
+                {"role": "user", "content": "Hello", "ts": 1000.5},
+                {
+                    "role": "assistant", "content": "Hi there!", "ts": 1001.2,
+                    "tools": ["memory_search", "web_browse"],
+                },
+            ],
+            "count": 2,
+        }
+        self.components["transport"].request = AsyncMock(return_value=transcript)
+        resp = self.client.get("/dashboard/api/agents/alpha/chat/history")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 2
+        assert data["messages"][0]["content"] == "Hello"
+        assert data["messages"][0]["ts"] == 1000.5
+        assert data["messages"][1]["tools"] == ["memory_search", "web_browse"]
+        self.components["transport"].request.assert_called_once_with(
+            "alpha", "GET", "/chat/history", timeout=10,
+        )
+
+    def test_multiple_requests_return_same_data(self):
+        """Simulate two devices fetching — both must see the same transcript."""
+        transcript = {
+            "messages": [
+                {"role": "user", "content": "Cross-device test", "ts": 2000},
+                {"role": "assistant", "content": "Reply", "ts": 2001},
+            ],
+            "count": 2,
+        }
+        self.components["transport"].request = AsyncMock(return_value=transcript)
+        resp1 = self.client.get("/dashboard/api/agents/alpha/chat/history")
+        resp2 = self.client.get("/dashboard/api/agents/alpha/chat/history")
+        assert resp1.json() == resp2.json()
+
+    def test_agents_have_isolated_histories(self):
+        """Each agent returns its own transcript, no cross-contamination."""
+        alpha_transcript = {"messages": [{"role": "user", "content": "Alpha msg", "ts": 1}], "count": 1}
+        beta_transcript = {"messages": [{"role": "user", "content": "Beta msg", "ts": 2}], "count": 1}
+
+        async def route_request(agent_id, method, path, timeout=10):
+            return alpha_transcript if agent_id == "alpha" else beta_transcript
+
+        self.components["transport"].request = AsyncMock(side_effect=route_request)
+        resp_a = self.client.get("/dashboard/api/agents/alpha/chat/history")
+        resp_b = self.client.get("/dashboard/api/agents/beta/chat/history")
+        assert resp_a.json()["messages"][0]["content"] == "Alpha msg"
+        assert resp_b.json()["messages"][0]["content"] == "Beta msg"
+
+    def test_reset_then_fetch_returns_empty(self):
+        """After reset, history endpoint returns empty transcript."""
+        self.components["transport"].request = AsyncMock(
+            side_effect=[
+                {"reset": True, "agent": "alpha"},
+                {"messages": [], "count": 0},
+            ],
+        )
+        reset_resp = self.client.post("/dashboard/api/agents/alpha/reset")
+        assert reset_resp.status_code == 200
+        history_resp = self.client.get("/dashboard/api/agents/alpha/chat/history")
+        assert history_resp.json()["messages"] == []
+
+    def test_empty_transcript(self):
+        self.components["transport"].request = AsyncMock(
+            return_value={"messages": [], "count": 0},
+        )
+        resp = self.client.get("/dashboard/api/agents/alpha/chat/history")
+        assert resp.status_code == 200
+        assert resp.json()["messages"] == []
+
+    def test_unknown_agent_404(self):
+        resp = self.client.get("/dashboard/api/agents/nonexistent/chat/history")
+        assert resp.status_code == 404
+
+    def test_no_transport_503(self):
+        self.components["transport"] = None
+        self.client = _make_client(self.components)
+        resp = self.client.get("/dashboard/api/agents/alpha/chat/history")
+        assert resp.status_code == 503
+
+    def test_transport_error_502(self):
+        self.components["transport"].request = AsyncMock(
+            side_effect=ConnectionError("agent offline"),
+        )
+        resp = self.client.get("/dashboard/api/agents/alpha/chat/history")
+        assert resp.status_code == 502

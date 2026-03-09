@@ -689,6 +689,11 @@ function dashboard() {
         console.debug('chat history fetch skipped:', e.message || e);
       }
 
+      // Sync restored open chats from server so cross-device history is fresh
+      for (const agentId of this.openChats) {
+        this._loadChatHistory(agentId);
+      }
+
       // Command palette: Cmd+K / Ctrl+K + tab shortcuts 1/2/3
       this._cmdPaletteHandler = (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -786,6 +791,11 @@ function dashboard() {
           // Refresh agent detail if we're viewing one
           if (this.detailAgent) {
             this.fetchAgentDetail(this.detailAgent);
+          }
+          // Sync open chat histories from server (cross-device consistency)
+          for (const agentId of this.openChats) {
+            delete this._chatFetchedAt[agentId];
+            this._loadChatHistory(agentId);
           }
         }
       });
@@ -2408,7 +2418,6 @@ function dashboard() {
         if (!resp.ok) return;
         const data = await resp.json();
         if (!data.messages || data.messages.length === 0) {
-          // Server transcript is empty (reset or fresh agent) — clear stale local data
           if (this.chatHistories[agentId]?.length > 0) {
             this.chatHistories[agentId] = [];
             this._saveChatToSession();
@@ -2420,11 +2429,16 @@ function dashboard() {
           content: m.content,
           streaming: false,
           phase: 'done',
-          tools: [],
+          ts: m.ts || 0,
+          tools: Array.isArray(m.tools) ? m.tools.map(t =>
+            typeof t === 'string' ? { name: t, status: 'done', inputPreview: '', outputPreview: '' } : t
+          ) : [],
         }));
         this._saveChatToSession();
         this.$nextTick(() => this._scrollChat(agentId));
-      } catch (_) {}
+      } catch (e) {
+        console.debug('_loadChatHistory failed for', agentId, e.message || e);
+      }
     },
 
     openChat(agentId) {
