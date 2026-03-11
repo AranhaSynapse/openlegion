@@ -16,7 +16,7 @@ logger = logging.getLogger("cli")
 class ChannelManager:
     """Manages the lifecycle of messaging channels (Telegram, Discord, etc.)."""
 
-    CHANNEL_TYPES = ("telegram", "discord", "slack", "whatsapp")
+    CHANNEL_TYPES = ("telegram", "discord", "slack", "whatsapp", "whatsapp_evolution")
 
     def __init__(self, cfg: dict, dispatch_fn, agent_registry, **callbacks):
         self.cfg = cfg
@@ -113,7 +113,7 @@ class ChannelManager:
             self._channel_map["slack"] = sl
             self._record_pairing("Slack", "message your bot \u2192  /start", sl_code)
 
-        # WhatsApp
+        # WhatsApp (Meta Cloud API — original)
         wa_cfg = channels_cfg.get("whatsapp", {})
         wa_token = (
             wa_cfg.get("access_token")
@@ -148,6 +148,47 @@ class ChannelManager:
             self.active.append(wa)
             self._channel_map["whatsapp"] = wa
             self._record_pairing("WhatsApp", "send to your number \u2192  /start", wa_code)
+
+        # WhatsApp via Evolution API (self-hosted, no Meta account required)
+        ev_cfg = channels_cfg.get("whatsapp_evolution", {})
+        ev_api_url = (
+            ev_cfg.get("api_url")
+            or os.environ.get("EVOLUTION_API_URL", "")
+        )
+        ev_api_key = (
+            ev_cfg.get("api_key")
+            or os.environ.get("EVOLUTION_API_KEY", "")
+        )
+        ev_instance = (
+            ev_cfg.get("instance_name")
+            or os.environ.get("EVOLUTION_INSTANCE_NAME", "")
+        )
+        if ev_api_url and ev_api_key and ev_instance:
+            ev_code = _ensure_pairing_code(
+                PROJECT_ROOT / "config" / "whatsapp_evolution_paired.json"
+            )
+            ev_secret = (
+                ev_cfg.get("webhook_secret")
+                or os.environ.get("EVOLUTION_WEBHOOK_SECRET", "")
+            )
+            from src.channels.whatsapp_evolution import WhatsAppEvolutionChannel
+            ev = WhatsAppEvolutionChannel(
+                api_url=ev_api_url,
+                api_key=ev_api_key,
+                instance_name=ev_instance,
+                webhook_secret=ev_secret,
+                default_agent=ev_cfg.get("default_agent", first_agent),
+                **common,
+            )
+            asyncio.run(ev.start())
+            webhook_routers.append(ev.create_router())
+            self.active.append(ev)
+            self._channel_map["whatsapp_evolution"] = ev
+            self._record_pairing(
+                "WhatsApp (Evolution)",
+                "send to your number \u2192  /start",
+                ev_code,
+            )
 
         return webhook_routers
 
@@ -184,10 +225,6 @@ class ChannelManager:
                     break
                 except RuntimeError as e:
                     if "Event loop stopped" in str(e) and getattr(channel, "_handler", None) is not None:
-                        # slack-bolt background tasks stop the loop after a
-                        # successful Socket Mode connect, racing with
-                        # run_until_complete().  The handler exists so the
-                        # connection succeeded — proceed to run_forever().
                         break
                     try:
                         loop.close()
@@ -233,7 +270,7 @@ class ChannelManager:
         self.active.append(channel)
 
     def get_channel_status(self) -> list[dict]:
-        """Return status for all 4 channel types."""
+        """Return status for all channel types."""
         result = []
         for ch_type in self.CHANNEL_TYPES:
             ch = self._channel_map.get(ch_type)
@@ -250,7 +287,7 @@ class ChannelManager:
         return result
 
     def start_channel(self, channel_type: str, tokens: dict) -> list:
-        """Start a single channel dynamically. Returns webhook routers (for WhatsApp)."""
+        """Start a single channel dynamically. Returns webhook routers."""
         if channel_type not in self.CHANNEL_TYPES:
             raise ValueError(f"Unknown channel type: {channel_type}")
         if channel_type in self._channel_map:
@@ -316,6 +353,31 @@ class ChannelManager:
             webhook_routers.append(ch.create_router())
             self.active.append(ch)
             self._channel_map["whatsapp"] = ch
+
+        elif channel_type == "whatsapp_evolution":
+            api_url = tokens.get("api_url", "")
+            api_key = tokens.get("api_key", "")
+            instance_name = tokens.get("instance_name", "")
+            if not api_url or not api_key or not instance_name:
+                raise ValueError(
+                    "api_url, api_key and instance_name are required for WhatsApp Evolution"
+                )
+            _ensure_pairing_code(
+                PROJECT_ROOT / "config" / "whatsapp_evolution_paired.json"
+            )
+            from src.channels.whatsapp_evolution import WhatsAppEvolutionChannel
+            ch = WhatsAppEvolutionChannel(
+                api_url=api_url,
+                api_key=api_key,
+                instance_name=instance_name,
+                webhook_secret=tokens.get("webhook_secret", ""),
+                default_agent=first_agent,
+                **common,
+            )
+            asyncio.run(ch.start())
+            webhook_routers.append(ch.create_router())
+            self.active.append(ch)
+            self._channel_map["whatsapp_evolution"] = ch
 
         return webhook_routers
 
