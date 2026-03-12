@@ -1,0 +1,37 @@
+# config/clinics.yaml
+# Mapeamento de instâncias Evolution API → clínicas MedicPro
+#
+# Cada chave é o instanceName exato da instância no Evolution API.
+# Se uma instância não estiver mapeada aqui, o nome da instância
+# será usado como clinic_id e display_name.
+#
+# Copie este arquivo para config/clinics.yaml e edite conforme necessário.
+
+clinics:
+  # Nome exato da instância no Evolution API
+  clinica-alfa:
+    clinic_id: "alfa"                         # ID interno usado pela skill medicpro_api
+    display_name: "Clínica Alfa"              # Nome exibido nas mensagens do bot
+    address: "Rua das Flores, 100 - Porto Alegre / RS"
+    phone_display: "+55 51 3000-0001"
+    agent: recepcionista                       # agente padrão (opcional)
+
+  clinica-beta:
+    clinic_id: "beta"
+    display_name: "Clínica Beta"
+    address: "Av. Ipiranga, 200 - Porto Alegre / RS"
+    phone_display: "+55 51 3000-0002"
+    agent: recepcionista
+
+  clinica-gamma:
+    clinic_id: "gamma"
+    display_name: "Clínica Gamma"
+    address: "Rua XV de Novembro, 300 - Porto Alegre / RS"
+    phone_display: "+55 51 3000-0003"
+    agent: recepcionista
+
+# Para adicionar uma nova clínica:
+# 1. Crie a instância no Evolution Manager (http://localhost:8085)
+# 2. Adicione um bloco aqui com o mesmo instanceName
+# 3. O OpenLegion detectará automaticamente em até 60 segundos
+#    (ou reinicie o container para aplicar imediatamente)
